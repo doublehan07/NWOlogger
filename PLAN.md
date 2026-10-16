@@ -123,7 +123,7 @@ Notes on the model:
 - **Lossless ADIF round-trip.** A field without its own column goes to `extra` and is written back out on export. The schema stays small without losing any data.
 - **Paper and electronic records never share a column.** ADIF `QSL_SENT`/`QSL_RCVD` and their dates are paper only. Every electronic service has its own fields.
 - **Edits after upload.** Editing an uploaded QSO sets its QRZ and HRDLog status to `M` (modified, an ADIF enum value), so the next sync re-sends it. LoTW and eQSL do not support in-place edits, so they are flagged in the UI instead.
-- **Indexes:** `call`, `time_on`, `band`, `mode_group`, `sat_name`, `dxcc`, `station_callsign`, `contest_session_id`, plus a composite dupe index `(call, band, mode_group, time_on)`.
+- **Indexes:** `call`, `time_on`, `band`, `mode_group`, `sat_name`, `dxcc`, `station_callsign`, `contest_session_id`, plus a composite dupe index `(call, band, time_on)`.
 
 ### 4.2 Other tables
 
@@ -166,18 +166,27 @@ Every QSO gets a derived **`mode_group`**, following the LoTW/ARRL groups:
 | `DATA` | FT8, FT4, RTTY, PSK, JT65, JS8, OLIVIA, … and the `DIGI`/`DATA` placeholders |
 | `IMAGE` | SSTV, FAX, ATV |
 
-**Dupes are compared by mode group, never by raw mode string.** This fixes the reported bug: `SSB` vs `USB`, or `DIGI` vs `FT8`, must count as a dupe.
-Dupe key: `call + band + mode_group`, plus `sat_name` when `prop_mode = SAT`, within a scope:
+**Dupe levels.** Two QSOs are compared when they share `call + band`, plus `sat_name` when `prop_mode = SAT`, and fall within the same scope (table below). The mode then sets the level. **Only a strictly identical mode blocks logging.**
 
-| Context | Scope | Action when a dupe is detected while typing |
-|---|---|---|
-| Contest mode | The contest definition's rule (once per band, per band+mode, or once per contest) | Call field turns red, "DUPE" badge, **Log is disabled** |
-| DX mode | Same key within a time window (see Q2) | Same: Log is disabled |
-| Existing log / ADIF import | Same key, time within a tolerance | Shown as "possible duplicate" in the import preview and in a *Find duplicates* tool |
+| Level | Mode comparison | Examples | While logging | Import / *Find duplicates* |
+|---|---|---|---|---|
+| **Dupe** | Exactly the same `MODE` + `SUBMODE` | USB vs USB, FT8 vs FT8 | Call field red, "DUPE" badge, **Log disabled** | Skipped by default; listed as dupes |
+| **Possible dupe** | Same group, different mode or submode | SSB vs USB, **USB vs LSB**, DIGI vs FT8, **FT8 vs FT4** | Amber warning only, **logging allowed** | Imported and flagged; listed separately |
+| Not a dupe | Different group | CW vs SSB, FT8 vs CW | — | — |
 
-A Prefs switch, "Allow logging dupes", is **off by default**. When it is on, the dupe is logged and flagged; in a contest it scores 0 points.
+USB ≠ LSB and FT8 ≠ FT4: neither pair is ever blocked or filtered out, only warned about.
 
-The same matching code (mode group + band + time tolerance + satellite) is used to match LoTW, eQSL and QRZ confirmations to local QSOs.
+| Context | Scope |
+|---|---|
+| DX mode | Within a time window (see Q2) |
+| Contest mode | The contest definition's rule: once per band, per band+mode, or once per contest |
+| ADIF import / *Find duplicates* | Time within a tolerance |
+
+Contest exception: a contest's own rules decide what counts as the same mode, because the score depends on it. For example, a contest that allows each station once per band on any digital mode treats FT8 followed by FT4 as a real dupe. Built-in definitions follow the published rules. User-defined contests compare modes strictly by default.
+
+A Prefs switch, "Allow logging dupes", is **off by default**. When it is on, a strict dupe is logged and flagged; in a contest it scores 0 points.
+
+Matching downloaded confirmations is a separate job from dupe checking (§8.2). It prefers an exact mode match and falls back to the same group, because the other station or the service may report SSB where you logged USB.
 
 ## 6. Main window (MacLoggerDX-like, no rig panel)
 
@@ -246,7 +255,7 @@ Bulk edit is a dialog that applies to the selected QSOs:
 | Text | is, is not, contains, matches (wildcards), empty, not empty | Any text field |
 | Time | before, after, between | Any time field |
 | Status | yes / no / date range | Confirmation fields |
-| Mode | Matches by group: `SSB` finds USB/LSB, `DIGI` finds every data mode | Mode |
+| Mode | Exact by default: `USB` finds only USB, `FT8` only FT8. Choosing an ADIF parent mode (`SSB`, `MFSK`) includes its submodes. Group entries (*All phone*, *All data*, …) match a whole family | Mode |
 
 - **Wildcards:**
   - `*` matches any run of characters and `?` matches exactly one character.
@@ -277,8 +286,8 @@ Bulk edit is a dialog that applies to the selected QSOs:
   - Work runs in background workers, with a progress dialog and a row in `sync_log`.
   - Nothing is uploaded automatically unless enabled per service. "Upload on log" is offered for QRZ, eQSL and HRDLog.
 - **Matching downloaded confirmations:**
-  - Key: same call + band + mode group, with `sat_name` when the QSO was via satellite.
-  - Time within ±30 min (LoTW's own window); the nearest QSO wins.
+  - Key: same call + band, with `sat_name` when the QSO was via satellite. An exact mode match is preferred; the same mode group is accepted.
+  - Time within ±30 min (LoTW's own window). Among candidates, an exact mode match wins, then the nearest time.
   - Records that don't match go to an **Unmatched** list, where they can be added as new QSOs.
 - **Credentials:** kept only in the OS keychain. Every request uses HTTPS and the User-Agent `QHlogger/<ver> (<call>)`.
 
@@ -366,7 +375,7 @@ Panes are `QDockWidget`s, so each can be docked or floated N1MM-style:
 ### Rules
 
 - **Serial numbers** auto-increment per session. They are reserved when a QSO is logged; gaps are allowed.
-- **Dupe check** is live and uses the definition's rule and mode groups (§5). A dupe disables Log.
+- **Dupe check** is live and uses the definition's rule (§5). A dupe disables Log; a possible dupe only warns.
 - **Exchange validation** uses a regex or list per field, for example zones 1–40, numeric serials, or a state/province list.
   - The expected exchange is pre-filled from `cty.csv` (CQ/ITU zone) and from earlier QSOs in your log.
 
@@ -418,7 +427,7 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 ## 13. Open questions
 
 1. **HRDLog download.** HRDLog.net exposes no public download API, so HRDLog would be upload-only. Is that acceptable? Its operator has privately shared API docs with other developers, so we could ask.
-2. **Dupe window in DX mode.** Outside contests, what counts as a dupe for the same call + band + mode group (+ satellite)? Options: within 10 min, within one satellite pass (~20 min), the same UTC day, or never. Should "Log disabled" be absolute, or overridable with a modifier key such as Ctrl+Enter?
+2. **Dupe window in DX mode.** Outside contests, what counts as a dupe for the same call + band + exact mode (+ satellite)? Options: within 10 min, within one satellite pass (~20 min), the same UTC day, or never. Should "Log disabled" be absolute, or overridable with a modifier key such as Ctrl+Enter?
 3. **Built-in contests for the dropdown.** Proposed first set:
    - CQ WW DX (CW/SSB/RTTY)
    - CQ WPX (CW/SSB/RTTY)

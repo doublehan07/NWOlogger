@@ -19,7 +19,7 @@ Python and Qt (PySide6).
 - **Paper QSL cards** tracked separately (sent and received dates, via bureau, direct or manager), never mixed with electronic records.
 - **Callsign lookup:** offline `cty.csv` for country, DXCC and zones; QRZ.com XML, with HamQTH as fallback.
 - **Satellite logging:** pick a satellite and its uplink/downlink, band and mode are filled in; fields stay set for the whole pass.
-- **Dupe checking by mode group** (SSB = USB = LSB; DIGI = FT8 = FT4 …). A dupe blocks logging.
+- **Dupe checking.** Only a strictly identical QSO (same call, band, mode and submode) blocks logging. Related modes (SSB vs USB, USB vs LSB, DIGI vs FT8, FT8 vs FT4) only raise a warning.
 - **Contest mode (N1MM style):**
   - contest chosen from a dropdown
   - serial numbers

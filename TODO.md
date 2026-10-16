@@ -38,7 +38,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [ ] Column chooser + reorder, persisted in QSettings
 - [ ] Confirmation columns (LoTW / eQSL / QRZ / HRDLog / Paper)
 - [ ] Quick filter bar (Call with `?*`, Band, Mode, Sat, Country, Presets)
-- [ ] Advanced search dialog (multi-criteria AND, mode-group aware) + saved filters
+- [ ] Advanced search dialog (multi-criteria AND; mode filter by exact mode, parent mode or whole group) + saved filters
 - [ ] Wildcard → SQLite GLOB conversion with escaping
 - [ ] Import preview (new / possible dupe / merge) with policies
 - [ ] Export all / selected / filtered
@@ -52,7 +52,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [ ] Satellite dropdown from `sats.json` (sets PROP_MODE=SAT, freqs, bands, mode)
 - [ ] `cty.csv` resolver (exact calls, longest prefix, portable suffixes) + bundled file + weekly update
 - [ ] Worked-before box (band × mode-group matrix, NEW DXCC/BAND/MODE badges)
-- [ ] **Dupe check by mode group (SSB = USB = LSB, DIGI = FT8 = FT4 …), Log disabled on dupe**
+- [ ] **Dupe check: same mode + submode disables Log; same group but different mode (SSB/USB, USB/LSB, DIGI/FT8, FT8/FT4) only warns**
 - [ ] Edit an existing QSO in the panel; delete; undo
 - [ ] Previous (recall last QSO)
 
@@ -62,7 +62,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [ ] Diff preview, single transaction, undo
 - [ ] Mark QRZ/HRDLog status `M` after editing uploaded QSOs
 - [ ] Paper QSL tab: to-send queue, mark sent/received with date + via
-- [ ] Find duplicates tool (mode-group aware)
+- [ ] Find duplicates tool (strict dupes and possible dupes listed separately)
 
 ## M5 — Callsign lookup
 
@@ -75,7 +75,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 ## M6 — Sync
 
 - [ ] Adapter interface, background workers, progress UI, sync history
-- [ ] Confirmation matcher (call + band + mode group + sat, ±30 min) + Unmatched list
+- [ ] Confirmation matcher (call + band + sat, ±30 min; exact mode preferred, same group accepted) + Unmatched list
 - [ ] QRZ Logbook: INSERT / REPLACE upload, FETCH download with paging
 - [ ] eQSL: ImportADIF upload (chunked), DownloadInBox download
 - [ ] LoTW: lotwreport.adi download (QSL + QSO-rx passes), TQSL CLI upload, exit-code handling
@@ -88,7 +88,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [ ] Contest setup dialog with contest dropdown (built-ins + user-defined)
 - [ ] Contest entry line (N1MM keys: Space, Enter-ESM, Esc/Alt+W, freq/mode typed in Call field)
 - [ ] Serial numbers per session
-- [ ] Live dupe check per definition rule (mode-group aware), Log disabled
+- [ ] Live dupe check per definition rule; dupe disables Log, possible dupe warns
 - [ ] Check Partial (MASTER.SCP + own log) and N+1 panes
 - [ ] Scoring engine: points table, multiplier types, per-band/mode scopes, live totals
 - [ ] Score summary, multipliers and rate panes (dockable / floatable)
