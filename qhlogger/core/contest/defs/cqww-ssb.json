@@ -1,0 +1,74 @@
+{
+ "id": "CQWW-SSB",
+ "name": "CQ WW DX Contest (SSB)",
+ "cabrillo": "CQ-WW-SSB",
+ "sponsor": "CQ",
+ "notes": "Scoring follows the sponsor's published rules as of 2026. Claimed score only: check the current rules before you submit.",
+ "modes": [
+  "PHONE"
+ ],
+ "bands": [
+  "160m",
+  "80m",
+  "40m",
+  "20m",
+  "15m",
+  "10m"
+ ],
+ "dupe": "band",
+ "exchange": [
+  {
+   "key": "rst",
+   "label": "RST",
+   "kind": "rst"
+  },
+  {
+   "key": "zone",
+   "label": "CQ zone",
+   "kind": "int",
+   "min": 1,
+   "max": 40,
+   "prefill": "cqz",
+   "sent_from": "my_cq_zone",
+   "adif": "cqz"
+  }
+ ],
+ "points": [
+  {
+   "when": [
+    "same_dxcc"
+   ],
+   "points": 0
+  },
+  {
+   "when": [
+    "same_cont",
+    "me_cont:NA"
+   ],
+   "points": 2
+  },
+  {
+   "when": [
+    "same_cont"
+   ],
+   "points": 1
+  },
+  {
+   "points": 3
+  }
+ ],
+ "mults": [
+  {
+   "key": "zone",
+   "label": "Zones",
+   "value": "exch:zone",
+   "per": "band"
+  },
+  {
+   "key": "dxcc",
+   "label": "Countries",
+   "value": "dxcc",
+   "per": "band"
+  }
+ ]
+}

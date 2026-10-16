@@ -1,0 +1,46 @@
+{
+ "id": "DX-SERIAL",
+ "name": "Generic DX contest (serial number)",
+ "cabrillo": "DX",
+ "sponsor": "",
+ "notes": "A template: RST + serial; 1 point per QSO; DXCC per band.",
+ "modes": [
+  "CW",
+  "PHONE",
+  "DATA"
+ ],
+ "bands": [
+  "160m",
+  "80m",
+  "40m",
+  "20m",
+  "15m",
+  "10m"
+ ],
+ "dupe": "band_mode",
+ "exchange": [
+  {
+   "key": "rst",
+   "label": "RST",
+   "kind": "rst"
+  },
+  {
+   "key": "serial",
+   "label": "Nr",
+   "kind": "serial"
+  }
+ ],
+ "points": [
+  {
+   "points": 1
+  }
+ ],
+ "mults": [
+  {
+   "key": "dxcc",
+   "label": "DXCC",
+   "value": "dxcc",
+   "per": "band"
+  }
+ ]
+}

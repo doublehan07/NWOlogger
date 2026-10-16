@@ -1,0 +1,74 @@
+{
+ "id": "ARRLDX-SSB",
+ "name": "ARRL International DX Contest (SSB)",
+ "cabrillo": "ARRL-DX-SSB",
+ "sponsor": "ARRL",
+ "notes": "Scoring follows the sponsor's published rules as of 2026. Claimed score only: check the current rules before you submit. W/VE work DX only; DX work W/VE only.",
+ "modes": [
+  "PHONE"
+ ],
+ "bands": [
+  "160m",
+  "80m",
+  "40m",
+  "20m",
+  "15m",
+  "10m"
+ ],
+ "dupe": "band",
+ "exchange": [
+  {
+   "key": "rst",
+   "label": "RST",
+   "kind": "rst"
+  },
+  {
+   "key": "exch",
+   "label": "State/Prov or Power",
+   "kind": "text",
+   "sent_from": "tx_pwr",
+   "adif_if_wve": "state"
+  }
+ ],
+ "points": [
+  {
+   "when": [
+    "me_dxcc_in:291,1",
+    "they_dxcc_in:291,1"
+   ],
+   "points": 0
+  },
+  {
+   "when": [
+    "not:me_dxcc_in:291,1",
+    "not:they_dxcc_in:291,1"
+   ],
+   "points": 0
+  },
+  {
+   "points": 3
+  }
+ ],
+ "mults": [
+  {
+   "key": "qth",
+   "label": "States/Provinces",
+   "value": "exch:exch",
+   "per": "band",
+   "when": [
+    "they_dxcc_in:291,1",
+    "not:me_dxcc_in:291,1"
+   ]
+  },
+  {
+   "key": "dxcc",
+   "label": "DXCC",
+   "value": "dxcc",
+   "per": "band",
+   "when": [
+    "me_dxcc_in:291,1",
+    "not:they_dxcc_in:291,1"
+   ]
+  }
+ ]
+}

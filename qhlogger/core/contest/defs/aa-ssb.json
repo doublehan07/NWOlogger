@@ -1,0 +1,110 @@
+{
+ "id": "AA-SSB",
+ "name": "All Asian DX Contest (SSB)",
+ "cabrillo": "AA-SSB",
+ "sponsor": "JARL",
+ "notes": "Scoring follows the sponsor's published rules as of 2026. Claimed score only: check the current rules before you submit.",
+ "modes": [
+  "PHONE"
+ ],
+ "bands": [
+  "160m",
+  "80m",
+  "40m",
+  "20m",
+  "15m",
+  "10m"
+ ],
+ "dupe": "band",
+ "exchange": [
+  {
+   "key": "rst",
+   "label": "RST",
+   "kind": "rst"
+  },
+  {
+   "key": "age",
+   "label": "Age",
+   "kind": "int",
+   "min": 0,
+   "max": 99,
+   "sent_from": "age"
+  }
+ ],
+ "points": [
+  {
+   "when": [
+    "me_cont:AS",
+    "same_dxcc"
+   ],
+   "points": 0
+  },
+  {
+   "when": [
+    "me_cont:AS",
+    "they_cont:AS",
+    "band:160m"
+   ],
+   "points": 3
+  },
+  {
+   "when": [
+    "me_cont:AS",
+    "they_cont:AS",
+    "band:80m,10m"
+   ],
+   "points": 2
+  },
+  {
+   "when": [
+    "me_cont:AS",
+    "they_cont:AS"
+   ],
+   "points": 1
+  },
+  {
+   "when": [
+    "not:me_cont:AS",
+    "not:they_cont:AS"
+   ],
+   "points": 0
+  },
+  {
+   "when": [
+    "band:160m"
+   ],
+   "points": 9
+  },
+  {
+   "when": [
+    "band:80m,10m"
+   ],
+   "points": 6
+  },
+  {
+   "points": 3
+  }
+ ],
+ "mults": [
+  {
+   "key": "dxcc",
+   "label": "Entities",
+   "value": "dxcc",
+   "per": "band",
+   "when": [
+    "me_cont:AS",
+    "not:same_dxcc"
+   ]
+  },
+  {
+   "key": "pfx",
+   "label": "Asian prefixes",
+   "value": "wpx",
+   "per": "band",
+   "when": [
+    "not:me_cont:AS",
+    "they_cont:AS"
+   ]
+  }
+ ]
+}

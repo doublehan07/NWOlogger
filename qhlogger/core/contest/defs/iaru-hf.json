@@ -1,0 +1,68 @@
+{
+ "id": "IARU-HF",
+ "name": "IARU HF World Championship",
+ "cabrillo": "IARU-HF",
+ "sponsor": "IARU / ARRL",
+ "notes": "Scoring follows the sponsor's published rules as of 2026. Claimed score only: check the current rules before you submit.",
+ "modes": [
+  "CW",
+  "PHONE"
+ ],
+ "bands": [
+  "160m",
+  "80m",
+  "40m",
+  "20m",
+  "15m",
+  "10m"
+ ],
+ "dupe": "band_mode",
+ "exchange": [
+  {
+   "key": "rst",
+   "label": "RST",
+   "kind": "rst"
+  },
+  {
+   "key": "zone",
+   "label": "ITU zone / HQ",
+   "kind": "zone_or_hq",
+   "min": 1,
+   "max": 90,
+   "prefill": "ituz",
+   "sent_from": "my_itu_zone",
+   "adif": "ituz"
+  }
+ ],
+ "points": [
+  {
+   "when": [
+    "exch_is_text:zone"
+   ],
+   "points": 1
+  },
+  {
+   "when": [
+    "same_ituz"
+   ],
+   "points": 1
+  },
+  {
+   "when": [
+    "same_cont"
+   ],
+   "points": 3
+  },
+  {
+   "points": 5
+  }
+ ],
+ "mults": [
+  {
+   "key": "zone",
+   "label": "Zones & HQ",
+   "value": "exch:zone",
+   "per": "band_mode"
+  }
+ ]
+}

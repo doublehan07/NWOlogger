@@ -1,0 +1,55 @@
+{
+ "id": "CQ-VHF",
+ "name": "CQ World-Wide VHF Contest",
+ "cabrillo": "CQ-VHF",
+ "sponsor": "CQ",
+ "notes": "Scoring follows the sponsor's published rules as of 2026. Claimed score only: check the current rules before you submit. Satellite and repeater QSOs do not count.",
+ "modes": [
+  "CW",
+  "PHONE",
+  "DATA"
+ ],
+ "bands": [
+  "6m",
+  "2m"
+ ],
+ "dupe": "band",
+ "exchange": [
+  {
+   "key": "grid",
+   "label": "Grid",
+   "kind": "grid",
+   "sent_from": "my_gridsquare",
+   "adif": "gridsquare",
+   "prefill": "history"
+  }
+ ],
+ "points": [
+  {
+   "when": [
+    "sat"
+   ],
+   "points": 0
+  },
+  {
+   "when": [
+    "band:2m"
+   ],
+   "points": 2
+  },
+  {
+   "points": 1
+  }
+ ],
+ "mults": [
+  {
+   "key": "grid",
+   "label": "Grids",
+   "value": "grid4:grid",
+   "per": "band",
+   "when": [
+    "not:sat"
+   ]
+  }
+ ]
+}

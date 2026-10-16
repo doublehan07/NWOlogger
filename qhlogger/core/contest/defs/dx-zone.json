@@ -1,0 +1,57 @@
+{
+ "id": "DX-ZONE",
+ "name": "Generic DX contest (CQ zone)",
+ "cabrillo": "DX",
+ "sponsor": "",
+ "notes": "A template: RST + CQ zone; 1 point per QSO; zones and DXCC per band.",
+ "modes": [
+  "CW",
+  "PHONE",
+  "DATA"
+ ],
+ "bands": [
+  "160m",
+  "80m",
+  "40m",
+  "20m",
+  "15m",
+  "10m"
+ ],
+ "dupe": "band_mode",
+ "exchange": [
+  {
+   "key": "rst",
+   "label": "RST",
+   "kind": "rst"
+  },
+  {
+   "key": "zone",
+   "label": "CQ zone",
+   "kind": "int",
+   "min": 1,
+   "max": 40,
+   "prefill": "cqz",
+   "sent_from": "my_cq_zone",
+   "adif": "cqz"
+  }
+ ],
+ "points": [
+  {
+   "points": 1
+  }
+ ],
+ "mults": [
+  {
+   "key": "zone",
+   "label": "Zones",
+   "value": "exch:zone",
+   "per": "band"
+  },
+  {
+   "key": "dxcc",
+   "label": "DXCC",
+   "value": "dxcc",
+   "per": "band"
+  }
+ ]
+}

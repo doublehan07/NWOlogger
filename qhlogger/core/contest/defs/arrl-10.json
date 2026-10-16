@@ -1,0 +1,59 @@
+{
+ "id": "ARRL-10",
+ "name": "ARRL 10-Meter Contest",
+ "cabrillo": "ARRL-10",
+ "sponsor": "ARRL",
+ "notes": "Scoring follows the sponsor's published rules as of 2026. Claimed score only: check the current rules before you submit.",
+ "modes": [
+  "CW",
+  "PHONE"
+ ],
+ "bands": [
+  "10m"
+ ],
+ "dupe": "band_mode",
+ "exchange": [
+  {
+   "key": "rst",
+   "label": "RST",
+   "kind": "rst"
+  },
+  {
+   "key": "exch",
+   "label": "State/Prov or Nr",
+   "kind": "text",
+   "serial_if_dx": true
+  }
+ ],
+ "points": [
+  {
+   "when": [
+    "mode:CW"
+   ],
+   "points": 4
+  },
+  {
+   "points": 2
+  }
+ ],
+ "mults": [
+  {
+   "key": "qth",
+   "label": "States/Prov/XE",
+   "value": "exch:exch",
+   "per": "mode",
+   "when": [
+    "they_dxcc_in:291,6,110,1,50"
+   ]
+  },
+  {
+   "key": "dxcc",
+   "label": "DXCC",
+   "value": "dxcc",
+   "per": "mode",
+   "when": [
+    "not:they_dxcc_in:291,6,110,1,50"
+   ]
+  }
+ ]
+}

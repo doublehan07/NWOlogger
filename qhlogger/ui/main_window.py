@@ -383,11 +383,22 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ view switching
     def set_view(self, i: int) -> None:
+        prev = self.entry_stack.currentIndex()
+        if prev != i:
+            self.prefs.set_value(f"window/split{prev}", self.splitter.sizes())
         self.entry_stack.setCurrentIndex(i)
+        sizes = self.prefs.value(f"window/split{i}")
+        total = sum(self.splitter.sizes())
+        if isinstance(sizes, list) and len(sizes) == 2:
+            self.splitter.setSizes([int(x) for x in sizes])
+        elif i == 1 and total:
+            self.splitter.setSizes([300, max(200, total - 300)])
         (self.a_view_log if i == 0 else self.a_view_contest).setChecked(True)
         if i == 1 and self.contest is not None:
             self.contest.activate()
         else:
+            if self.contest is not None:
+                self.contest.deactivate()
             self.dx.call.setFocus()
 
     def _contest_session_changed(self, sid) -> None:

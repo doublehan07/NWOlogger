@@ -1,0 +1,84 @@
+{
+ "id": "CQWPX-SSB",
+ "name": "CQ WPX Contest (SSB)",
+ "cabrillo": "CQ-WPX-SSB",
+ "sponsor": "CQ",
+ "notes": "Scoring follows the sponsor's published rules as of 2026. Claimed score only: check the current rules before you submit.",
+ "modes": [
+  "PHONE"
+ ],
+ "bands": [
+  "160m",
+  "80m",
+  "40m",
+  "20m",
+  "15m",
+  "10m"
+ ],
+ "dupe": "band",
+ "exchange": [
+  {
+   "key": "rst",
+   "label": "RST",
+   "kind": "rst"
+  },
+  {
+   "key": "serial",
+   "label": "Nr",
+   "kind": "serial"
+  }
+ ],
+ "points": [
+  {
+   "when": [
+    "same_dxcc"
+   ],
+   "points": 1
+  },
+  {
+   "when": [
+    "same_cont",
+    "me_cont:NA",
+    "band:160m,80m,40m"
+   ],
+   "points": 4
+  },
+  {
+   "when": [
+    "same_cont",
+    "me_cont:NA"
+   ],
+   "points": 2
+  },
+  {
+   "when": [
+    "same_cont",
+    "band:160m,80m,40m"
+   ],
+   "points": 2
+  },
+  {
+   "when": [
+    "same_cont"
+   ],
+   "points": 1
+  },
+  {
+   "when": [
+    "band:160m,80m,40m"
+   ],
+   "points": 6
+  },
+  {
+   "points": 3
+  }
+ ],
+ "mults": [
+  {
+   "key": "wpx",
+   "label": "Prefixes",
+   "value": "wpx",
+   "per": "contest"
+  }
+ ]
+}
