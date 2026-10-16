@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 import traceback
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QDateTime, QObject, QRunnable, Qt, QThreadPool, QTimeZone, Signal
+from PySide6.QtCore import QDateTime, QObject, Qt, QTimeZone, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDateTimeEdit,
@@ -21,11 +23,12 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
-from ..core import bands, modes, regions, timeutil
+from ..core import bands, modes, net, regions, timeutil
 from ..core.fields import BY_COL
 from . import theme
 
 tr = i18n.tr
+log = logging.getLogger("nwologger.ui")
 
 
 # ------------------------------------------------------------------ formatting
@@ -218,23 +221,35 @@ class _Signals(QObject):
     progress = Signal(int, int, str)
 
 
-class Task(QRunnable):
+class Task:
+    """Work on a daemon thread. Quitting NWOlogger never waits for it: the network and TQSL calls it runs can
+    take minutes, and none of them touches the log database."""
+
     def __init__(self, fn: Callable[..., Any], *args: Any, **kw: Any):
-        super().__init__()
         self.fn, self.args, self.kw = fn, args, kw
         self.signals = _Signals()
-        self.setAutoDelete(False)
+        self.thread = threading.Thread(target=self.run, name=getattr(fn, "__name__", "task"), daemon=True)
 
     def run(self) -> None:
         try:
             res = self.fn(*self.args, **self.kw)
         except Exception as e:  # noqa: BLE001 - reported to the UI
+            # A NetError is an expected failure with a safe message; anything else gets its traceback.
+            log.warning("Background task %s failed: %s", self.thread.name, e,
+                        exc_info=not isinstance(e, net.NetError))
             msg = f"{e}"
             if not msg:
                 msg = traceback.format_exc(limit=3)
-            self.signals.failed.emit(msg)
+            self._emit(self.signals.failed, msg)
             return
-        self.signals.done.emit(res)
+        self._emit(self.signals.done, res)
+
+    @staticmethod
+    def _emit(signal, value) -> None:
+        try:
+            signal.emit(value)
+        except RuntimeError:  # the window was closed while the task ran
+            pass
 
 
 _alive: set[Task] = set()
@@ -258,7 +273,7 @@ def run_async(fn: Callable[..., Any], *args: Any, on_done: Callable[[Any], None]
 
     t.signals.done.connect(_done, Qt.ConnectionType.QueuedConnection)
     t.signals.failed.connect(_fail, Qt.ConnectionType.QueuedConnection)
-    QThreadPool.globalInstance().start(t)
+    t.thread.start()
     return t
 
 

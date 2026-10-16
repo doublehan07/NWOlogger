@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -41,14 +42,17 @@ class ImportDialog(QDialog):
         title = QLabel(f"<b>{Path(path).name}</b>  ·  {kind}")
         lay.addWidget(title)
         self.dropped: list[str] = []
+        self.inferred: Counter = Counter()
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             if self.is_mldx:
                 self.qsos, self.report = mldx.read(path)
+                self.inferred = self.report.inferred
                 self.header = {}
             else:
                 with open(path, "rb") as fh:
-                    self.header, self.qsos = importer.read_adif(fh.read(), dropped=self.dropped)
+                    self.header, self.qsos = importer.read_adif(fh.read(), dropped=self.dropped,
+                                                                inferred=self.inferred)
                 self.report = None
         finally:
             QApplication.restoreOverrideCursor()
@@ -166,6 +170,14 @@ class ImportDialog(QDialog):
         if self.dropped:
             text += " " + tr("Fields that look like passwords are left out:") + f" {len(self.dropped)} (" + \
                 ", ".join(sorted(set(self.dropped))) + ")."
+        if self.inferred:
+            parts = [f"{n} " + tr(label) for svc, label in (("lotw", "confirmed by LoTW"),
+                                                             ("qrz", "confirmed by QRZ.com"))
+                     if (n := self.inferred.get(svc))]
+            text += "\n\n" + tr("QSOs with a confirmation but no upload record are marked uploaded there "
+                                 "(a service only confirms what you uploaded):") + " " + ", ".join(parts) + ". " + \
+                tr("Download from LoTW and QRZ.com before your first upload: that marks every other QSO they "
+                   "already hold.")
         note = QLabel(text)
         note.setObjectName("Hint")
         note.setWordWrap(True)

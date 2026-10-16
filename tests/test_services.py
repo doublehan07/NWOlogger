@@ -130,6 +130,7 @@ def test_eqsl_cursor_starts_a_day_early(qtbot, tmp_path, mock_net, monkeypatch):
     prefs.set("eqsl_user", "u")
     prefs.set_secret("eqsl_password", "pw-eqsl-1")
     d = dbm.LogDB(tmp_path / "l.sqlite", backup_on_open=False)
+    d.save_profile({"name": "BI1ZZZ", "station_callsign": "BI1ZZZ", "eqsl_qth_nickname": "Home"})
     parent = QWidget()
     qtbot.addWidget(parent)
     monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))

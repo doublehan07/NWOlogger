@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import i18n
-from ...core import bands, callsign, dxcc, modes, regions, timeutil
+from ...core import bands, callsign, devices, dxcc, modes, regions, timeutil
 from ...core import qso as qsomod
 from ...core.contest import cabrillo
 from ...core.contest import scp as scpmod
@@ -740,6 +740,12 @@ class ContestPanel(QWidget):
             q["station_profile_id"] = prof["id"]
         if prof.get("tx_pwr"):
             q["tx_pwr"] = prof["tx_pwr"]
+        dev = self.prefs.get("device") or {}  # the entry form's Device section, when you set one
+        for key, col in (("rig", "my_rig"), ("antenna", "my_antenna")):
+            if dev.get(key):
+                q[col] = dev[key]
+        if devices.power_value(dev.get("power")) is not None:
+            q["tx_pwr"] = devices.power_value(dev["power"])
         with self.db.batch(tr("Log QSO") + f" {c}"):
             qid = self.db.insert(q)
         self.win.ops.touch(prof)

@@ -287,3 +287,44 @@ def test_similar_calls_ranking():
     idx.set_scp(["BA1PQ", "BA1PX", "BA1PWX", "BA1PZ"])
     assert idx.online_candidates("BA1PW") == ["BA1PQ", "BA1PZ", "BA1PWX"]  # not BA1PX: already known
     assert idx.online_candidates("BA1PW", skip={"BA1PQ"}, limit=1) == ["BA1PZ"]
+
+
+def test_power_values_and_setup_matching():
+    from nwologger.core import devices
+
+    assert [devices.power_value(v) for v in ("25", "25W", "25 w", "1,5", "1 kW", "", None, "high", 10)] == \
+        [25.0, 25.0, 25.0, 1.5, 1000.0, None, None, None, 10.0]
+    setups = devices.clean_setups([{"name": "Sat", "rig": "IC-705", "antenna": "U7V4", "power": "5W"},
+                                   {"name": "", "rig": "x"}, {"name": "Any power", "rig": "FT-5DR", "antenna": "771"}])
+    assert [s["name"] for s in setups] == ["Sat", "Any power"] and setups[0]["power"] == 5.0
+    assert devices.matching(setups, "ic-705", "U7V4", "5") == 0
+    assert devices.matching(setups, "IC-705", "U7V4", "10") is None
+    assert devices.matching(setups, "FT-5DR", "771", "2") == 1  # a setup without power matches any power
+    assert devices.clean_names([" IC-705", "ic-705", "", "FT-991A"]) == ["IC-705", "FT-991A"]
+
+
+def test_confirmed_qsos_are_marked_uploaded_on_import():
+    from collections import Counter
+
+    data = ("<ADIF_VER:5>3.1.5<PROGRAMID:11>MacLoggerDX<EOH>"
+            "<CALL:5>BA1AA<QSO_DATE:8>20261010<TIME_ON:4>1000<BAND:2>2M<MODE:2>FM<LOTW_QSL_RCVD:1>Y<EOR>"
+            "<CALL:5>BA1BB<QSO_DATE:8>20261010<TIME_ON:4>1100<BAND:2>2M<MODE:2>FM<APP_QRZLOG_STATUS:1>C<EOR>"
+            "<CALL:5>BA1CC<QSO_DATE:8>20261010<TIME_ON:4>1200<BAND:2>2M<MODE:2>FM<APP_QRZLOG_STATUS:1>C"
+            "<QRZCOM_QSO_UPLOAD_STATUS:1>M<EOR>"
+            "<CALL:5>BA1DD<QSO_DATE:8>20261010<TIME_ON:4>1300<BAND:2>2M<MODE:2>FM<EQSL_QSL_RCVD:1>Y<EOR>")
+    inferred: Counter = Counter()
+    _h, qsos = importer.read_adif(data, inferred=inferred)
+    assert inferred == Counter({"lotw": 1, "qrz": 1})
+    a, b, c, d = qsos
+    assert a["lotw_qsl_sent"] == "Y" and b["qrzcom_qso_upload_status"] == "Y"
+    assert c["qrzcom_qso_upload_status"] == "M"  # changed since the upload: still needs a re-upload
+    assert d.get("eqsl_qsl_sent") is None  # an eQSL inbox card says nothing about your upload
+
+
+def test_mldx_confirmation_without_upload_record_counts_as_uploaded():
+    rep = mldx.MldxReport()
+    q = mldx.row_to_qso({"pk": 1, "call": "BA1AA", "qso_start": 1760090400.0, "mode": "FT8", "band_tx": "20m",
+                         "qsl_sent": "Uploaded to HRDLOG 2026-10-10 10:00",
+                         "qsl_received": "LoTW:20261011, QRZLogbook:20261012"}, rep)
+    assert q["lotw_qsl_sent"] == "Y" and q.get("lotw_qslsdate") is None
+    assert q["qrzcom_qso_upload_status"] == "Y" and rep.inferred == {"lotw": 1, "qrz": 1}

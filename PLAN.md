@@ -1,6 +1,6 @@
 # NWOlogger — Design Plan
 
-Status: **v0.1.1** (2026-10-16): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1); see §14 for where the code differs from
+Status: **v0.1.2** (2026-10-16): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1), and the Device section, the Sync results window and the diagnostic log (v0.1.2); see §14 for where the code differs from
 this plan, and [TODO.md](TODO.md) for what is left. Open questions are collected in §13.
 
 ## 1. Requirements
@@ -60,12 +60,12 @@ These may move to TODO later, but they are not part of the core.
 
 - **One source of truth:** the `version` in `pyproject.toml`, read at runtime through `importlib.metadata` and exposed as `nwologger.__version__`. Versions follow SemVer and start at `0.1.0`. While in `0.x`, a new milestone bumps the minor number and a fix bumps the patch number.
 - **Shown in the app** in four places:
-  - the window title (`NWOlogger v0.1.1 — nwolog.sqlite`)
+  - the window title (`NWOlogger v0.1.2 — nwolog.sqlite`)
   - the right end of the toolbar, as in MacLoggerDX
   - Help → About (version, Qt/PySide6 version, DB schema version, data-file path)
   - `nwologger --version`
-- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.1 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
-- **Releases:** a git tag such as `v0.1.1` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
+- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.2 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
+- **Releases:** a git tag such as `v0.1.2` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
 
 Architecture rule: `nwologger/core/` never imports Qt. All logic lives there: DB, ADIF, search, dupes, DXCC, contest scoring and sync.
 The UI layer is thin, so the core is unit-testable and could also back a CLI.
@@ -238,14 +238,15 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 - **Keyboard-first:** every action has a shortcut, plus a command palette (⌘K / Ctrl+K).
 
 ```
-┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.1 ┐
+┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.2 ┐
 ├ Entry panel ── [ DX | Contest ] ─────────────────────────────────────────────────────────────────────────────┤
 │ Call [______]  First  Last    │ Time On  2026-10-16 04:19:35   Time Off                                      │
 │ Address / City                │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │
 │ Province / Country            │ Sat [SO-50 ▾]  Sat mode [ ]  Prop [SAT]  Power [25]  RST S [59]  RST R [59]  │
 │ Email / Web                   │ Grid  ITU  CQ  DXCC  IOTA  SOTA  POTA  WWFF  SKCC  QSL Via                    │
-│ Comment / Notes               │ ┌ Worked before: similar calls, band × mode matrix, last QSOs, NEW … ┐        │
-│ [LookUp] [Previous] [TimeOn] [TimeOff] [Log QSO ⏎] [Clear ⎋]  sticky: ☑Freq ☑Mode ☑Sat ☑Pwr                  │
+│ Comment (upload) / (local)    │ ┌ Worked before: similar calls, band × mode matrix, last QSOs, NEW … ┐        │
+│ Device: Setup [Sat portable ▾] Power [5]   Rig [IC-705 ▾] Antenna [U7V4 ▾]                                   │
+│ [LookUp] [Previous] [TimeOn] [TimeOff] [Log QSO ⏎] [Clear ⎋]  sticky: ☑Freq ☑Mode ☑Sat ☑Device               │
 ├ Tabs: [ Log | Paper QSL | Sync history ] ────────────────────────────────────────────────────────────────────┤
 │ 1434 QSOs · 37 shown · /Users/.../nwolog.sqlite        DXCC 75 wkd / 68 cfm                                   │
 │ [Call ?*] [Band ▾] [Mode ▾] [Sat ▾] [Country] [Preset ▾]  [More filters…]  [Clear]                           │
@@ -253,7 +254,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Entry panel (DX).** The field set follows MacLoggerDX, without rig info. Name is split into First and Last, as in MLDX.
+- **Entry panel (DX).** The field set follows MacLoggerDX, without rig control. Name is split into First and Last, as in MLDX.
   - **Location** is kept to what is needed: Country, Province, Address (street, city → ADIF `ADDRESS` / `QTH`), CQ zone, ITU zone. County, lat/lon and other location fields are not on the form; they are kept if an import brings them.
   - A summary line under the call shows the last confirmation (e.g. "Confirmed 2025-08-18 on 70CM FM"), plus bearing and distance computed from the two grids.
   - **Times:**
@@ -268,17 +269,24 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
     - Picking a satellite turns it off, because satellites are split; clearing the satellite turns it back on.
   - **Mode** is a plain dropdown of *your* modes (Preferences → Modes: tick and drag to order; default = the common ones), then *Other mode…*, which searches every ADIF mode and submode and can add the choice to your list.
   - **Propagation** is a dropdown of TQSL's 16 propagation modes (AS, AUE, AUR, BS, ECH, EME, ES, F2, FAI, ION, IRL, MS, RS, SAT, TEP, TR).
-    - It also offers the ADIF-only GWAVE, INTERNET, LOS and RPT, marked "not for LoTW".
+    - It also offers the ADIF-only GWAVE, INTERNET and LOS, marked "not for LoTW". RPT is not offered: the repeater you used goes in *Notes (local)*. A QSO imported with RPT keeps it, and is still not sent to LoTW.
     - The ADIF `SAT_MODE` field is no longer on the form; it is kept when an import brings it.
   - **Propagation comes before Satellite** in the form.
   - **Satellite** is a dropdown of *your* satellites (Preferences → Satellites, "In form" column; until you choose, the ones you worked plus popular ones), then *Other satellite…*, which searches the full LoTW / TQSL list, your added satellites and names found only in your log.
+    - Repeaters are not in this list and don't set a propagation: the repeater's name goes in *Notes (local)*.
     - **Satellite without SAT propagation:** the satellite name is kept. An amber chip says "Satellite is set, but propagation is not SAT" and logging asks once. The reverse ("Propagation is SAT, but no satellite") is treated the same way. A satellite with an *empty* propagation is stored as SAT, as ADIF expects.
     - Picking one sets propagation SAT and fills the frequencies and mode from your last QSO on it (else its defaults).
     - Per-service names are handled on upload (§8.2).
   - **Operator** is a field in the Contact section (and in the contest bar). See §6.3.
-  - *Sticky* fields (*Keep*: Freq, Mode, Sat, Power) carry over to the next QSO after Log QSO, which matters for satellite passes.
-  - *Clear* (and Esc, and Cancel while editing) empties the whole form, Contact section included: TX / RX MHz, Mode (a blank "—" entry), RST, Power, Propagation and Satellite, whatever *Keep* says. RST stays blank until a mode is chosen; logging without a mode is refused.
-  - An empty Power shows the station profile's default power in grey, and that power is logged.
+  - **Device** section (rig, antenna, power), under References & notes:
+    - *Rig* (`MY_RIG`) and *Antenna* (`MY_ANTENNA`) are editable dropdowns of your lists (Preferences → Devices); *Power* (`TX_PWR`) moved here from the RST row.
+    - A **setup** is a rig + antenna + power you put together in Preferences → Devices. Picking it fills all three; each can still be changed. The Setup dropdown shows the setup the fields equal, or "—" once they differ (`core/devices.py`). A setup without a power leaves the power alone.
+    - Empty fields show the station profile's rig, antenna and power in grey, and those are logged.
+    - The section is your station, not the contact: it is saved between runs (`device` preference) and also used by contest mode. While a saved QSO is edited it shows that QSO's values, and yours come back afterwards.
+    - The other station's rig, antenna and power, the repeater, and your QTH as text, have no fields: they go in *Notes (local)*.
+  - **Comments:** *Comment (upload)* is ADIF `COMMENT`, sent to eQSL, QRZ.com and HRDLog (the operator's name, a thank-you). *Notes (local)* is `NOTES`, which never leaves the log (`qso.PRIVATE_COLS`).
+  - *Sticky* fields (*Keep*: Freq, Mode, Sat, Device) carry over to the next QSO after Log QSO, which matters for satellite passes. With *Device* off, rig, antenna and power go back to the profile's after each QSO.
+  - *Clear* (and Esc, and Cancel while editing) empties the Contact section: TX / RX MHz, Mode (a blank "—" entry), RST, Propagation and Satellite, whatever *Keep* says. The Device section stays. RST stays blank until a mode is chosen; logging without a mode is refused.
   - *Previous* recalls the last QSO's fields.
   - Enter logs the QSO.
   - **Similar calls** sit at the top of Worked before, updated while you type (from two characters):
@@ -442,6 +450,8 @@ Other columns:
 - **Values are normalised.** For example `新疆`, `Sichuan`, `Nei Mongol Zizhiqu` and `湘` become `XJ`, `SC`, `NM` and `HN`.
 - **Unusable text is set aside.** When the two columns conflict, or the text is not a province (`yi`, `在线`, `邮编`, …), the dry-run report lists it and the raw value is kept in `extra`.
 
+**Upload state from confirmations.** MLDX only writes `Uploaded to LoTW` for uploads it made itself, so QSOs that reached LoTW another way (WSJT-X / JTDX, TQSL directly, another logger) look never uploaded: in one real log, 502 of 1,008 LoTW-confirmed QSOs had no upload record, and 18 QRZ.com-confirmed ones. A service only confirms a QSO you uploaded, so `qso.infer_sent` marks a QSO with `LOTW_QSL_RCVD` Y/V as `lotw_qsl_sent=Y`, and a QRZ.com-confirmed one as `qrzcom_qso_upload_status=Y` (an `M`, edited since the upload, is kept). The sent date stays empty until a LoTW download fills it. The same rule applies to ADIF imports. An eQSL inbox card says nothing about your own upload, so eQSL is not inferred. The import preview counts these QSOs and suggests downloading from LoTW and QRZ.com before the first upload, which marks every QSO those services hold.
+
 The migration runs as a dry run first. It reports counts per mapping and lists any text it didn't recognise, and nothing is written until you confirm. The MLDX row id is kept (`APP_MLDX_PK`), so running it again updates QSOs instead of duplicating them.
 
 Both MacLoggerDX files contain other operators' personal data, so they are git-ignored and never committed.
@@ -452,6 +462,8 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - Work runs in background workers, with a progress dialog and a row in `sync_log`.
   - Nothing is uploaded automatically unless enabled per service. "Upload on log" is offered for QRZ, eQSL and HRDLog (off by default).
   - *Sync everything* only downloads (LoTW, eQSL, QRZ.com). Uploads are always started by you: Upload pending (asks first) or Upload selected, because a LoTW or eQSL upload can't be taken back and eQSL sends a card to the other station.
+  - **Outcomes** go to one non-modal **Sync results** window (QSL → Show sync results), a row per run: Done / Note / Skipped / Failed / Stopped, the details and a short *ref*; a row that a setting fixes has *Open Preferences*. No message box is opened from a finished background job: three downloads finishing together used to stack three app-modal boxes, where only the top one takes a click and the app looked hung. Upload on log only brings the window up for a failure, without taking the keyboard. Records that don't match open the Unmatched list without blocking either.
+  - **Checks before a run:** account fields; for LoTW, TQSL and each profile's station location, which must be one TQSL has (`~/.tqsl/station_data`, `%APPDATA%\TrustedQSL\station_data`, or `TQSLDIR`); for eQSL, each profile's QTH nickname. A QSO whose profile lacks one is skipped with a row naming the profile.
   - **Upload state from downloads:** LoTW's report of accepted QSOs (`qso_qsl=no`) sets `lotw_qsl_sent`, and every QSO found in the QRZ.com logbook gets `qrzcom_qso_upload_status=Y` (unless edited since, `M`). eQSL offers only the inbox and HRDLog no download, so what was uploaded there before can't be learned.
 - **Matching downloaded confirmations:**
   - Key: same call + band, with `sat_name` when the QSO was via satellite. An exact mode match is preferred; the same mode group is accepted.
@@ -466,6 +478,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - **Requests** go through `core/net.py`: HTTPS only, to that service's own hosts (lotw.arrl.org, www.eqsl.cc, logbook.qrz.com, xmldata.qrz.com, www.hamqth.com, robot.hrdlog.net), checked before every redirect hop; no URL user info, at most 5 redirects. The eQSL ADIF link must be on www.eqsl.cc (an `http://` link there is upgraded).
   - **Errors** name the service and HTTP status (e.g. "LoTW: HTTP 503 Service Unavailable (the service is down or busy; try again later)"), never the URL. Service reasons (QRZ `REASON`, HRDLog `<error>`, eQSL `Error` lines) are kept, because they say why a QSO was refused.
   - **Redaction** (`net.redact`) runs on every message before a dialog, the status bar, `sync_log` or a log record. URL queries are removed and `password=…`-style pairs are masked. The text is decoded first (HTML entities twice, then %-escapes), so the secrets of that request become `•••` however a server echoed them (`&#39;`, `&apos;`, `%27`, double encoding); the decoded text is what is shown. Secrets under 4 characters are masked as whole tokens only. `sync_log_add` applies it again. Text redaction cannot catch every transformation (a truncated or base64 echo); the real protection is that errors no longer contain the request.
+  - **Diagnostic log** (`nwologger/applog.py`): a rotating file (1 MB × 6) in `~/Library/Logs/NWOlogger/` (macOS), `%LOCALAPPDATA%\NWOlogger\Logs` (Windows) or `~/.local/state/nwologger/` (Linux); `NWOLOGGER_LOG_DIR` overrides it, `--debug` adds detail. It records the start (versions, OS), each sync run with its ref, each request as service, method, host + path, status, size and time (never the query), TQSL's flags, location, exit code and last lines, Qt warnings, uncaught exceptions with tracebacks (GUI and worker threads), and, from a watchdog, every thread's stack once when the window has not responded for 15 s. Every line goes through `net.redact` with every secret and account user name read this session (`applog.remember_secrets`) and the secrets in flight, after formatting, so tracebacks and echoed error pages are masked too. The home folder shows as `~`. Help → Show log folder opens it; About → System names the file.
   - **Logs:** `httpx` and `httpcore` are set to WARNING, so an app-wide DEBUG or INFO setup prints no request URLs or header traces. Every one of their loggers, children included (a parent's filter does not see its children's records), masks URL queries, the `Set-Cookie` / `Cookie` / `Authorization` / `Location` headers of httpcore's trace, and the secrets of the requests in flight (`net.request(secrets=…)` registers them while it runs).
   - **v0.1.0 leftovers:** an HTTP error during a LoTW / eQSL download stored the full URL, password included, in `sync_log`, and imported records could keep credential tags in `qso.extra` and in undo before-images.
     - On open (once, before the open backup), URL queries, `password=` pairs and credential-named tags are removed from `sync_log`, `qso.extra` and `undo_log`.
@@ -485,6 +498,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - A missing `<EOH>` means the query failed.
 - **Upload:** LoTW only accepts logs signed by **TQSL**. NWOlogger exports pending QSOs for each station profile to a temp ADIF and runs `tqsl -x -d -u -a compliant -l "<station location>" file.adi`.
   - It then parses the exit code and stderr, and sets `lotw_qsl_sent=Y` and `lotw_qslsdate`.
+  - TQSL can still open its own window in batch mode, e.g. for a passphrase-protected certificate. It runs in its own process group with its output drained while it runs; the progress dialog's *Cancel* stops it (the whole group), as does a 15-minute limit. Quitting NWOlogger during an upload asks first, then stops TQSL; closing the progress dialog alone does not. Background work runs on daemon threads, so quitting never waits for a request or for TQSL.
   - TQSL must be installed with a valid certificate. Its path is auto-detected and can be overridden in Prefs.
   - **Propagation mode:** QSOs via repeater (`RPT`) or internet (`INTERNET`) are not sent to LoTW. Other values TQSL does not accept (`GWAVE`, `LOS`) are left out of the upload record.
 
@@ -492,9 +506,10 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 
 - **Upload:** `POST https://www.eqsl.cc/qslcard/ImportADIF.cfm` with `EQSL_USER`/`EQSL_PSWD`, in chunks of ≤ 250 records (eQSL advises ≤ 1000).
   - Success is parsed from `Result: x out of y records added` and the per-record warnings. Accepted QSOs get `eqsl_qsl_sent=Y`.
-  - The QTH nickname comes from the station profile.
+  - The QTH nickname comes from the station profile, and is required: eQSL needs it when an account has more than one QTH (DownloadInBox: "if multiple accounts with same callsign"), and a missing one used to end in an unreadable error.
 - **Download:** `GET DownloadInBox.cfm` with `UserName`, `Password`, `RcvdSince`, `QTHNickname`. `RcvdSince` is a date, so the next download starts a day before the last one; cards already applied just match again.
   - NWOlogger finds the generated `.adi` link in the returned HTML and fetches it straight away, since the file expires after a few hours.
+  - Without a link, the page's visible text (scripts, styles and head left out, `services.page_text`) is written to the log, and its `Error…` line becomes the message. Before v0.1.2 the message was the first 200 characters of the page with only the tags removed, which was eQSL's JavaScript.
   - Matched cards get `eqsl_qsl_rcvd=Y`, `eqsl_qslrdate` and `eqsl_ag`.
 
 ### 8.5 QRZ.com Logbook and HRDLog
@@ -629,7 +644,8 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 | Section | Settings |
 |---|---|
 | General | Language (English / 简体中文), date/time display, theme follows the OS |
-| Station profiles | One or more profiles; each is a personal or a club station (§6.3); double-click makes one the default |
+| Station profiles | One or more profiles; each is a personal or a club station (§6.3); double-click makes one the default. The TQSL station location is a dropdown of the locations TQSL has |
+| Devices | Your rigs and antennas (add, rename, reorder, or take the ones your log uses), and setups: a name with a rig, an antenna and a power (§6) |
 | Modes | Which modes the entry dropdown lists, and their order |
 | Satellites | Which satellites the entry dropdown lists ("In form"), satellites you add, and the name sent to each service |
 | Logging | Sticky fields, RX = TX default, default RST by mode group, dupe block window (30 s), dupe warning window (24 h), allow-dupes switch, auto-lookup |

@@ -31,6 +31,13 @@ class FakeKeyring:
 
 
 @pytest.fixture(autouse=True)
+def no_real_tqsl_or_log(monkeypatch, tmp_path):
+    """Tests never read your TQSL station locations or write to your NWOlogger log folder."""
+    monkeypatch.setenv("TQSLDIR", str(tmp_path / "no-tqsl"))
+    monkeypatch.setenv("NWOLOGGER_LOG_DIR", str(tmp_path / "logs"))
+
+
+@pytest.fixture(autouse=True)
 def keyring_store(monkeypatch):
     from nwologger.core import secrets
 

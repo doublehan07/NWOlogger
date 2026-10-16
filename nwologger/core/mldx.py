@@ -2,7 +2,8 @@
 
 Reads ``qso_table_v008`` from a MacLoggerDX ``.sql`` (SQLite) file, read-only. MLDX keeps all upload and
 confirmation history as comma-separated text in ``qsl_sent`` / ``qsl_received``; those tokens are split into
-NWOlogger's per-service fields here.
+NWOlogger's per-service fields here. MacLoggerDX only records the uploads it made itself, so a QSO confirmed by
+LoTW or QRZ.com with no upload record is marked uploaded too (:func:`qso.infer_sent`).
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ class MldxReport:
     province_conflicts: list[tuple[str, str, str]] = field(default_factory=list)  # (call, state, ext_val_3)
     province_unrecognised: Counter = field(default_factory=Counter)
     profiles: Counter = field(default_factory=Counter)  # (call, grid) pairs
+    inferred: Counter = field(default_factory=Counter)  # service → confirmed QSOs with no upload record
 
 
 def _latest(a: str | None, b: str) -> str:
@@ -224,6 +226,8 @@ def row_to_qso(row: dict, report: MldxReport) -> dict:
             extra[f"APP_MLDX_{k.upper()}"] = v
     parse_sent(row.get("qsl_sent"), q, report)
     parse_rcvd(row.get("qsl_received"), q, report)
+    for svc in qsomod.infer_sent(q):
+        report.inferred[svc] += 1
     q["extra"] = qsomod.dump_extra(extra)
     if my_call:
         report.profiles[(my_call, q.get("my_gridsquare") or "")] += 1

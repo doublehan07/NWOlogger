@@ -8,6 +8,7 @@ run on a worker thread. Applying results to the log is done by :mod:`apply` on t
 from __future__ import annotations
 
 import html
+import logging
 import re
 from urllib.parse import parse_qsl, urljoin
 
@@ -17,10 +18,32 @@ from ... import __version__
 from .. import adif, net
 
 TIMEOUT = 60.0
+log = logging.getLogger("nwologger.sync")
 
 
 class ServiceError(net.NetError):
     pass
+
+
+_HIDDEN = re.compile(r"<(script|style|head|noscript|title)\b.*?</\1\s*>", re.I | re.S)
+_BREAK = re.compile(r"<br\s*/?>|</?(p|div|li|ul|ol|tr|table|h[1-6]|center|form|hr)\b[^>]*>", re.I)
+
+
+def page_text(page: str | None) -> str:
+    """The visible text of an HTML page, one line per block. Scripts, styles and the page head are left out: an
+    error message cut to its first 200 characters must not be JavaScript."""
+    t = _BREAK.sub("\n", _HIDDEN.sub(" ", page or ""))
+    t = html.unescape(re.sub(r"<[^>]+>", " ", t))
+    lines = (" ".join(ln.split()) for ln in t.splitlines())
+    return "\n".join(ln for ln in lines if ln)
+
+
+def error_line(text: str) -> str | None:
+    """The line of a page that reports the problem ("Error: …", "No such …"), if there is one."""
+    for ln in text.splitlines():
+        if re.search(r"\berror\b|\bno such\b|\bincorrect\b|\binvalid\b|\bnot (found|allowed)\b", ln, re.I):
+            return ln[:300]
+    return None
 
 
 # ------------------------------------------------------------------ LoTW
@@ -42,8 +65,9 @@ def lotw_download(user: str, password: str, *, qsl: bool = True, since: str | No
     r = net.request("lotw", "GET", LOTW_REPORT, params=params, secrets=[password], timeout=300.0)
     text = r.text
     if not re.search(r"<eoh>", text, re.I):
-        msg = re.sub(r"<[^>]+>", " ", text)
-        msg = net.redact(" ".join(msg.split()), [password])[:200]
+        page = net.redact(page_text(text), [password])
+        log.warning("LoTW answered without ADIF; the page said: %s", page[:1500])
+        msg = error_line(page) or " ".join(page.split())[:200]
         raise ServiceError("LoTW: query failed (check user and password). " + msg)
     return adif.parse(text)
 
@@ -83,9 +107,14 @@ def eqsl_download(user: str, password: str, *, since: str | None = None,
                     redirects=True)
     m = re.search(r'href="([^"]+\.adi)"', r.text, re.I)
     if not m:
-        msg = net.redact(" ".join(re.sub(r"<[^>]+>", " ", r.text).split()), [password])
-        if "no such" in msg.lower() or "error" in msg.lower():
-            raise ServiceError("eQSL: " + msg[:200])
+        page = net.redact(page_text(r.text), [password])
+        log.warning("eQSL inbox page has no ADIF link%s; the page said: %s",
+                    f" (QTH nickname {qth_nickname!r})" if qth_nickname else " (no QTH nickname)", page[:1500])
+        err = error_line(page)
+        if err:
+            hint = "" if qth_nickname else " If your eQSL account has more than one QTH, set the eQSL QTH " \
+                                            "nickname in the station profile."
+            raise ServiceError("eQSL: " + err + hint)
         return {}, []
     url = httpx.URL(urljoin(str(r.url), m.group(1)))
     if url.scheme == "http" and url.host in net.HOSTS["eqsl"]:

@@ -91,9 +91,9 @@ FIELDS: list[Field] = [
     F("my_rig", "MY_RIG", "text", "My rig", "My station", 100),
     F("my_antenna", "MY_ANTENNA", "text", "My antenna", "My station", 100),
     F("station_profile_id", None, "int", "Profile", "My station", 50, bulk=False, internal=True),
-    # Notes
-    F("comment", "COMMENT", "text", "Comment", "Notes", 160),
-    F("notes", "NOTES", "text", "Notes", "Notes", 160),
+    # Notes: COMMENT is uploaded (eQSL, QRZ.com, HRDLog), NOTES never leaves the log (qso.PRIVATE_COLS)
+    F("comment", "COMMENT", "text", "Comment (upload)", "Notes", 160),
+    F("notes", "NOTES", "text", "Notes (local)", "Notes", 160),
     # Contest
     F("contest_id", "CONTEST_ID", "text", "Contest", "Contest", 90),
     F("contest_session_id", None, "int", "Session", "Contest", 50, bulk=False, internal=True),

@@ -6,8 +6,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, __version__, i18n
+from .. import APP_NAME, __version__, applog, i18n
 from ..core import db as dbm
 from ..core import dupes, dxcc, exporter, net, regions, timeutil
 from ..core.contest import scp as scpmod
@@ -62,6 +62,8 @@ class MainWindow(QMainWindow):
         self.ops = OperatorSession()
         self.sync = SyncController(db, prefs, self)
         self.sync.message.connect(self.flash)
+        self.sync.prefs_requested.connect(self.open_prefs)
+        self.sync.history_requested.connect(self._show_history)
         self._lookup_clients: list | None = None
         self.resize(1480, 920)
         self._build()
@@ -131,6 +133,8 @@ class MainWindow(QMainWindow):
         self.a_paper_tab = A("Show paper QSL", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2")
         self.a_hist_tab = A("Show sync history", lambda: self.tabs.setCurrentIndex(2), "Ctrl+3")
         self.a_about = A("About NWOlogger", self.about)
+        self.a_log_folder = A("Show log folder", self.show_log_folder)
+        self.a_results = A("Show sync results", self.show_sync_results)
         self.a_clear_filters = A("Clear filters", lambda: self.filter.clear(), "Ctrl+Shift+K")
         self.a_suspicious = A("Show suspicious dupes", lambda: self.filter.set_preset("suspicious"))
         sync_acts = {}
@@ -189,9 +193,12 @@ class MainWindow(QMainWindow):
                     sub.addAction(sync_acts[k])
         m.addSeparator()
         m.addAction(self.a_sync_all)
+        m.addAction(self.a_results)
         m = mb.addMenu(tr("&Help"))
         m.addAction(self.a_about)
         m.addAction(self.a_palette)
+        m.addSeparator()
+        m.addAction(self.a_log_folder)
 
         # Toolbar
         tb = self.addToolBar(tr("Main"))
@@ -269,6 +276,7 @@ class MainWindow(QMainWindow):
         self.dx.saved.connect(lambda qid: self.view.select_ids([qid]))
         self.dx.lookup_requested.connect(self.lookup)
         self.dx.profiles_requested.connect(lambda: self.open_prefs("Station profiles"))
+        self.dx.devices_requested.connect(lambda: self.open_prefs("Devices"))
         self.entry_stack.addWidget(self.dx)
         self.contest = None
         try:
@@ -581,11 +589,13 @@ class MainWindow(QMainWindow):
     def lookup_clients(self) -> list:
         if self._lookup_clients is None:
             cl = []
-            if self.prefs.get("qrz_user") and self.prefs.secret("qrz_password"):
-                cl.append(lookup_clients.QrzXml(self.prefs.get("qrz_user"), self.prefs.secret("qrz_password")))
-            if self.prefs.get("hamqth_user") and self.prefs.secret("hamqth_password"):
-                cl.append(lookup_clients.HamQth(self.prefs.get("hamqth_user"),
-                                                self.prefs.secret("hamqth_password")))
+            qrz_pw = self.prefs.secret("qrz_password") if self.prefs.get("qrz_user") else None
+            ham_pw = self.prefs.secret("hamqth_password") if self.prefs.get("hamqth_user") else None
+            applog.remember_secrets([qrz_pw, ham_pw, self.prefs.get("qrz_user"), self.prefs.get("hamqth_user")])
+            if qrz_pw:
+                cl.append(lookup_clients.QrzXml(self.prefs.get("qrz_user"), qrz_pw))
+            if ham_pw:
+                cl.append(lookup_clients.HamQth(self.prefs.get("hamqth_user"), ham_pw))
             self._lookup_clients = cl
         return self._lookup_clients
 
@@ -794,6 +804,22 @@ class MainWindow(QMainWindow):
     def about(self) -> None:
         AboutDialog(self.db, self).exec()
 
+    def show_log_folder(self) -> None:
+        folder = applog.log_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def show_sync_results(self) -> None:
+        w = self.sync._window()  # noqa: SLF001 - the controller owns its results window
+        w.show()
+        w.raise_()
+        w.activateWindow()
+
+    def _show_history(self) -> None:
+        self.tabs.setCurrentIndex(2)
+        self.raise_()
+        self.activateWindow()
+
     def update_cty(self, quiet: bool = True) -> None:
         def done(n):
             dxcc.default.cache_clear()
@@ -875,6 +901,15 @@ class MainWindow(QMainWindow):
             self.open_prefs("Station profiles")
 
     def closeEvent(self, e) -> None:  # noqa: N802
+        running = self.sync.running()
+        if running and QMessageBox.question(
+                self, APP_NAME, tr("Still running:") + " " + ", ".join(running) + ".\n\n" +
+                tr("Quit anyway? TQSL is stopped; QSOs not reported as uploaded stay pending and can be uploaded "
+                   "again later.")) != QMessageBox.StandardButton.Yes:
+            e.ignore()
+            return
+        if running:
+            self.sync.cancel_all()
         self.prefs.set_value("window/geometry", self.saveGeometry())
         self.prefs.set_value("window/splitter", self.splitter.saveState())
         self.prefs.set_value("log/columns", self.view.visual_columns())

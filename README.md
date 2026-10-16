@@ -21,8 +21,8 @@ modern UI, and built with Python and Qt (PySide6).
 | *A group of three possible dupes side by side. Cells are editable; keep one and merge the others.* | *Contest mode (CQ WW): entry line, live score, Check Partial and N+1.* |
 | ![Dark theme](docs/screenshots/dark.png) | ![Simplified Chinese](docs/screenshots/zh_CN.png) |
 | *Dark theme* | *简体中文* |
-| ![Preferences: modes](docs/screenshots/prefs-modes.png) | |
-| *Preferences → Modes: choose and order the modes in the dropdown* | |
+| ![Preferences: modes](docs/screenshots/prefs-modes.png) | ![Preferences: devices](docs/screenshots/prefs-devices.png) |
+| *Preferences → Modes: choose and order the modes in the dropdown* | *Preferences → Devices: your rigs, antennas and setups* |
 
 All screenshots use made-up QSOs. To regenerate them, run `uv run python tools/screenshots.py`.
 
@@ -42,7 +42,7 @@ uv sync                                       # install dependencies (first run 
 uv run nwologger --db ~/nwologger-test.sqlite   # use a throw-away log file for testing
 ```
 
-Without `--db`, NWOlogger uses `~/Documents/NWOlogger/nwolog.sqlite`. Other options: `--lang zh_CN`, `--theme dark|light`, `--version`.
+Without `--db`, NWOlogger uses `~/Documents/NWOlogger/nwolog.sqlite`. Other options: `--lang zh_CN`, `--theme dark|light`, `--debug` (more detail in the diagnostic log), `--version`.
 
 **A first test, step by step:**
 
@@ -51,9 +51,11 @@ Without `--db`, NWOlogger uses `~/Documents/NWOlogger/nwolog.sqlite`. Other opti
 3. **Log a QSO.**
    - Type a call. Country, zones and Chinese provinces fill in by themselves (tinted).
    - Try TX/RX MHz with the **= TX** toggle, the Mode, Propagation and Satellite dropdowns (choose what they list in Preferences → Modes / Satellites), and Enter to log.
+   - **Device:** add your rigs, antennas and setups in Preferences → Devices. Picking a setup fills rig, antenna and power at once; change any of them for the QSO if needed.
+   - **Comment (upload)** goes to eQSL, QRZ.com and HRDLog with the QSO (your name, a thank-you). **Notes (local)** are only for you: the repeater you used, their rig, antenna and power, where you operated from.
    - Change Time On and see Time Off move to Time On + 1 min. **Now** next to Time On puts both back on the clock.
    - Type part of a call: **Worked before** lists similar calls, your log first, then calls QRZ.com / HamQTH know, then [MASTER.SCP](https://www.supercheckpartial.com/) (File → Update MASTER.SCP). Click one to use it.
-   - **Clear** (Esc) empties the whole form, frequency, mode and power included. The *Keep* boxes only apply after Log QSO.
+   - **Clear** (Esc) empties the contact: frequency, mode, reports, propagation and satellite included. Your Device section (rig, antenna, power) stays. The *Keep* boxes only apply after Log QSO.
 4. **Search:** `BA*` or `B?1*` in the call box; mode `SSB` (finds USB/LSB) with and without *Exact*; presets such as *Suspicious dupes* and *Paper to send*.
 5. **Edit many QSOs:** select several rows → right-click → Bulk edit. Undo with ⌘Z / Ctrl+Z.
 6. **Contest mode:** toolbar → Contest → New contest. Pick CQ WW, log with Space / Enter, watch the score and the Check Partial pane, then Export Cabrillo.
@@ -62,7 +64,7 @@ Without `--db`, NWOlogger uses `~/Documents/NWOlogger/nwolog.sqlite`. Other opti
    - Passwords are kept in the system keychain and never shown again; *Forget* removes one.
    - Reports from real accounts are especially welcome.
 
-**Reporting a problem:** open an issue on GitHub. Include what you did, and the text from Help → About → System → *Copy system info*.
+**Reporting a problem:** open an issue on GitHub. Include what you did, the text from Help → About → System → *Copy system info*, and the diagnostic log: Help → *Show log folder*, then attach `nwologger.log`. The log never contains a password, API key or upload code, and the *ref* shown with a sync result points to that run in the log.
 
 **For developers:**
 
@@ -81,6 +83,7 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - The log is backed up automatically on open and before every import or bulk edit.
 - **ADIF import and export:** export all, selected, or filtered QSOs. Fields NWOlogger doesn't know are kept and written back out.
 - **MacLoggerDX migration** straight from its database. It keeps the LoTW, eQSL, QRZ and HRDLog upload history and the paper card dates that MLDX's own ADIF export drops.
+  - MacLoggerDX only records the uploads it made itself. A QSO that LoTW or QRZ.com confirmed must have been uploaded there, so it is marked uploaded too (ADIF imports get the same rule); the import preview counts them. Download from LoTW and QRZ.com before your first upload to mark the rest.
 - **Search** across several criteria at once, with `?` / `*` wildcards on callsigns. Mode search is vague by default (`SSB` finds USB/LSB, `DIGI` finds FT8), with an *Exact* option. Searches can be saved.
 - **Sorting** by any column, including satellite name, time on and time off. Columns can be shown, hidden and moved.
 - **Entry form:**
@@ -89,9 +92,11 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
     - You choose which modes and satellites are listed; *Other…* reaches the rest.
     - You can add your own satellites.
     - A satellite with a non-SAT propagation is kept, with a warning.
+  - A **Device** section with your rig (`MY_RIG`), antenna (`MY_ANTENNA`) and power (`TX_PWR`). A *setup* you put together in Preferences → Devices fills all three in one pick, and each can still be changed. Empty fields log the station profile's.
+  - *Comment (upload)* (`COMMENT`, sent to eQSL, QRZ.com and HRDLog) and *Notes (local)* (`NOTES`, never uploaded): the repeater you used, the other station's rig, antenna and power, your QTH.
   - Time Off follows Time On + 1 min. A Time Off earlier than Time On is refused. *Now* next to Time On goes back to the live clock.
-  - Fields stay set for a whole satellite pass (*Keep*). *Clear* empties everything.
-  - An empty Power uses the station profile's default, shown in grey.
+  - Fields stay set for a whole satellite pass (*Keep*). *Clear* empties the contact and keeps your Device section.
+  - An empty rig, antenna or power uses the station profile's, shown in grey.
 - **Similar calls** in Worked before, while you type: the same call, calls that start with or contain what you typed, and calls one letter away (typos). Your log comes first (most recent first), then calls QRZ.com / HamQTH know, then MASTER.SCP. When a call is not found on QRZ.com / HamQTH, up to three MASTER.SCP calls one letter away are looked up there.
 - **Operators:** an Operator field in the entry form.
   - Personal stations fill in your call.
@@ -105,6 +110,9 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
   - **Uploads are always your choice.** *Sync everything* only downloads. QSOs not yet uploaded to all four services are shown in grey (the tooltip names the missing services); the preset *Not uploaded to every service* lists them, and *Upload selected* sends them.
   - Downloads also record what is already uploaded: LoTW's report of accepted QSOs and the QRZ.com logbook mark those QSOs as uploaded. eQSL (it only offers your inbox) and HRDLog (no download) can't tell NWOlogger what you uploaded there before.
+  - Every outcome goes to one **Sync results** window that never blocks the app (QSL → Show sync results). A row that a setting can fix has *Open Preferences*.
+  - Checked before anything is sent: the TQSL station location (Preferences offers the locations TQSL has) and the eQSL QTH nickname of each station profile.
+  - TQSL can wait in its own window (e.g. for your certificate passphrase); *Cancel* stops it, and quitting NWOlogger asks first, then stops it instead of waiting.
 - **Paper QSL cards** tracked separately (sent and received dates, via bureau, direct or manager), with a "to send" queue.
 - **Callsign lookup:** offline country file (`cty.csv`, updated weekly), then QRZ.com XML with HamQTH as fallback. Chinese provinces are normalised to standard codes (BJ, SC, …).
 - **Contest mode (N1MM style):**
@@ -138,8 +146,9 @@ No rig control, by design: NWOlogger never talks to a radio.
 ```
 NWOlogger/
 ├── nwologger/                  the app (Python package)
-│   ├── __main__.py            command line: nwologger [--db FILE] [--lang zh_CN] [--theme dark] [--version]
+│   ├── __main__.py            command line: nwologger [--db FILE] [--lang zh_CN] [--theme dark] [--debug] [--version]
 │   ├── app.py                 starts Qt: language, theme, log file, main window
+│   ├── applog.py              the diagnostic log file (secrets masked), hang watchdog
 │   ├── i18n.py                tr(): looks up UI text in resources/translations/
 │   ├── core/                  all logic, no Qt (unit-tested)
 │   │   ├── db.py              the SQLite log file: schema, migrations, backups, undo
@@ -153,6 +162,7 @@ NWOlogger/
 │   │   ├── net.py, secrets.py HTTPS to the services only, no secrets in messages; keychain access
 │   │   ├── sats.py, propagation.py                satellites and per-service names; TQSL propagation modes
 │   │   ├── operators.py       personal / club station operator
+│   │   ├── devices.py         rigs, antennas and setups for the Device section
 │   │   ├── lookup/            QRZ.com XML, HamQTH
 │   │   ├── sync/              LoTW + TQSL, eQSL, QRZ.com Logbook, HRDLog; applying confirmations
 │   │   └── contest/           scoring engine, built-in definitions (defs/*.json), Check Partial, Cabrillo
@@ -182,6 +192,7 @@ NWOlogger/
   - Saved secrets are never shown again. *Forget* in Preferences removes one; renaming an account removes the old account's entry.
   - Deleting the last station profile with a callsign removes that callsign's QRZ Logbook key.
 - Error messages, sync history and logs never contain a password, key, upload code or session token, even when a service echoes one back encoded. Requests go over HTTPS to each service's own hosts only, redirects included. QRZ.com XML gets the password and session key in the request body; LoTW and eQSL only accept them in the (encrypted) URL. HTTP request logging stays off even when the app logs at DEBUG.
+- The diagnostic log (`~/Library/Logs/NWOlogger/` on macOS, `%LOCALAPPDATA%\NWOlogger\Logs` on Windows, `~/.local/state/nwologger/` on Linux) masks every secret and account user name NWOlogger has read, also inside tracebacks and echoed error pages, logs requests by host and path only (never the URL query), and shows your home folder as `~`. It holds counts and settings names, not your QSOs.
 - Uploads to LoTW, eQSL, QRZ.com and HRDLog send only standard ADIF fields, never another program's `APP_…` fields, and never a field holding one of your saved secrets. Imported fields that look like credentials (`EQSL_PSWD`, `…PASSWORD…`, `…TOKEN…`, `APP_…_KEY`) are left out, and never exported.
 - Never commit real log files. `*.sql`, `*.sqlite`, `*.adi` and similar are git-ignored because they contain other operators' personal data. Only synthetic files under `tests/fixtures/` are committed.
 

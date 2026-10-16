@@ -108,6 +108,20 @@ def normalize(qso: dict) -> dict:
     return q
 
 
+def infer_sent(q: dict) -> list[str]:
+    """A LoTW or QRZ.com confirmation is only possible for a QSO you uploaded there, so mark it uploaded when the
+    source didn't say so (MacLoggerDX only records the uploads it made itself; its ADIF export none at all).
+    Changes ``q`` in place; returns the services marked ("lotw", "qrz")."""
+    out = []
+    if q.get("lotw_qsl_rcvd") in ("Y", "V") and q.get("lotw_qsl_sent") != "Y":
+        q["lotw_qsl_sent"] = "Y"
+        out.append("lotw")
+    if q.get("qrz_qsl_rcvd") == "Y" and q.get("qrzcom_qso_upload_status") in (None, "", "N"):
+        q["qrzcom_qso_upload_status"] = "Y"  # M (changed since the upload) still needs a re-upload
+        out.append("qrz")
+    return out
+
+
 def split_name(name: str | None) -> tuple[str | None, str | None]:
     """Split ADIF NAME at the last space, so join_name gives back exactly the same text."""
     if not name:

@@ -297,11 +297,14 @@ def test_clear_empties_the_contact_section_whatever_keep_says(win, qtbot):
     for col, v in (("rst_sent", "59"), ("rst_rcvd", "57"), ("tx_pwr", "25")):
         p.w[col].setText(v)
     set_combo_data(p.prop, "SAT")
+    p.rig.setEditText("IC-705")
     p.clear_form(full=True)
-    for col in ("freq", "freq_rx", "rst_sent", "rst_rcvd", "tx_pwr"):
+    for col in ("freq", "freq_rx", "rst_sent", "rst_rcvd"):
         assert p.w[col].text() == "", col
     assert combo_value(p.mode) is None and combo_value(p.prop) is None and combo_value(p.sat) is None
     assert p.call.text() == ""
+    # The Device section (rig, antenna, power) is your station, not the contact: Clear keeps it.
+    assert p.w["tx_pwr"].text() == "25" and p.rig.currentText() == "IC-705"
     # Keep still applies after Log QSO.
     p.call.setText("BA1BB")
     p._call_edited("BA1BB")
@@ -434,3 +437,98 @@ def test_qsos_not_uploaded_everywhere_are_grey(win, qtbot):
     assert tip == "Not uploaded to: eQSL, HRDLog"
     win.filter.set_preset("not_all")
     assert win.model.ids == [b]
+
+
+def test_quit_asks_while_a_sync_runs(win, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QMessageBox
+
+    win.sync.busy.add("lotwup")
+    stopped = []
+    monkeypatch.setattr(win.sync, "cancel_all", lambda: stopped.append(1))
+    answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a[2]) or answers.pop(0))
+    e = QCloseEvent()
+    win.closeEvent(e)
+    assert not e.isAccepted() and not stopped and "LoTW upload" in asked[0]
+    e = QCloseEvent()
+    win.closeEvent(e)
+    assert e.isAccepted() and stopped == [1]
+    win.sync.busy.clear()
+
+
+def test_setup_fills_rig_antenna_and_power_and_each_can_change(win):
+    p = win.dx
+    win.prefs.set("rigs", ["IC-705", "IC-9700"])
+    win.prefs.set("antennas", ["U7V4", "Inverted V"])
+    win.prefs.set("setups", [{"name": "Sat portable", "rig": "IC-705", "antenna": "U7V4", "power": 5},
+                             {"name": "Home HF", "rig": "IC-9700", "antenna": "Inverted V", "power": "100 W"}])
+    p.reload_lists()
+    assert [p.setup.itemText(i) for i in range(p.setup.count())][:3] == ["—", "Sat portable", "Home HF"]
+    p.setup.setCurrentIndex(2)
+    p._setup_picked(2)
+    assert (p.rig.currentText(), p.antenna.currentText(), p.w["tx_pwr"].text()) == ("IC-9700", "Inverted V", "100")
+    assert p.setup.currentText() == "Home HF"
+    p.w["tx_pwr"].setText("50")  # still yours to change: the setup no longer matches
+    assert p.setup.currentText() == "—"
+    p.call.setText("BA1AA")
+    p._call_edited("BA1AA")
+    p.w["freq"].setText("14.2")
+    p.mode.setCurrentText("USB")
+    p.commit()
+    q = win.db.last_qso()
+    assert (q["my_rig"], q["my_antenna"], q["tx_pwr"]) == ("IC-9700", "Inverted V", 50.0)
+    # Kept after Log QSO, and saved for the next start.
+    assert p.rig.currentText() == "IC-9700"
+    assert win.prefs.get("device") == {"rig": "IC-9700", "antenna": "Inverted V", "power": "50"}
+
+
+def test_empty_device_logs_the_profile_and_editing_restores_yours(win):
+    p = win.dx
+    prof = win.db.default_profile()
+    prof.update({"my_rig": "FT-991A", "my_antenna": "GP", "tx_pwr": 25.0})
+    win.db.save_profile(prof)
+    p._power_hint()
+    assert p.rig.lineEdit().placeholderText() == "FT-991A"
+    p.call.setText("BA1AA")
+    p._call_edited("BA1AA")
+    p.w["freq"].setText("145.5")
+    p.mode.setCurrentText("FM")
+    p.commit()
+    qid = win.db.last_qso()["id"]
+    assert win.db.get(qid)["my_rig"] == "FT-991A" and win.db.get(qid)["tx_pwr"] == 25.0
+    p._set_device({"rig": "IC-705", "antenna": "U7V4", "power": 5})
+    p.load_qso(qid)  # the saved QSO's device shows while you edit it ...
+    assert p.rig.currentText() == "FT-991A"
+    p.clear_form(full=True)  # ... and yours comes back after
+    assert (p.rig.currentText(), p.w["tx_pwr"].text()) == ("IC-705", "5")
+    assert win.prefs.get("device")["rig"] == "IC-705"
+
+
+def test_propagation_does_not_offer_rpt(win):
+    from nwologger.core import qso as qsomod
+    from nwologger.ui.widgets import combo_value, prop_combo
+
+    c = prop_combo()
+    assert c.findData("RPT") < 0 and c.findData("GWAVE") >= 0 and c.findData("SAT") >= 0
+    # A QSO imported with RPT keeps it when you edit it.
+    qid = win.db.insert(qsomod.normalize({"call": "BA1AA", "time_on": "2026-10-10T10:00:00Z", "mode": "FM",
+                                          "band": "70cm", "prop_mode": "RPT"}))
+    win.dx.load_qso(qid)
+    assert combo_value(win.dx.prop) == "RPT"
+
+
+def test_comment_labels_say_which_one_is_uploaded(win):
+    from nwologger.core import qso as qsomod
+    from nwologger.core import sats
+    from nwologger.core.fields import BY_COL
+    from nwologger.core.sync import apply
+
+    assert BY_COL["comment"].label == "Comment (upload)" and BY_COL["notes"].label == "Notes (local)"
+    q = qsomod.normalize({"call": "BA1AA", "time_on": "2026-10-10T10:00:00Z", "mode": "FM", "band": "70cm",
+                          "comment": "Tnx QSO 73", "notes": "via BR1TST repeater, their rig UV-K5, my QTH Wudaokou"})
+    for svc in ("lotw", "eqsl", "qrz", "hrdlog"):
+        rec = apply.upload_record(q, svc, sats.load())
+        assert "NOTES" not in rec and "Wudaokou" not in "".join(rec.values()) and "BR1TST" not in "".join(rec.values())
+    assert apply.upload_record(q, "qrz", sats.load())["COMMENT"] == "Tnx QSO 73"

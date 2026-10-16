@@ -214,7 +214,7 @@ def ctrl(qtbot, tmp_path, monkeypatch, keyring_store):
     from PySide6.QtWidgets import QMessageBox, QWidget
 
     from nwologger.ui.prefs import Prefs
-    from nwologger.ui.sync_controller import SyncController
+    from nwologger.ui.sync_controller import SyncController, SyncResults
 
     prefs = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
     for user_key, value in (("lotw_user", "u"), ("eqsl_user", "u"), ("hrdlog_call", "BI1ZZZ")):
@@ -223,6 +223,8 @@ def ctrl(qtbot, tmp_path, monkeypatch, keyring_store):
         prefs.set_secret(key, SECRET)
     prefs.set_qrz_api_key("BI1ZZZ", KEY)
     db = dbm.LogDB(tmp_path / "log.sqlite", backup_on_open=False)
+    db.save_profile({"name": "BI1ZZZ", "station_callsign": "BI1ZZZ", "eqsl_qth_nickname": "Home",
+                     "is_default": True})
     db.insert(qsomod.normalize({"call": "BA1AA", "time_on": "2026-10-10T15:19:00Z", "mode": "FM", "band": "2m",
                                 "station_callsign": "BI1ZZZ"}))
     parent = QWidget()
@@ -230,6 +232,9 @@ def ctrl(qtbot, tmp_path, monkeypatch, keyring_store):
     shown: list[str] = []
     for name in ("warning", "information"):
         monkeypatch.setattr(QMessageBox, name, staticmethod(lambda _p, _t, text, *a, **k: shown.append(text)))
+    add = SyncResults.add  # what the Sync results window shows, after redaction
+    monkeypatch.setattr(SyncResults, "add", lambda self, svc, kind, text, **k: shown.append(text) or
+                        add(self, svc, kind, text, **k))
     c = SyncController(db, prefs, parent)
     c.shown = shown
     yield c

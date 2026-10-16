@@ -11,6 +11,7 @@ import html
 import logging
 import re
 import threading
+import time
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -35,6 +36,10 @@ HOSTS = {
 
 # Tests put an httpx.MockTransport here; None means the real network.
 transport: httpx.BaseTransport | None = None
+
+log = logging.getLogger("nwologger.net")
+# Lookups run for every call you type: their requests are only logged at debug level.
+_QUIET = {"qrz_xml", "hamqth"}
 
 _URL_QUERY = re.compile(r"(https?://[^\s'\"<>?#]+)\?[^\s'\"<>#]*", re.I)
 _PAIRS = re.compile(r"\b(password|passwd|pswd|eqslpswd|eqsl_pswd|api_?key)=[^&\s'\"<>]+", re.I)
@@ -166,15 +171,30 @@ def request(service: str, method: str, url: str, *, secrets: Iterable[str | None
     """Send one request; any failure, including a non-2xx status, becomes a :class:`NetError`. ``secrets`` are
     the credentials it carries: log records written meanwhile have them masked."""
     msg = None
+    level = logging.DEBUG if service in _QUIET else logging.INFO
+    where = _where(url)
+    t0 = time.monotonic()
     try:
         with _in_flight(secrets), client(service, call=call, timeout=timeout, redirects=redirects) as c:
             r = c.request(method, url, **kw)
             r.raise_for_status()
+            log.log(level, "%s %s %s: HTTP %s, %d bytes, %.1f s", NAMES[service], method, where, r.status_code,
+                    len(r.content), time.monotonic() - t0)
             return r
     except (httpx.HTTPError, BlockedURL) as e:
         msg = describe(service, e)
+    log.warning("%s %s %s failed after %.1f s: %s", NAMES[service], method, where, time.monotonic() - t0, msg)
     # Raised outside the handler so the original exception, which holds the URL, is not chained.
     raise NetError(msg)
+
+
+def _where(url: str) -> str:
+    """Host and path of a URL for the log: never its query, which may hold a password."""
+    try:
+        u = httpx.URL(url)
+        return f"{u.host}{u.path}"
+    except (TypeError, ValueError, httpx.InvalidURL):
+        return "?"
 
 
 class _RedactFilter(logging.Filter):

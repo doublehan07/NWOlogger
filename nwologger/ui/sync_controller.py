@@ -1,7 +1,12 @@
-"""Upload / download with LoTW, eQSL, QRZ.com and HRDLog. Network runs on worker threads; DB on the GUI thread."""
+"""Upload / download with LoTW, eQSL, QRZ.com and HRDLog. Network runs on worker threads; DB on the GUI thread.
+
+Outcomes go to one non-modal Sync results window, never to message boxes: results that arrive together (Sync
+everything starts three downloads) would otherwise stack modal boxes, and only the top one takes a click.
+"""
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import tempfile
@@ -9,26 +14,34 @@ from collections import defaultdict
 from datetime import timedelta
 
 from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QMessageBox,
     QProgressDialog,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from .. import __version__, i18n
+from .. import __version__, applog, i18n
 from ..core import adif, importer, net, sats, timeutil
 from ..core.sync import apply, services, tqsl
+from . import theme
 from .widgets import fmt, mode_text, run_async
 
 tr = i18n.tr
+log = logging.getLogger("nwologger.sync")
+
+RESULT_LABELS = {"ok": "Done", "info": "Note", "skipped": "Skipped", "failed": "Failed", "cancelled": "Stopped"}
+DIRECTIONS = {"up": "upload", "down": "download"}
 
 
 class UnmatchedDialog(QDialog):
@@ -62,31 +75,158 @@ class UnmatchedDialog(QDialog):
         return [self.qsos[r] for r in rows]
 
 
+class SyncResults(QDialog):
+    """Every upload and download outcome, newest first, in a window that never blocks the rest of NWOlogger."""
+
+    prefs_requested = Signal(str)
+    history_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Sync results"))
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.resize(780, 320)
+        lay = QVBoxLayout(self)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels([tr("Time (UTC)"), tr("Service"), tr("Result"), tr("Details")])
+        hh = self.table.horizontalHeader()
+        for c in range(3):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.setWordWrap(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.itemSelectionChanged.connect(self._selected)
+        self.table.cellDoubleClicked.connect(lambda *_a: self._fix())
+        lay.addWidget(self.table, 1)
+        row = QHBoxLayout()
+        self.fix_btn = QPushButton(tr("Open Preferences"))
+        self.fix_btn.setEnabled(False)
+        self.fix_btn.setToolTip(tr("Opens the Preferences page that fixes the selected result"))
+        self.fix_btn.clicked.connect(self._fix)
+        hist = QPushButton(tr("Show sync history"))
+        hist.clicked.connect(self.history_requested)
+        clear = QPushButton(tr("Clear"))
+        clear.clicked.connect(self.clear)
+        close = QPushButton(tr("Close"))
+        close.clicked.connect(self.hide)
+        for w in (self.fix_btn, hist):
+            row.addWidget(w)
+        row.addStretch(1)
+        row.addWidget(clear)
+        row.addWidget(close)
+        lay.addLayout(row)
+        self.fixes: list[str | None] = []
+
+    def add(self, service: str, kind: str, text: str, *, fix: str | None = None, ref: str | None = None) -> None:
+        self.table.insertRow(0)
+        detail = text + (f"  ·  ref {ref}" if ref else "")
+        cells = [timeutil.now_utc().strftime("%H:%M:%S"), service, tr(RESULT_LABELS.get(kind, kind)), detail]
+        t = theme.tokens()
+        color = {"ok": t.ok, "failed": t.bad, "skipped": t.warn, "cancelled": t.warn}.get(kind)
+        for c, v in enumerate(cells):
+            it = QTableWidgetItem(v)
+            if c == 3:
+                it.setToolTip(detail)
+            if c == 2 and color:
+                it.setForeground(QColor(color))
+            self.table.setItem(0, c, it)
+        self.fixes.insert(0, fix)
+        self.table.resizeRowToContents(0)
+        self.table.selectRow(0)
+
+    def clear(self) -> None:
+        self.table.setRowCount(0)
+        self.fixes = []
+        self.fix_btn.setEnabled(False)
+
+    def texts(self) -> list[str]:
+        return [self.table.item(r, 3).text() for r in range(self.table.rowCount())]
+
+    def _current_fix(self) -> str | None:
+        r = self.table.currentRow()
+        return self.fixes[r] if 0 <= r < len(self.fixes) else None
+
+    def _selected(self) -> None:
+        self.fix_btn.setEnabled(bool(self._current_fix()))
+
+    def _fix(self) -> None:
+        page = self._current_fix()
+        if page:
+            self.prefs_requested.emit(page)
+
+
 class SyncController(QObject):
     message = Signal(str)
+    prefs_requested = Signal(str)
+    history_requested = Signal()
 
     def __init__(self, db, prefs, parent: QWidget):
         super().__init__(parent)
         self.db, self.prefs, self.win = db, prefs, parent
         self.busy: set[str] = set()
+        self.jobs: dict[str, tqsl.Job] = {}
+        self.results: SyncResults | None = None
 
     def catalog(self) -> sats.SatCatalog:
         return sats.load(overrides=self.prefs.get("sat_names"), extra=self.prefs.get("user_sats"))
 
+    # ------------------------------------------------------------------ outcomes
+    def _window(self) -> SyncResults:
+        if self.results is None:
+            self.results = SyncResults(self.win)
+            self.results.prefs_requested.connect(self.prefs_requested)
+            self.results.history_requested.connect(self.history_requested)
+        return self.results
+
+    def report(self, service: str, kind: str, text: str, *, fix: str | None = None, ref: str | None = None,
+               quiet: bool = False, secrets=()) -> None:
+        """One outcome: a row in Sync results, the status bar and the log file. ``quiet`` (upload on log) only
+        brings the window up for a failure, and then without taking the keyboard from the entry form."""
+        name = apply.SERVICES.get(service, service)
+        text = self._safe(text, secrets)
+        level = logging.WARNING if kind in ("failed", "skipped", "cancelled") else logging.INFO
+        log.log(level, "%s %s%s: %s", name, RESULT_LABELS.get(kind, kind).lower(),
+                f" (ref {ref})" if ref else "", text)
+        w = self._window()
+        w.add(name, kind, text, fix=fix, ref=ref)
+        if not quiet:
+            w.show()
+            w.raise_()
+            w.activateWindow()
+        elif kind == "failed" and not w.isVisible():
+            w.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            w.show()
+            w.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+        self.message.emit(f"{name}: {text.splitlines()[0] if text else tr(RESULT_LABELS.get(kind, kind))}")
+
+    def running(self) -> list[str]:
+        """What is still running, e.g. ["LoTW upload"], for the question when you quit."""
+        out = []
+        for key in sorted(self.busy):
+            svc, d = key[:-2] if key.endswith("up") else key[:-4], "up" if key.endswith("up") else "down"
+            out.append(f"{apply.SERVICES.get(svc, svc)} {tr(DIRECTIONS[d])}")
+        return out
+
+    def cancel_all(self) -> None:
+        """Stop every TQSL run now (quitting); network requests end with their timeout on a daemon thread."""
+        for key, job in list(self.jobs.items()):
+            log.warning("Stopping %s (NWOlogger is quitting)", key)
+            job.stop()
+
     # ------------------------------------------------------------------ helpers
-    def _need(self, *pairs: tuple[str, str | None], quiet: bool = False) -> bool:
+    def _need(self, service: str, *pairs: tuple[str, str | None], quiet: bool = False) -> bool:
         missing = [label for label, v in pairs if not v]
-        if missing and quiet:
-            self.message.emit(tr("Upload skipped: set the account in Preferences → Services."))
-            return False
         if missing:
-            QMessageBox.information(self.win, tr("Account needed"),
-                                    tr("Set these in Preferences → Services first:") + "\n• " + "\n• ".join(missing))
+            self.report(service, "skipped", tr("Set these in Preferences → Services first:") + " " +
+                        ", ".join(missing), fix="Services", quiet=quiet)
             return False
         return True
 
-    def _progress(self, text: str) -> QProgressDialog:
-        dlg = QProgressDialog(text, tr("Hide"), 0, 0, self.win)
+    def _progress(self, text: str, cancel: str | None = None) -> QProgressDialog:
+        dlg = QProgressDialog(text, cancel or tr("Hide"), 0, 0, self.win)
         dlg.setWindowTitle("NWOlogger")
         dlg.setWindowModality(Qt.WindowModality.NonModal)
         dlg.setMinimumDuration(300)
@@ -101,19 +241,47 @@ class SyncController(QObject):
     def _secrets(self, qsos: list[dict]) -> list[str]:
         """All saved secrets: no upload record may carry one, whichever service it goes to."""
         calls = {p.get("station_callsign") for p in self.db.profiles()} | {q.get("station_callsign") for q in qsos}
-        return self.prefs.saved_secrets({(c or "").upper() for c in calls})
+        vals = self.prefs.saved_secrets({(c or "").upper() for c in calls})
+        applog.remember_secrets(vals)
+        return vals
+
+    def _secret(self, key: str) -> str | None:
+        v = self.prefs.secret(key)
+        applog.remember_secrets([v])
+        return v
+
+    def _account(self, key: str) -> str | None:
+        """An account user name: part of your credentials, so the log file masks it like a password."""
+        v = self.prefs.get(key)
+        applog.remember_secrets([v])
+        return v
 
     def _log(self, service: str, direction: str, started: str, secrets=(), **kw) -> None:
         if "message" in kw:
             kw["message"] = self._safe(kw["message"], secrets)
         self.db.sync_log_add(apply.SERVICES[service], direction, started, **kw)
 
-    def _fail(self, service: str, direction: str, started: str, dlg, msg: str, secrets=()) -> None:
+    def _start(self, service: str, direction: str, what: str) -> str:
+        ref = applog.new_ref()
+        self.busy.add(service + ("down" if direction == "download" else "up"))
+        log.info("%s %s started (ref %s): %s", apply.SERVICES[service], direction, ref, what)
+        return ref
+
+    def _end(self, service: str, direction: str) -> None:
+        key = service + ("down" if direction == "download" else "up")
+        self.busy.discard(key)
+        self.jobs.pop(key, None)
+
+    def _fail(self, service: str, direction: str, started: str, dlg, msg: str, secrets=(), *,
+              ref: str | None = None, quiet: bool = False) -> None:
         dlg.close()
-        self.busy.discard(service + ("down" if direction == "download" else "up"))  # the keys upload()/download() use
+        self._end(service, direction)
         msg = self._safe(msg, secrets)
         self._log(service, direction, started, errors=1, message=msg)
-        QMessageBox.warning(self.win, apply.SERVICES[service], msg)
+        low = msg.lower()
+        fix = "Station profiles" if "nickname" in low or "station location" in low else \
+            "Services" if any(w in low for w in ("password", "user", "http 401", "http 403", "key")) else None
+        self.report(service, "failed", msg, fix=fix, ref=ref, quiet=quiet)
 
     def _profile_for(self, q: dict) -> dict | None:
         if q.get("station_profile_id"):
@@ -126,24 +294,31 @@ class SyncController(QObject):
         return self.db.default_profile()
 
     def _show_unmatched(self, service: str, res: apply.ApplyResult) -> None:
+        """Opened without blocking: other results keep arriving while you choose."""
         if not res.unmatched:
             return
         dlg = UnmatchedDialog(apply.SERVICES[service], res.unmatched, self.win)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            chosen = dlg.selected()
-            if chosen:
-                r = importer.run(self.db, chosen, label=tr("Add from") + f" {apply.SERVICES[service]}")
-                self.message.emit(tr("Added") + f" {r.added} " + tr("QSOs"))
+        dlg.setWindowModality(Qt.WindowModality.NonModal)
+        dlg.accepted.connect(lambda: self._add_unmatched(service, dlg.selected()))
+        dlg.finished.connect(dlg.deleteLater)
+        dlg.show()
+
+    def _add_unmatched(self, service: str, chosen: list[dict]) -> None:
+        if chosen:
+            r = importer.run(self.db, chosen, label=tr("Add from") + f" {apply.SERVICES[service]}")
+            self.message.emit(tr("Added") + f" {r.added} " + tr("QSOs"))
 
     # ------------------------------------------------------------------ upload
     def upload(self, service: str, ids: list[int] | None = None, *, quiet: bool = False) -> None:
         key = service + "up"
         if key in self.busy:
+            if not quiet:
+                self.message.emit(f"{apply.SERVICES[service]}: " + tr("an upload is already running"))
             return
         qsos = apply.pending(self.db, service, ids)
         if not qsos:
             if not quiet:
-                QMessageBox.information(self.win, apply.SERVICES[service], tr("Nothing to upload."))
+                self.report(service, "info", tr("Nothing to upload."))
             return
         if not quiet and len(qsos) > 1 and not ids:
             if QMessageBox.question(self.win, apply.SERVICES[service],
@@ -155,23 +330,32 @@ class SyncController(QObject):
     def _upload_lotw(self, qsos: list[dict], quiet: bool) -> None:
         path = tqsl.find_tqsl(self.prefs.get("tqsl_path"))
         if not path:
-            QMessageBox.warning(self.win, "LoTW", tr("TQSL was not found. Install TrustedQSL from arrl.org, or set "
-                                                     "its location in Preferences → Services."))
+            self.report("lotw", "skipped", tr("TQSL was not found. Install TrustedQSL from arrl.org, or set its "
+                                              "location in Preferences → Services."), fix="Services", quiet=quiet)
             return
+        known = tqsl.station_locations()
         groups: dict[str, list[dict]] = defaultdict(list)
-        missing_loc = set()
+        missing_loc, unknown_loc = set(), set()
         for q in qsos:
             p = self._profile_for(q) or {}
+            name = p.get("name") or q.get("station_callsign") or "?"
             loc = p.get("lotw_location")
             if not loc:
-                missing_loc.add(p.get("name") or q.get("station_callsign") or "?")
-                continue
-            groups[loc].append(q)
+                missing_loc.add(name)
+            elif known is not None and loc not in known:
+                unknown_loc.add(f"{name} ({loc})")
+            else:
+                groups[loc].append(q)
         if missing_loc:
-            QMessageBox.warning(self.win, "LoTW", tr("Set the TQSL station location in these station profiles:")
-                                + "\n• " + "\n• ".join(sorted(missing_loc)))
-            if not groups:
-                return
+            self.report("lotw", "skipped", tr("Set the TQSL station location in these station profiles:") + " " +
+                        ", ".join(sorted(missing_loc)), fix="Station profiles", quiet=quiet)
+        if unknown_loc:
+            self.report("lotw", "skipped", tr("TQSL has no station location with this name:") + " " +
+                        ", ".join(sorted(unknown_loc)) + ". " + tr("TQSL has:") + " " +
+                        (", ".join(known) if known else tr("no station locations")), fix="Station profiles",
+                        quiet=quiet)
+        if not groups:
+            return
         cat, secrets = self.catalog(), self._secrets(qsos)
         tmpdir = tempfile.mkdtemp(prefix="nwologger-lotw-")
         jobs = []
@@ -181,14 +365,23 @@ class SyncController(QObject):
             adif.write_file(fn, recs, program_version=__version__)
             jobs.append((loc, fn, [q["id"] for q in qs]))
         started = timeutil.now_iso()
-        self.busy.add("lotwup")
-        dlg = self._progress(tr("Signing and uploading to LoTW with TQSL…"))
+        ref = self._start("lotw", "upload", f"{sum(len(j[2]) for j in jobs)} QSOs, {len(jobs)} station location(s)")
+        job = self.jobs["lotwup"] = tqsl.Job()
+        dlg = self._progress(tr("Signing and uploading to LoTW with TQSL…") + "\n\n" +
+                             tr("If TQSL asks for something, such as your certificate passphrase, answer it in "
+                                "the TQSL window. Cancel stops TQSL."))
+        stop = QPushButton(tr("Cancel"))
+        dlg.setCancelButton(stop)
+        stop.clicked.connect(job.stop)  # only the button: closing the dialog (e.g. on quit) must not stop TQSL
 
         def work():
             out = []
             try:
                 for loc, fn, ids in jobs:
-                    code, text = tqsl.sign_and_upload(path, fn, loc)
+                    if job.stopped.is_set():
+                        out.append((loc, ids, tqsl.CANCELLED, ""))
+                        continue
+                    code, text = tqsl.sign_and_upload(path, fn, loc, job=job)
                     out.append((loc, ids, code, self._safe(text)))
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
@@ -196,33 +389,46 @@ class SyncController(QObject):
 
         def done(results):
             dlg.close()
-            self.busy.discard("lotwup")
+            self._end("lotw", "upload")
             sent = 0
-            msgs = []
             for loc, ids, code, text in results:
                 if code in tqsl.SENT_CODES:
                     apply.mark_sent(self.db, "lotw", ids)
                     sent += len(ids)
-                msgs.append(f"{loc}: {tqsl.describe(code)}" + (f"\n{text[-400:]}" if code not in (0,) and text else ""))
+                kind = "ok" if code in tqsl.SENT_CODES else "cancelled" if code == tqsl.CANCELLED else "failed"
+                detail = f"{loc}: {tqsl.describe(code)} ({len(ids)} " + tr("QSOs") + ")"
+                if kind == "failed" and text:
+                    detail += "\n" + "\n".join(text.splitlines()[-4:])
+                self.report("lotw", kind, detail, ref=ref, quiet=quiet)
             errors = sum(1 for r in results if r[2] not in tqsl.SENT_CODES)
-            self._log("lotw", "upload", started, sent=sent, errors=errors, message="; ".join(m.split("\n")[0]
-                                                                                           for m in msgs))
-            if not quiet or errors:
-                QMessageBox.information(self.win, "LoTW", "\n\n".join(msgs))
+            self._log("lotw", "upload", started, sent=sent, errors=errors,
+                      message="; ".join(f"{loc}: {tqsl.describe(code)}" for loc, _i, code, _t in results))
             self.message.emit(f"LoTW: {sent} " + tr("QSOs uploaded"))
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("lotw", "upload", started, dlg, m))
+        run_async(work, on_done=done,
+                  on_error=lambda m: self._fail("lotw", "upload", started, dlg, m, ref=ref, quiet=quiet))
 
     def _upload_eqsl(self, qsos: list[dict], quiet: bool) -> None:
-        user, pw = self.prefs.get("eqsl_user"), self.prefs.secret("eqsl_password")
-        if not self._need((tr("eQSL user"), user), (tr("eQSL password"), pw), quiet=quiet):
+        user, pw = self._account("eqsl_user"), self._secret("eqsl_password")
+        if not self._need("eqsl", (tr("eQSL user"), user), (tr("eQSL password"), pw), quiet=quiet):
+            return
+        ready, missing = [], set()
+        for q in qsos:
+            p = self._profile_for(q) or {}
+            if p.get("eqsl_qth_nickname"):
+                ready.append((q, p))
+            else:
+                missing.add(p.get("name") or q.get("station_callsign") or "?")
+        if missing:
+            self.report("eqsl", "skipped", tr("Set the eQSL QTH nickname in these station profiles:") + " " +
+                        ", ".join(sorted(missing)), fix="Station profiles", quiet=quiet)
+        if not ready:
             return
         cat, secrets = self.catalog(), self._secrets(qsos)
-        recs = [(q["id"], q.get("call"), apply.upload_record(q, "eqsl", cat, self._profile_for(q), secrets))
-                for q in qsos]
+        recs = [(q["id"], q.get("call"), apply.upload_record(q, "eqsl", cat, p, secrets)) for q, p in ready]
         chunks = [recs[i:i + 250] for i in range(0, len(recs), 250)]
         started = timeutil.now_iso()
-        self.busy.add("eqslup")
+        ref = self._start("eqsl", "upload", f"{len(recs)} QSOs")
         dlg = self._progress(tr("Uploading to eQSL…"))
 
         def work():
@@ -234,45 +440,46 @@ class SyncController(QObject):
 
         def done(results):
             dlg.close()
-            self.busy.discard("eqslup")
-            ok_ids, bad = [], []
+            self._end("eqsl", "upload")
+            ok_ids, bad, problems = [], [], []
             for ch, _added, _total, lines in results:
                 bad_calls = set()
                 for ln in lines:
                     if ln.lower().startswith("error") or ("bad record" in ln.lower() and "duplicate" not in ln.lower()):
+                        problems.append(ln)
                         for _, call, _ in ch:
                             if call and call in ln:
                                 bad_calls.add(call)
                 for qid, call, _ in ch:
                     (bad if call in bad_calls else ok_ids).append(qid)
             apply.mark_sent(self.db, "eqsl", ok_ids)
-            self._log("eqsl", "upload", started, sent=len(ok_ids), errors=len(bad))
-            if not quiet or bad:
-                QMessageBox.information(self.win, "eQSL", f"{len(ok_ids)} " + tr("QSOs uploaded") +
-                                        (f", {len(bad)} " + tr("rejected") if bad else ""))
-            self.message.emit(f"eQSL: {len(ok_ids)} " + tr("QSOs uploaded"))
+            self._log("eqsl", "upload", started, sent=len(ok_ids), errors=len(bad), secrets=[pw],
+                      message="; ".join(problems)[:300])
+            text = f"{len(ok_ids)} " + tr("QSOs uploaded")
+            if bad:
+                text += f", {len(bad)} " + tr("rejected") + "\n" + "\n".join(problems[:3])
+            self.report("eqsl", "failed" if bad else "ok", text, ref=ref, quiet=quiet, secrets=[pw])
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "upload", started, dlg, m, [pw]))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "upload", started, dlg, m, [pw],
+                                                                     ref=ref, quiet=quiet))
 
     def _upload_qrz(self, qsos: list[dict], quiet: bool) -> None:
         by_call: dict[str, list[dict]] = defaultdict(list)
         for q in qsos:
             by_call[(q.get("station_callsign") or "").upper()].append(q)
         keys = {c: self.prefs.qrz_api_key(c) for c in by_call}
+        applog.remember_secrets(keys.values())
         missing = [c or "?" for c, k in keys.items() if not k]
-        if missing and quiet:
-            if all(not k for k in keys.values()):
-                return
-        elif missing:
-            QMessageBox.information(self.win, "QRZ.com", tr("Add the QRZ Logbook API key for these station calls in "
-                                                            "Preferences → Services:") + "\n• " + "\n• ".join(missing))
+        if missing:
+            self.report("qrz", "skipped", tr("Add the QRZ Logbook API key for these station calls in Preferences → "
+                                             "Services:") + " " + ", ".join(missing), fix="Services", quiet=quiet)
             if all(not k for k in keys.values()):
                 return
         cat, secrets = self.catalog(), self._secrets(qsos)
         jobs = [(q["id"], c, keys[c], apply.upload_record(q, "qrz", cat, secrets=secrets),
                  q.get("qrzcom_qso_upload_status") == "M") for c, qs in by_call.items() if keys.get(c) for q in qs]
         started = timeutil.now_iso()
-        self.busy.add("qrzup")
+        ref = self._start("qrz", "upload", f"{len(jobs)} QSOs")
         dlg = self._progress(tr("Uploading to QRZ.com Logbook…"))
 
         def work():
@@ -287,24 +494,22 @@ class SyncController(QObject):
 
         def done(results):
             dlg.close()
-            self.busy.discard("qrzup")
+            self._end("qrz", "upload")
             ok = [r for r in results if r[1]]
             bad = [r for r in results if not r[1]]
             apply.mark_sent(self.db, "qrz", [r[0] for r in ok], logids={r[0]: r[2] for r in ok})
-            self._log("qrz", "upload", started, sent=len(ok), errors=len(bad),
-                      message="; ".join({r[3] for r in bad})[:300])
-            if not quiet or bad:
-                QMessageBox.information(self.win, "QRZ.com", f"{len(ok)} " + tr("QSOs uploaded") +
-                                        (f"\n{len(bad)} " + tr("failed") + ": " + "; ".join({r[3] for r in bad})[:300]
-                                         if bad else ""))
-            self.message.emit(f"QRZ.com: {len(ok)} " + tr("QSOs uploaded"))
+            reasons = "; ".join(sorted({r[3] for r in bad}))[:300]
+            self._log("qrz", "upload", started, sent=len(ok), errors=len(bad), message=reasons)
+            text = f"{len(ok)} " + tr("QSOs uploaded") + (f"\n{len(bad)} " + tr("failed") + ": " + reasons
+                                                          if bad else "")
+            self.report("qrz", "failed" if bad else "ok", text, ref=ref, quiet=quiet, secrets=list(keys.values()))
 
         run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "upload", started, dlg, m,
-                                                                     list(keys.values())))
+                                                                     list(keys.values()), ref=ref, quiet=quiet))
 
     def _upload_hrdlog(self, qsos: list[dict], quiet: bool) -> None:
-        call, code = self.prefs.get("hrdlog_call"), self.prefs.secret("hrdlog_code")
-        if not self._need((tr("HRDLog callsign"), call), (tr("HRDLog upload code"), code), quiet=quiet):
+        call, code = self._account("hrdlog_call"), self._secret("hrdlog_code")
+        if not self._need("hrdlog", (tr("HRDLog callsign"), call), (tr("HRDLog upload code"), code), quiet=quiet):
             return
         cat, secrets = self.catalog(), self._secrets(qsos)
         jobs = []
@@ -316,7 +521,7 @@ class SyncController(QObject):
                 key = f"{q.get('call')}{on[0]}{on[1][:4]}" if on else None
             jobs.append((q["id"], rec, key))
         started = timeutil.now_iso()
-        self.busy.add("hrdlogup")
+        ref = self._start("hrdlog", "upload", f"{len(jobs)} QSOs")
         dlg = self._progress(tr("Uploading to HRDLog…"))
 
         def work():
@@ -331,38 +536,39 @@ class SyncController(QObject):
 
         def done(results):
             dlg.close()
-            self.busy.discard("hrdlogup")
+            self._end("hrdlog", "upload")
             ok = [r[0] for r in results if r[1]]
             bad = [r for r in results if not r[1]]
             apply.mark_sent(self.db, "hrdlog", ok)
-            self._log("hrdlog", "upload", started, sent=len(ok), errors=len(bad),
-                      message="; ".join({r[2] for r in bad})[:300])
-            if not quiet or bad:
-                QMessageBox.information(self.win, "HRDLog", f"{len(ok)} " + tr("QSOs uploaded") +
-                                        (f"\n{len(bad)} " + tr("failed") + ": " + "; ".join({r[2] for r in bad})[:300]
-                                         if bad else ""))
-            self.message.emit(f"HRDLog: {len(ok)} " + tr("QSOs uploaded"))
+            reasons = "; ".join(sorted({r[2] for r in bad}))[:300]
+            self._log("hrdlog", "upload", started, sent=len(ok), errors=len(bad), message=reasons)
+            text = f"{len(ok)} " + tr("QSOs uploaded") + (f"\n{len(bad)} " + tr("failed") + ": " + reasons
+                                                          if bad else "")
+            self.report("hrdlog", "failed" if bad else "ok", text, ref=ref, quiet=quiet, secrets=[code])
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("hrdlog", "upload", started, dlg, m, [code]))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("hrdlog", "upload", started, dlg, m, [code],
+                                                                     ref=ref, quiet=quiet))
 
     # ------------------------------------------------------------------ download
     def download(self, service: str) -> None:
         if service == "hrdlog":
-            QMessageBox.information(self.win, "HRDLog", tr("HRDLog.net has no public download API, so NWOlogger can "
-                                                           "only upload to it. (It sends no confirmations back.)"))
+            self.report("hrdlog", "info", tr("HRDLog.net has no public download API, so NWOlogger can only "
+                                             "upload to it. (It sends no confirmations back.)"))
             return
         if service + "down" in self.busy:
+            self.message.emit(f"{apply.SERVICES[service]}: " + tr("a download is already running"))
             return
         getattr(self, f"_download_{service}")()
 
     def _download_lotw(self) -> None:
-        user, pw = self.prefs.get("lotw_user"), self.prefs.secret("lotw_password")
-        if not self._need((tr("LoTW user"), user), (tr("LoTW password"), pw)):
+        user, pw = self._account("lotw_user"), self._secret("lotw_password")
+        if not self._need("lotw", (tr("LoTW user"), user), (tr("LoTW password"), pw)):
             return
         since_qsl = self.db.sync_get("lotw", "last_qsl")
         since_rx = self.db.sync_get("lotw", "last_qsorx")
         started = timeutil.now_iso()
-        self.busy.add("lotwdown")
+        ref = self._start("lotw", "download", f"confirmations since {since_qsl or 'the start'}, uploads since "
+                                              f"{since_rx or 'the start'}")
         dlg = self._progress(tr("Downloading from LoTW…"))
 
         def work():
@@ -372,7 +578,7 @@ class SyncController(QObject):
 
         def done(res):
             dlg.close()
-            self.busy.discard("lotwdown")
+            self._end("lotw", "download")
             h1, r1, h2, r2 = res
             cat = self.catalog()
             up = apply.apply_lotw_uploads(self.db, r2, cat)
@@ -383,22 +589,30 @@ class SyncController(QObject):
                 self.db.sync_set("lotw", "last_qsorx", h2["APP_LOTW_LASTQSORX"])
             self._log("lotw", "download", started, received=a.total, matched=a.matched,
                       message=f"{a.changed} confirmations updated; {up.changed} upload states updated")
-            QMessageBox.information(self.win, "LoTW",
-                                    f"{a.total} " + tr("confirmations received") + f", {a.matched} " + tr("matched") +
-                                    f", {a.changed} " + tr("updated") + f".\n{up.changed} " +
-                                    tr("QSOs marked as uploaded."))
+            log.info("LoTW download (ref %s): %d uploads received, %d matched, %d unmatched", ref, up.total,
+                     up.matched, len(up.unmatched))
+            self.report("lotw", "ok", f"{a.total} " + tr("confirmations received") + f", {a.matched} " +
+                        tr("matched") + f", {a.changed} " + tr("updated") + f". {up.changed} " +
+                        tr("QSOs marked as uploaded."), ref=ref)
             self._show_unmatched("lotw", a)
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("lotw", "download", started, dlg, m, [pw]))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("lotw", "download", started, dlg, m, [pw],
+                                                                     ref=ref))
 
     def _download_eqsl(self) -> None:
-        user, pw = self.prefs.get("eqsl_user"), self.prefs.secret("eqsl_password")
-        if not self._need((tr("eQSL user"), user), (tr("eQSL password"), pw)):
+        user, pw = self._account("eqsl_user"), self._secret("eqsl_password")
+        if not self._need("eqsl", (tr("eQSL user"), user), (tr("eQSL password"), pw)):
+            return
+        profiles = self.db.profiles()
+        nicks = sorted({p["eqsl_qth_nickname"] for p in profiles if p.get("eqsl_qth_nickname")})
+        if not nicks:
+            self.report("eqsl", "skipped", tr("Set the eQSL QTH nickname in your station profile (as shown on "
+                                              "eQSL.cc under My Profile). eQSL needs it when your account has more "
+                                              "than one QTH."), fix="Station profiles")
             return
         since = self.db.sync_get("eqsl", "rcvd_since")
-        nicks = {p.get("eqsl_qth_nickname") for p in self.db.profiles() if p.get("eqsl_qth_nickname")} or {None}
         started = timeutil.now_iso()
-        self.busy.add("eqsldown")
+        ref = self._start("eqsl", "download", f"{len(nicks)} QTH nickname(s), since {since or 'the start'}")
         dlg = self._progress(tr("Downloading from eQSL…"))
 
         def work():
@@ -410,28 +624,30 @@ class SyncController(QObject):
 
         def done(recs):
             dlg.close()
-            self.busy.discard("eqsldown")
+            self._end("eqsl", "download")
             a = apply.apply_eqsl(self.db, recs, self.catalog())
             # RcvdSince is a date: start the next download a day early, so cards that arrive later today aren't
             # missed (cards already applied just match again).
             self.db.sync_set("eqsl", "rcvd_since", (timeutil.now_utc() - timedelta(days=1)).strftime("%Y%m%d"))
             self._log("eqsl", "download", started, received=a.total, matched=a.matched,
                       message=f"{a.changed} updated")
-            QMessageBox.information(self.win, "eQSL", f"{a.total} " + tr("cards received") + f", {a.matched} " +
-                                    tr("matched") + f", {a.changed} " + tr("updated") + ".")
+            self.report("eqsl", "ok", f"{a.total} " + tr("cards received") + f", {a.matched} " + tr("matched") +
+                        f", {a.changed} " + tr("updated") + ".", ref=ref)
             self._show_unmatched("eqsl", a)
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "download", started, dlg, m, [pw]))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "download", started, dlg, m, [pw],
+                                                                     ref=ref))
 
     def _download_qrz(self) -> None:
         calls = sorted({p.get("station_callsign") for p in self.db.profiles() if p.get("station_callsign")})
         keys = {c: self.prefs.qrz_api_key(c) for c in calls}
         keys = {c: k for c, k in keys.items() if k}
+        applog.remember_secrets(keys.values())
         if not keys:
-            QMessageBox.information(self.win, "QRZ.com", tr("Add a QRZ Logbook API key in Preferences → Services."))
+            self.report("qrz", "skipped", tr("Add a QRZ Logbook API key in Preferences → Services."), fix="Services")
             return
         started = timeutil.now_iso()
-        self.busy.add("qrzdown")
+        ref = self._start("qrz", "download", f"{len(keys)} logbook(s)")
         dlg = self._progress(tr("Downloading from QRZ.com Logbook…"))
 
         def work():
@@ -442,20 +658,19 @@ class SyncController(QObject):
 
         def done(recs):
             dlg.close()
-            self.busy.discard("qrzdown")
+            self._end("qrz", "download")
             a = apply.apply_qrz(self.db, recs, self.catalog())
             self._log("qrz", "download", started, received=a.total, matched=a.matched,
                       message=f"{a.changed} updated")
-            QMessageBox.information(self.win, "QRZ.com", f"{a.total} " + tr("records received") + f", {a.matched} " +
-                                    tr("matched") + f", {a.changed} " + tr("updated") + ".")
+            self.report("qrz", "ok", f"{a.total} " + tr("records received") + f", {a.matched} " + tr("matched") +
+                        f", {a.changed} " + tr("updated") + ".", ref=ref)
             self._show_unmatched("qrz", a)
 
         run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "download", started, dlg, m,
-                                                                     list(keys.values())))
+                                                                     list(keys.values()), ref=ref))
 
     def upload_on_log(self, qid: int) -> None:
         on = self.prefs.get("upload_on_log") or {}
         for svc in ("qrz", "eqsl", "hrdlog"):
             if on.get(svc):
                 self.upload(svc, [qid], quiet=True)
-

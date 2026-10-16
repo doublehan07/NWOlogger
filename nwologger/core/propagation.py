@@ -24,14 +24,17 @@ LOTW = {
     "TEP": "Trans-equatorial",
     "TR": "Tropospheric ducting",
 }
-# Further ADIF values that LoTW does not accept.
+# Further ADIF values that LoTW does not accept, offered in the dropdown.
 ADIF_ONLY = {
     "GWAVE": "Ground wave",
     "INTERNET": "Internet-assisted",
     "LOS": "Line of sight",
+}
+# Known but not offered: a repeater is written in Notes (local) instead. A QSO imported with RPT keeps it.
+NOT_OFFERED = {
     "RPT": "Terrestrial repeater or transponder",
 }
-ALL = {**LOTW, **ADIF_ONLY}
+ALL = {**LOTW, **ADIF_ONLY, **NOT_OFFERED}
 
 # QSOs with these are not sent to LoTW at all; other ADIF-only values are just left out of the upload.
 LOTW_SKIP = {"INTERNET", "RPT"}

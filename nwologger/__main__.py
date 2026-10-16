@@ -15,10 +15,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--db", help="open this log file (SQLite)")
     p.add_argument("--lang", choices=["en", "zh_CN"], help="UI language for this run")
     p.add_argument("--theme", choices=["system", "light", "dark"], help="theme for this run")
+    p.add_argument("--debug", action="store_true", help="write more detail to the log file (never any password)")
     args, qt_args = p.parse_known_args(argv)
     from .app import run  # noqa: PLC0415 - keep --version fast and Qt-free
 
-    return run([sys.argv[0], *qt_args], db_path=args.db, lang=args.lang, theme_mode=args.theme)
+    return run([sys.argv[0], *qt_args], db_path=args.db, lang=args.lang, theme_mode=args.theme, debug=args.debug)
 
 
 if __name__ == "__main__":

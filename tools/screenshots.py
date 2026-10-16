@@ -93,6 +93,11 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     db = build_db(TMP / "nwolog.sqlite")
     prefs = Prefs()
+    prefs.set("rigs", ["FT-991A", "IC-705", "IC-9700"])
+    prefs.set("antennas", ["Inverted V", "Yagi 2m/70cm", "Vertical"])
+    prefs.set("setups", [{"name": "Home HF", "rig": "FT-991A", "antenna": "Inverted V", "power": 100},
+                         {"name": "Sat portable", "rig": "IC-705", "antenna": "Yagi 2m/70cm", "power": 5},
+                         {"name": "VHF base", "rig": "IC-9700", "antenna": "Vertical", "power": 25}])
     state = {"step": 0}
     shots: list = []
 
@@ -119,6 +124,9 @@ def main() -> None:
         set_combo_data(p.mode, "FT8")
         p.w["time_on"].set_iso("2026-10-16T08:12:20Z")
         p._time_edited("on")
+        p.setup.setCurrentIndex(1)
+        p._setup_picked(1)
+        p.w["comment"].setText("Tnx QSO 73")
         p._refresh_checks()
 
     def step():
@@ -147,6 +155,13 @@ def main() -> None:
             d.show()
             QTimer.singleShot(400, lambda: (save(d, "prefs-modes"), d.close(), step()))
         elif s == 3:
+            from nwologger.ui.prefs_dialog import PrefsDialog
+
+            w = shots[-1]
+            d = PrefsDialog(db, prefs, w, page="Devices")
+            d.show()
+            QTimer.singleShot(400, lambda: (save(d, "prefs-devices"), d.close(), step()))
+        elif s == 4:
             w = shots[-1]
             sid = db.create_contest_session("CQWW-CW", "CQ WW DX Contest (CW) 2026", "2026-11-28T00:00:00Z",
                                             {"sent": {"rst": "599", "zone": "24"},
@@ -170,12 +185,12 @@ def main() -> None:
             c._call_edited("JA1TS")
             c.refresh_checks()
             QTimer.singleShot(500, lambda: (save(w, "contest"), w.set_view(0), w.close(), step()))
-        elif s == 4:
+        elif s == 5:
             w = make_window("dark")
             fill_entry(w)
             shots.append(w)
             QTimer.singleShot(500, lambda: (save(w, "dark"), w.close(), step()))
-        elif s == 5:
+        elif s == 6:
             w = make_window("light", "zh_CN")
             fill_entry(w)
             shots.append(w)

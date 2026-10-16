@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, qVersion
 from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QTabWidget, QTextBrowser, QVBoxLayout
 
-from .. import APP_NAME, __version__, i18n
+from .. import APP_NAME, __version__, applog, i18n
 from ..core.db import SCHEMA_VERSION
 from . import theme
 
@@ -72,7 +72,8 @@ class AboutDialog(QDialog):
         info = QTextBrowser()
         self.info_text = (f"{APP_NAME} {__version__}\nQt {qVersion()} · PySide6 {PYSIDE_VERSION}\n"
                           f"{tr('Database schema')} v{SCHEMA_VERSION}\n{tr('Log file')}: {db.path}\n"
-                          f"{tr('Backups')}: {db.backup_dir}")
+                          f"{tr('Backups')}: {db.backup_dir}\n"
+                          f"{tr('Diagnostic log')}: {applog.tidy_path(applog.log_file())}")
         info.setPlainText(self.info_text)
         info.setFont(theme.mono_font())
         tabs.addTab(info, tr("System"))

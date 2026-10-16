@@ -1,6 +1,6 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger. What is left is below.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log. What is left is below.
 
 ## Needs real accounts
 
@@ -19,12 +19,14 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [x] QRZ.com XML lookups, including "not found"
 - [ ] HamQTH lookups (no account yet); evaluate HamQTH API v2; check whether it accepts the password by POST
 - [x] Password by POST: QRZ.com XML accepts it (login and lookups now use POST); LoTW (HTTP 405) and eQSL do not, so they keep the GET query their APIs document
+- [ ] eQSL error text: with a wrong password or QTH nickname, the Sync results row shows eQSL's own `Error…` line (and the log the page text)
+- [ ] TQSL with a passphrase-protected certificate: TQSL asks in its own window; *Cancel* stops it; quitting during the upload asks and stops it
+- [ ] TQSL station locations on Windows (`%APPDATA%\TrustedQSL\station_data`) fill the Preferences dropdown
 
 ## Next
 
 - [ ] **Gridmaster-style grid display:** a map of Maidenhead grid squares coloured by worked / confirmed (VUCC), per band, mode or satellite
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
-- [ ] Check the MacLoggerDX import of upload history: after a LoTW or QRZ.com download, most QSOs marked "pending" for those services turned out to be there already; eQSL and HRDLog pending can't be checked by download
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Bulk edit: refuse a Time Off earlier than Time On, as the entry form does
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
@@ -39,10 +41,25 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Later / maybe
 
+- [ ] Statistics view: totals per year, band, mode and satellite, unique calls, QSL counts
+- [ ] Import aliases for satellite spellings other programs use (`TEVEL-5`, `InspireSat-7`, `ISS` → `ARISS`) and Yaesu's `FM DN` mode
+
 - [ ] macOS code signing + notarization (the BY1QH icon is in place)
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
+
+## Done in v0.1.2 (2026-10-16)
+
+- [x] **Device section** in the entry form: rig (`MY_RIG`), antenna (`MY_ANTENNA`) and power (`TX_PWR`, moved from the RST row), from your lists in Preferences → Devices. A *setup* you put together there (rig + antenna + power) fills all three in one pick, and each can still be changed; empty fields log the station profile's. *Keep: Device* replaces *Keep: Power*; *Clear* keeps the Device section; contest QSOs use it too
+- [x] *Comment (upload)* (`COMMENT`, sent to eQSL, QRZ.com, HRDLog) and *Notes (local)* (`NOTES`, never uploaded, e.g. the repeater you used, the other station's rig, antenna and power, or your QTH)
+- [x] Propagation no longer offers RPT (a repeater goes in *Notes (local)*); QSOs imported with RPT keep it and are still not sent to LoTW
+- [x] **MacLoggerDX upload history:** a QSO confirmed by LoTW or QRZ.com is marked uploaded there, also on ADIF import (MLDX only records its own uploads: 502 LoTW-confirmed QSOs had none in a real log); the import preview counts them and suggests downloading first
+- [x] **eQSL / TQSL settings checked before a run:** a station profile without an eQSL QTH nickname or a TQSL station location, or with a location TQSL doesn't have, is skipped with a clear row; the TQSL station location is a dropdown of TQSL's own locations
+- [x] **Readable service errors:** eQSL and LoTW pages without a result show their `Error…` line, never JavaScript
+- [x] **No more stacked message boxes:** every sync outcome is a row in one non-modal Sync results window, with *Open Preferences* where a setting fixes it; the Unmatched list no longer blocks
+- [x] **No more hang on quit:** TQSL runs in its own process group and *Cancel* stops it; quitting during a sync asks, then stops TQSL; background work runs on daemon threads, so quitting never waits for it
+- [x] **Diagnostic log** (Help → Show log folder): sync runs with a ref, requests by host and path, TQSL results, Qt warnings, uncaught exceptions, and thread stacks when the window stops responding for 15 s; every secret and account user name is masked, also in tracebacks; `--debug` for more detail
 
 ## Done in v0.1.0
 

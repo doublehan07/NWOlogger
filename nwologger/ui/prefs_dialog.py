@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
-from ..core import dxcc, sats
+from ..core import devices, dxcc, sats
 from ..core import secrets as keychain
 from ..core.sync import tqsl
 from . import theme
@@ -49,6 +49,29 @@ PROFILE_FIELDS = [
     ("my_sota_ref", "My SOTA"), ("my_wwff_ref", "My WWFF"), ("lotw_location", "TQSL station location"),
     ("eqsl_qth_nickname", "eQSL QTH nickname"),
 ]
+
+
+class ChoiceEdit(QComboBox):
+    """An editable dropdown with QLineEdit's text API, for a field with known values (TQSL station locations)."""
+
+    def __init__(self, choices: list[str], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.addItems(choices)
+        self.setCurrentIndex(-1)
+
+    def text(self) -> str:
+        return self.currentText()
+
+    def setText(self, text: str | None) -> None:  # noqa: N802 - QLineEdit API
+        self.setEditText(text or "")
+
+    def clear(self) -> None:  # only the text: the choices stay
+        self.setEditText("")
+
+    def setPlaceholderText(self, text: str) -> None:  # noqa: N802 - QLineEdit API
+        self.lineEdit().setPlaceholderText(text)
 
 
 class SecretField(QWidget):
@@ -146,8 +169,17 @@ class ProfilesPage(QWidget):
         self.station_type.addItem(tr("Personal station: I am the operator"), "personal")
         self.station_type.addItem(tr("Club station: ask who is operating"), "club")
         self.station_type.currentIndexChanged.connect(self._type_changed)
+        locations = tqsl.station_locations()
         for key, label in PROFILE_FIELDS:
-            e = QLineEdit()
+            if key == "lotw_location":
+                e = ChoiceEdit(locations or [])
+                e.setPlaceholderText(tr("choose one of your TQSL station locations") if locations else
+                                     tr("as named in TQSL (no TQSL station locations found)"))
+                e.setToolTip(tr("LoTW uploads are signed by TQSL with this station location"))
+            else:
+                e = QLineEdit()
+            if key == "eqsl_qth_nickname":
+                e.setPlaceholderText(tr("as on eQSL.cc → My Profile; needed for eQSL"))
             self.edits[key] = e
             form.addRow(tr(label), e)
             if key == "station_callsign":
@@ -279,6 +311,143 @@ class ProfilesPage(QWidget):
         self._reload()
 
 
+class ChoiceDelegate(QStyledItemDelegate):
+    """A setup's rig or antenna cell: pick one from your list, or type another name."""
+
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self.items = items
+
+    def createEditor(self, parent, _option, _index):  # noqa: N802 - Qt API
+        c = QComboBox(parent)
+        c.setEditable(True)
+        c.addItems(self.items())
+        return c
+
+    def setEditorData(self, editor, index):  # noqa: N802 - Qt API
+        editor.setEditText(index.data() or "")
+
+    def setModelData(self, editor, model, index):  # noqa: N802 - Qt API
+        model.setData(index, editor.currentText().strip())
+
+
+class DevicesPage(QWidget):
+    """Your rigs, antennas and setups (rig + antenna + power) for the entry form's Device section."""
+
+    def __init__(self, db, prefs):
+        super().__init__()
+        self.db = db
+        lay = QVBoxLayout(self)
+        hint = QLabel(tr("Your rigs and antennas are listed in the entry form's Device section. A setup puts a rig, "
+                         "an antenna and a power together: one pick in the form fills all three, and you can still "
+                         "change each one. They are logged as ADIF MY_RIG, MY_ANTENNA and TX_PWR; when the form "
+                         "leaves one empty, the station profile's is logged."))
+        hint.setObjectName("Hint")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        lists = QHBoxLayout()
+        self.rigs = self._list_box(lists, tr("Rigs"), prefs.get("rigs"), "my_rig")
+        self.antennas = self._list_box(lists, tr("Antennas"), prefs.get("antennas"), "my_antenna")
+        lay.addLayout(lists, 1)
+        lay.addWidget(QLabel("<b>" + tr("Setups") + "</b>"))
+        self.setups = QTableWidget(0, 4)
+        self.setups.setHorizontalHeaderLabels([tr("Setup name"), tr("Rig"), tr("Antenna"), tr("Power (W)")])
+        self.setups.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.setups.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.setups.verticalHeader().setVisible(False)
+        self.setups.setItemDelegateForColumn(1, ChoiceDelegate(lambda: self.names(self.rigs), self.setups))
+        self.setups.setItemDelegateForColumn(2, ChoiceDelegate(lambda: self.names(self.antennas), self.setups))
+        for st in devices.clean_setups(prefs.get("setups")):
+            self._add_setup(st)
+        lay.addWidget(self.setups, 1)
+        row = QHBoxLayout()
+        add = QPushButton(tr("Add setup"))
+        add.setIcon(theme.icon("plus"))
+        add.clicked.connect(self._new_setup)
+        rm = QPushButton(tr("Remove setup"))
+        rm.setIcon(theme.icon("trash-2"))
+        rm.clicked.connect(lambda: self.setups.removeRow(self.setups.currentRow())
+                           if self.setups.currentRow() >= 0 else None)
+        row.addWidget(add)
+        row.addWidget(rm)
+        row.addStretch(1)
+        lay.addLayout(row)
+
+    def _list_box(self, parent: QHBoxLayout, title: str, names, col: str) -> QListWidget:
+        box = QVBoxLayout()
+        box.addWidget(QLabel(f"<b>{title}</b>"))
+        lw = QListWidget()
+        lw.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        lw.setToolTip(tr("Double-click to rename; drag to reorder"))
+        for n in devices.clean_names(names):
+            self._add_item(lw, n)
+        box.addWidget(lw, 1)
+        row = QHBoxLayout()
+        add = QPushButton(tr("Add"))
+        add.clicked.connect(lambda: self._new_item(lw))
+        rm = QPushButton(tr("Remove"))
+        rm.clicked.connect(lambda: [lw.takeItem(lw.row(i)) for i in lw.selectedItems()])
+        from_log = QPushButton(tr("Add the ones in your log"))
+        from_log.setToolTip(tr("Adds every name your QSOs already use (e.g. from a MacLoggerDX import)"))
+        from_log.clicked.connect(lambda: self._from_log(lw, col))
+        for b in (add, rm, from_log):
+            row.addWidget(b)
+        row.addStretch(1)
+        box.addLayout(row)
+        parent.addLayout(box, 1)
+        return lw
+
+    @staticmethod
+    def _add_item(lw: QListWidget, text: str) -> QListWidgetItem:
+        it = QListWidgetItem(text)
+        it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
+        lw.addItem(it)
+        return it
+
+    def _new_item(self, lw: QListWidget) -> None:
+        it = self._add_item(lw, "")
+        lw.setCurrentItem(it)
+        lw.editItem(it)
+
+    def _from_log(self, lw: QListWidget, col: str) -> None:
+        have = {n.lower() for n in self.names(lw)}
+        for v in self.db.distinct(col):
+            v = (v or "").strip()
+            if v and v.lower() not in have:
+                have.add(v.lower())
+                self._add_item(lw, v)
+
+    @staticmethod
+    def names(lw: QListWidget) -> list[str]:
+        return devices.clean_names(lw.item(i).text() for i in range(lw.count()))
+
+    def _add_setup(self, st: dict) -> int:
+        r = self.setups.rowCount()
+        self.setups.insertRow(r)
+        power = st.get("power")
+        for c, v in enumerate([st.get("name"), st.get("rig"), st.get("antenna"),
+                               f"{power:g}" if isinstance(power, float) else (power or "")]):
+            self.setups.setItem(r, c, QTableWidgetItem(v or ""))
+        return r
+
+    def _new_setup(self) -> None:
+        r = self._add_setup({"name": f"{tr('Setup')} {self.setups.rowCount() + 1}"})
+        self.setups.setCurrentCell(r, 0)
+        self.setups.editItem(self.setups.item(r, 0))
+
+    def setups_value(self) -> list[dict]:
+        rows = []
+        for r in range(self.setups.rowCount()):
+            cell = [(self.setups.item(r, c).text() if self.setups.item(r, c) else "").strip() for c in range(4)]
+            rows.append({"name": cell[0], "rig": cell[1], "antenna": cell[2], "power": cell[3]})
+        return devices.clean_setups(rows)
+
+    def save(self, prefs) -> None:
+        prefs.set("rigs", self.names(self.rigs))
+        prefs.set("antennas", self.names(self.antennas))
+        prefs.set("setups", self.setups_value())
+
+
 class PrefsDialog(QDialog):
     def __init__(self, db, prefs, parent=None, page: str | None = None):
         super().__init__(parent)
@@ -310,6 +479,8 @@ class PrefsDialog(QDialog):
         # Station profiles
         self.profiles_page = ProfilesPage(db, prefs)
         self.tabs.addTab(self.profiles_page, tr("Station profiles"))
+        self.devices_page = DevicesPage(db, prefs)
+        self.tabs.addTab(self.devices_page, tr("Devices"))
 
         # Logging
         lg = QWidget()
@@ -662,6 +833,7 @@ class PrefsDialog(QDialog):
         p.set("upload_on_log", {"qrz": self.up_qrz.isChecked(), "eqsl": self.up_eqsl.isChecked(),
                                 "hrdlog": self.up_hrd.isChecked()})
         p.set("user_sats", self.user_sats)
+        self.devices_page.save(p)
         modes_chosen = [self.mode_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.mode_list.count())
                         if self.mode_list.item(i).checkState() == Qt.CheckState.Checked]
         p.set("mode_list", modes_chosen or list(MODE_FIRST))

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import i18n
-from ...core import bands, callsign, dupes, dxcc, geo, modes, regions, sats, similar, timeutil
+from ...core import bands, callsign, devices, dupes, dxcc, geo, modes, regions, sats, similar, timeutil
 from ...core import qso as qsomod
 from ...core.contest import scp as scpmod
 from ...core.operators import OperatorSession, is_club
@@ -60,8 +60,20 @@ FROM_LOG_COLS = ["first_name", "last_name", "qth", "address", "state", "gridsqua
 LOOKUP_COLS = ["first_name", "last_name", "qth", "address", "state", "cnty", "country", "gridsquare", "email",
                "web", "qsl_via", "cqz", "ituz", "dxcc", "iota"]
 PROFILE_COLS = ["station_callsign", "my_gridsquare", "my_vucc_grids", "my_dxcc", "my_cq_zone",
-                "my_itu_zone", "my_state", "my_cnty", "my_pota_ref", "my_sota_ref", "my_wwff_ref", "my_rig",
-                "my_antenna"]
+                "my_itu_zone", "my_state", "my_cnty", "my_pota_ref", "my_sota_ref", "my_wwff_ref"]
+# The Device section; when empty, the station profile's rig, antenna and power are logged.
+DEVICE_COLS = {"rig": "my_rig", "antenna": "my_antenna", "power": "tx_pwr"}
+EDIT_SETUPS = "__edit__"
+
+
+def _side_by_side(*items: tuple[QWidget, int]) -> QWidget:
+    w = QWidget()
+    lay = QHBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(4)
+    for wdg, stretch in items:
+        lay.addWidget(wdg, stretch)
+    return w
 
 
 class DXPanel(QWidget):
@@ -70,6 +82,7 @@ class DXPanel(QWidget):
     message = Signal(str)
     lookup_requested = Signal(str)
     profiles_requested = Signal()
+    devices_requested = Signal()
 
     def __init__(self, db, prefs, parent=None, ops: OperatorSession | None = None):
         super().__init__(parent)
@@ -91,6 +104,9 @@ class DXPanel(QWidget):
                                         scpmod.Scp.from_file(scpmod.path_for(db.path)).calls)
         self._asked_online: set[str] = set()
         self._similar_key: tuple | None = None
+        self._setups: list[dict] = []
+        self._device_busy = False  # setting the Device fields from code: don't save or re-match each change
+        self._session_device: dict = {}  # your Device fields while you edit a saved QSO
         self._build()
         self._clock = QTimer(self)
         self._clock.timeout.connect(self._tick)
@@ -109,7 +125,10 @@ class DXPanel(QWidget):
         self._index_timer.timeout.connect(lambda: self._index.set_worked(self.db.calls_last_worked()))
         self.db.add_listener(self._on_db_change)
         self.reload_profiles()
+        self.reload_devices()
+        saved_device = self.prefs.get("device") or {}
         self.clear_form(keep_sticky=False)
+        self._set_device(saved_device)
 
     # ------------------------------------------------------------------ layout
     def _build(self) -> None:
@@ -219,17 +238,14 @@ class DXPanel(QWidget):
         rst = QHBoxLayout()
         self.w["rst_sent"] = AutoLineEdit(mono=True)
         self.w["rst_rcvd"] = AutoLineEdit(mono=True)
-        self.w["tx_pwr"] = AutoLineEdit(mono=True)
         self.w["rst_sent"].setPlaceholderText(tr("Sent"))
         self.w["rst_rcvd"].setPlaceholderText(tr("Rcvd"))
-        self.w["tx_pwr"].setPlaceholderText(tr("W"))
-        self.w["tx_pwr"].setToolTip(tr("Power (W)"))
-        for k in ("rst_sent", "rst_rcvd", "tx_pwr"):
+        for k in ("rst_sent", "rst_rcvd"):
             rst.addWidget(self.w[k])
         rst_w = QWidget()
         rst_w.setLayout(rst)
         rst.setContentsMargins(0, 0, 0, 0)
-        c.row(5, tr("RST · Power"), rst_w)
+        c.row(5, tr("RST"), rst_w)
         self.prop = prop_combo()
         self.prop.setToolTip(tr("Propagation mode (TQSL / LoTW list)"))
         self.prop.currentIndexChanged.connect(self._prop_changed)
@@ -292,13 +308,49 @@ class DXPanel(QWidget):
         rw2.setLayout(refs2)
         m.row(4, "", rw2)
         self.w["comment"] = AutoLineEdit()
-        self.w["comment"].setToolTip(tr("Comment: may be sent to QSL services"))
-        m.row(5, tr("Comment"), self.w["comment"])
+        self.w["comment"].setPlaceholderText(tr("e.g. your name, tnx QSO 73"))
+        self.w["comment"].setToolTip(tr("Uploaded with the QSO to eQSL, QRZ.com and HRDLog (ADIF COMMENT): for "
+                                        "the other station, e.g. your name or a thank-you."))
+        m.row(5, tr("Comment (upload)"), self.w["comment"])
         self.w["notes"] = AutoLineEdit()
-        self.w["notes"].setToolTip(tr("Notes: private, never uploaded"))
-        m.row(6, tr("Notes"), self.w["notes"])
+        self.w["notes"].setPlaceholderText(tr("e.g. repeater; their rig, antenna, power; my QTH"))
+        self.w["notes"].setToolTip(tr("Only for you, never uploaded (ADIF NOTES): e.g. the repeater you used, "
+                                      "their rig, antenna and power, or where you operated from."))
+        m.row(6, tr("Notes (local)"), self.w["notes"])
         m.grid.setColumnStretch(1, 1)
-        grid.addWidget(m, 0, 2)
+
+        d = Section(tr("Device"))
+        self.setup = QComboBox()
+        self.setup.setToolTip(tr("A setup fills rig, antenna and power in one pick; you can still change each one. "
+                                 "Put setups together in Preferences → Devices."))
+        self.setup.activated.connect(self._setup_picked)
+        self.w["tx_pwr"] = AutoLineEdit(mono=True)
+        self.w["tx_pwr"].setPlaceholderText(tr("W"))
+        self.w["tx_pwr"].setToolTip(tr("Power (W)"))
+        self.w["tx_pwr"].setMaximumWidth(72)
+        self.rig = QComboBox()
+        self.antenna = QComboBox()
+        for cb, tip in ((self.rig, tr("My rig (ADIF MY_RIG). Your rigs are listed in Preferences → Devices.")),
+                        (self.antenna, tr("My antenna (ADIF MY_ANTENNA). Your antennas are listed in Preferences → "
+                                          "Devices."))):
+            cb.setEditable(True)
+            cb.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            cb.setToolTip(tip)
+            cb.setMinimumContentsLength(6)
+            cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            cb.editTextChanged.connect(lambda *_a: self._device_edited())
+            cb.lineEdit().returnPressed.connect(self.commit)
+        self.w["tx_pwr"].textChanged.connect(lambda *_a: self._device_edited())
+        d.row(0, tr("Setup · Power"), _side_by_side((self.setup, 1), (self.w["tx_pwr"], 0)))
+        d.row(1, tr("Rig · Antenna"), _side_by_side((self.rig, 1), (self.antenna, 1)))
+        d.grid.setColumnStretch(1, 1)
+        col2 = QWidget()
+        col2_lay = QVBoxLayout(col2)
+        col2_lay.setContentsMargins(0, 0, 0, 0)
+        col2_lay.setSpacing(8)
+        col2_lay.addWidget(m, 1)
+        col2_lay.addWidget(d)
+        grid.addWidget(col2, 0, 2)
 
         wb = Section(tr("Worked before"))
         self.similar = QTableWidget(0, 2)
@@ -361,9 +413,12 @@ class DXPanel(QWidget):
         sticky_lab.setProperty("muted", True)
         bar.addWidget(sticky_lab)
         self.sticky: dict[str, QCheckBox] = {}
-        on = set(self.prefs.get("sticky"))
-        for key, label in (("freq", "Freq"), ("mode", "Mode"), ("sat", "Sat"), ("power", "Power")):
+        on = {"device" if k == "power" else k for k in self.prefs.get("sticky")}  # "power" before 0.1.2
+        for key, label in (("freq", "Freq"), ("mode", "Mode"), ("sat", "Sat"), ("device", "Device")):
             cb = QCheckBox(tr(label))
+            if key == "device":
+                cb.setToolTip(tr("Keep rig, antenna and power after Log QSO. Off: back to the station "
+                                 "profile's."))
             cb.setChecked(key in on)
             cb.toggled.connect(self._sticky_changed)
             self.sticky[key] = cb
@@ -513,6 +568,77 @@ class DXPanel(QWidget):
     def reload_lists(self) -> None:
         fill_mode_combo(self.mode, self.prefs)
         self.reload_sats()
+        self.reload_devices()
+
+    # ------------------------------------------------------------------ device (rig, antenna, power)
+    def reload_devices(self) -> None:
+        """Your rigs, antennas and setups from Preferences → Devices."""
+        self._setups = devices.clean_setups(self.prefs.get("setups"))
+        self._device_busy = True
+        try:
+            for cb, key in ((self.rig, "rigs"), (self.antenna, "antennas")):
+                text = cb.currentText()
+                cb.clear()
+                cb.addItems(devices.clean_names(self.prefs.get(key)))
+                cb.setEditText(text)
+            self.setup.blockSignals(True)
+            self.setup.clear()
+            self.setup.addItem("—", None)
+            for i, st in enumerate(self._setups):
+                self.setup.addItem(st["name"], i)
+                tip = " · ".join(x for x in (st["rig"], st["antenna"], f"{fmt('tx_pwr', st['power'])} W"
+                                             if st["power"] is not None else "") if x)
+                self.setup.setItemData(self.setup.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
+            self.setup.insertSeparator(self.setup.count())
+            self.setup.addItem(tr("Edit setups…"), EDIT_SETUPS)
+            self.setup.blockSignals(False)
+        finally:
+            self._device_busy = False
+        self._match_setup()
+
+    def _setup_picked(self, index: int) -> None:
+        data = self.setup.itemData(index)
+        if data == EDIT_SETUPS:
+            self._match_setup()
+            self.devices_requested.emit()
+            return
+        if data is None:  # "—" keeps what the fields hold
+            return
+        st = self._setups[data]
+        power = st["power"] if st["power"] is not None else self._get("tx_pwr")
+        self._set_device({"rig": st["rig"], "antenna": st["antenna"], "power": power})
+
+    def device_values(self) -> dict:
+        return {"rig": self.rig.currentText().strip(), "antenna": self.antenna.currentText().strip(),
+                "power": self._get("tx_pwr")}
+
+    def _apply_device(self, d: dict) -> None:
+        busy, self._device_busy = self._device_busy, True
+        try:
+            self.rig.setEditText(d.get("rig") or "")
+            self.antenna.setEditText(d.get("antenna") or "")
+            self._set("tx_pwr", devices.power_value(d.get("power")))
+        finally:
+            self._device_busy = busy
+
+    def _set_device(self, d: dict) -> None:
+        self._apply_device(d)
+        self._device_edited()
+
+    def _device_edited(self) -> None:
+        if self._device_busy:
+            return
+        self._match_setup()
+        if self.edit_id is None:
+            self.prefs.set("device", self.device_values())
+
+    def _match_setup(self) -> None:
+        """The Setup dropdown names the setup the fields equal, or shows "—" once you change one of them."""
+        cur = self.device_values()
+        i = devices.matching(self._setups, cur["rig"], cur["antenna"], cur["power"])
+        self.setup.blockSignals(True)
+        self.setup.setCurrentIndex(0 if i is None else i + 1)
+        self.setup.blockSignals(False)
 
     def _mode_picked(self, *_a) -> None:
         if self.mode.currentData() == OTHER:
@@ -611,6 +737,8 @@ class DXPanel(QWidget):
         q["mode"], q["submode"] = m, s
         q["sat_name"] = self._get("sat_name")
         q["prop_mode"] = self._get("prop_mode") or ("SAT" if q["sat_name"] else None)
+        dev = self.device_values()
+        q["my_rig"], q["my_antenna"] = dev["rig"] or None, dev["antenna"] or None
         q.update(self._hidden)
         return q
 
@@ -954,12 +1082,13 @@ class DXPanel(QWidget):
     # ------------------------------------------------------------------ actions
     def clear_form(self, keep_sticky: bool = True, *, full: bool = False) -> None:
         """Reset the form for the next QSO. ``full`` (Clear, Esc, Cancel) also empties frequency, mode, reports,
-        power, propagation and satellite, whatever Keep says."""
+        propagation and satellite, whatever Keep says; the Device section (rig, antenna, power) stays."""
         keep = {k for k, cb in self.sticky.items() if cb.isChecked()} if keep_sticky and not full else set()
         freq, freq_rx = self._get("freq"), self._get("freq_rx")
-        mode, power = combo_value(self.mode), self._get("tx_pwr")
+        mode, device = combo_value(self.mode), self.device_values()
         sat, prop = combo_value(self.sat), combo_value(self.prop)
         was_editing = self.edit_id is not None
+        self._device_busy = True
         self.edit_id = None
         self.call.blockSignals(True)
         self.call.clear()
@@ -986,10 +1115,18 @@ class DXPanel(QWidget):
             set_combo_data(self.mode, "")
             self.mode.blockSignals(False)
             self.rx_sync.setChecked(bool(self.prefs.get("rx_sync")))
-        if "power" in keep:
-            self._set("tx_pwr", power)
-        elif not full and (self.current_profile() or {}).get("tx_pwr"):
-            self._set("tx_pwr", self.current_profile()["tx_pwr"])
+        # The Device section is your station, not the contact: Clear keeps it. After Log QSO it stays when Keep
+        # Device is on, else it goes back to the station profile's (shown greyed in the empty fields).
+        if was_editing:
+            self._apply_device(self._session_device)
+        elif full or "device" in keep:
+            self._apply_device(device)
+        elif keep_sticky:
+            self._apply_device({})
+        self._device_busy = False
+        self._match_setup()
+        if keep_sticky or was_editing:
+            self._device_edited()
         self._power_hint()
         self._mode_changed(combo_value(self.mode) or "")
         self.time_on_locked = False
@@ -1007,9 +1144,13 @@ class DXPanel(QWidget):
         self.call.setFocus()
 
     def _power_hint(self) -> None:
-        """An empty Power shows the profile's default power, which is used when you log without typing one."""
-        d = (self.current_profile() or {}).get("tx_pwr")
+        """Empty Device fields show the station profile's rig, antenna and power: what is logged if you leave them
+        empty."""
+        prof = self.current_profile() or {}
+        d = prof.get("tx_pwr")
         self.w["tx_pwr"].setPlaceholderText(f"{fmt('tx_pwr', d)} W" if d else tr("W"))
+        self.rig.lineEdit().setPlaceholderText(prof.get("my_rig") or tr("Rig"))
+        self.antenna.lineEdit().setPlaceholderText(prof.get("my_antenna") or tr("Antenna"))
 
     def recall_previous(self) -> None:
         last = self.db.last_qso()
@@ -1022,8 +1163,9 @@ class DXPanel(QWidget):
         self.sat.blockSignals(False)
         self.prop.blockSignals(False)
         self.rx_sync.setChecked(not last.get("freq_rx") or last.get("freq_rx") == last.get("freq"))
-        for col in ("freq", "freq_rx", "tx_pwr"):
+        for col in ("freq", "freq_rx"):
             self._set(col, last.get(col))
+        self._set_device({"rig": last.get("my_rig"), "antenna": last.get("my_antenna"), "power": last.get("tx_pwr")})
         set_combo_data(self.mode, mode_text(last) or "SSB")
         self._freq_changed()
 
@@ -1031,6 +1173,8 @@ class DXPanel(QWidget):
         q = self.db.get(qid)
         if not q:
             return
+        if self.edit_id is None:
+            self._session_device = self.device_values()
         self.clear_form(keep_sticky=False)
         self.edit_id = qid
         self.call.setText(q.get("call") or "")
@@ -1040,6 +1184,7 @@ class DXPanel(QWidget):
         self.rx_sync.blockSignals(False)
         for col in TEXT_COLS:
             self._set(col, q.get(col))
+        self._set_device({"rig": q.get("my_rig"), "antenna": q.get("my_antenna"), "power": q.get("tx_pwr")})
         self.w["time_on"].set_iso(q.get("time_on"))
         self.w["time_off"].set_iso(q.get("time_off") or q.get("time_on"))
         self.time_on_locked = True
@@ -1129,8 +1274,9 @@ class DXPanel(QWidget):
         for col in PROFILE_COLS:
             if prof.get(col) not in (None, ""):
                 nq[col] = prof[col]
-        if nq.get("tx_pwr") in (None, "") and prof.get("tx_pwr"):
-            nq["tx_pwr"] = prof["tx_pwr"]
+        for col in DEVICE_COLS.values():  # an empty Device field logs the profile's
+            if nq.get(col) in (None, "") and prof.get(col) not in (None, ""):
+                nq[col] = prof[col]
         if op:
             nq["operator"] = op
         if prof.get("id"):
