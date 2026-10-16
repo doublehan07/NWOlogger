@@ -1,0 +1,35 @@
+# Personal log data: never commit (contains other operators' names, emails, addresses)
+*.sql
+*.sqlite
+*.sqlite-*
+*.db
+*.adi
+*.adif
+*.adx
+*.cbr
+*.log
+backups/
+# Test fixtures are synthetic and may be committed
+!tests/fixtures/**
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Build output
+build/
+dist/
+*.spec
+
+# Qt compiled translations are built in CI
+*.qm
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
