@@ -277,7 +277,7 @@ class DXPanel(QWidget):
         bar.setSpacing(6)
         self.lookup_btn = QPushButton(tr("Lookup"))
         self.lookup_btn.setIcon(theme.icon("search"))
-        self.lookup_btn.setToolTip(tr("Look up the call on QRZ.com / HamQTH (⌘/Ctrl+K L)"))
+        self.lookup_btn.setToolTip(tr("Look up the call on QRZ.com / HamQTH"))
         self.lookup_btn.clicked.connect(lambda: self.request_lookup(force=True))
         prev = QPushButton(tr("Previous"))
         prev.setIcon(theme.icon("history"))
