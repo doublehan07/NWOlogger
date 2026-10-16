@@ -255,11 +255,24 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 - **Entry panel (DX).** The field set follows MacLoggerDX, without rig info. Name is split into First and Last, as in MLDX.
   - **Location** is kept to what is needed: Country, Province, Address (street, city → ADIF `ADDRESS` / `QTH`), CQ zone, ITU zone. County, lat/lon and other location fields are not on the form; they are kept if an import brings them.
   - A summary line under the call shows the last confirmation (e.g. "Confirmed 2025-08-18 on 70CM FM"), plus bearing and distance computed from the two grids.
-  - Times stamp automatically. TimeOn/TimeOff buttons re-stamp "now".
-  - *Sticky* fields carry over to the next QSO, which matters for satellite passes.
-  - The **Sat dropdown** comes from a bundled `sats.json` of LoTW-accepted `SAT_NAME`s. Picking a satellite sets `prop_mode=SAT` and fills its default up/down frequencies and mode.
-    - Names not on the list (e.g. `RS95S`, `TEVEL5`) can still be typed.
+  - **Times:**
+    - Time On stamps itself when you start typing a call, and Time Off follows the clock until you log.
+    - If you change Time On (by hand or with *Now*), Time Off becomes Time On + 1 min, and keeps following Time On.
+    - When you edit an existing QSO, changing Time On keeps its original duration.
+    - Changing only Time Off never touches Time On.
+    - A Time Off earlier than Time On turns red, and logging is refused with a warning.
+  - **Frequencies:** the field is labelled **TX MHz**; RX MHz sits below it.
+    - An **= TX** toggle keeps RX equal to TX, for simplex.
+    - Picking a satellite turns it off, because satellites are split; clearing the satellite turns it back on.
+  - **Mode** is a plain dropdown: common modes first, then every ADIF mode and submode, plus generic DATA / PHONE.
+  - **Propagation** is a dropdown of TQSL's 16 propagation modes (AS, AUE, AUR, BS, ECH, EME, ES, F2, FAI, ION, IRL, MS, RS, SAT, TEP, TR).
+    - It also offers the ADIF-only GWAVE, INTERNET, LOS and RPT, marked "not for LoTW".
+    - The ADIF `SAT_MODE` field is no longer on the form; it is kept when an import brings it.
+  - **Satellite** is a dropdown: the LoTW / TQSL list (`sats.json`), satellites you added in Preferences → Satellites, and names found only in your log.
+    - Picking one sets propagation SAT and fills the frequencies and mode from your last QSO on it (else its defaults).
     - Per-service names are handled on upload (§8.2).
+  - **Operator** box (top right) shows who is operating. See §6.3.
+  - *Sticky* fields carry over to the next QSO, which matters for satellite passes.
   - *Previous* recalls the last QSO's fields.
   - Enter logs the QSO, Esc clears the form.
   - Double-clicking a row loads that QSO into the panel for editing (Save / Cancel).
@@ -277,7 +290,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
   - Mark paper QSL sent… / received…
   - Lookup & fill missing
   - Recompute DXCC
-  - Not a dupe / Show the QSO it collides with
+  - Compare with the original… / Not a dupe
 - **Paper QSL tab.**
   - A queue of QSOs marked "to send" (`qsl_sent = Q/R`).
   - Actions: set sent date, set received date, set via (Bureau / Direct / Manager).
@@ -295,6 +308,34 @@ Bulk edit follows the BBLogger idea of editing many selected QSOs at once, with 
 - A preview lists the count and an old → new diff of the first rows.
 - Apply runs in one transaction and is recorded in `undo_log`, so it can be undone.
 - After applying, the affected QSOs are flagged as modified for QRZ and HRDLog re-upload (§4.1).
+
+### 6.2 Dupe compare and review
+
+A window shows a QSO and the earlier QSO it may duplicate side by side.
+- **Layout:** fields that differ are highlighted, and the fields that decide a dupe (call, band, mode, satellite, time) are bold. A line on top says why it was flagged, e.g. "same mode and submode, 21 min apart. Warning only."
+- **Actions:**
+  - *Not a dupe*: marks it `OK`, so later scans leave it alone.
+  - *Merge into original*: copies the fields and confirmations the original is missing, then deletes this QSO.
+  - *Delete this QSO* / *Delete original*.
+  - *Edit…*: opens the QSO in the entry form.
+  - Every action can be undone.
+- **Opened from:**
+  - *Review suspicious dupes…* (⇧⌘D / Ctrl+Shift+D), which steps through every marked QSO with Previous / Next.
+  - The right-click *Compare with the original…*.
+  - The question after an import or *Find duplicates*.
+  - The **Compare…** button next to the DUPE / Possible dupe chip while you type. That view compares the not-yet-logged QSO.
+
+### 6.3 Operators (personal and club stations)
+
+Each station profile is a **personal** or a **club** station.
+
+- **Personal:** the operator is the profile's operator, or else its station callsign.
+- **Club:** QHlogger asks *who is operating* at the first QSO after start, and keeps the answer while the app runs.
+  - It asks again, prefilled, when a new UTC day starts or after a 3-hour break without logging. The break catches a change of operator between shifts.
+  - The operator box and ⇧⌘O / Ctrl+Shift+O change the operator at any time.
+  - The list offers the station's recent operators from the log.
+- The operator goes into ADIF `OPERATOR`. Cabrillo `OPERATORS` lists every operator of a contest session.
+- Logging is refused if the operator prompt is cancelled.
 
 ## 7. Search
 
@@ -414,6 +455,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 - **Upload:** LoTW only accepts logs signed by **TQSL**. QHlogger exports pending QSOs for each station profile to a temp ADIF and runs `tqsl -x -d -u -a compliant -l "<station location>" file.adi`.
   - It then parses the exit code and stderr, and sets `lotw_qsl_sent=Y` and `lotw_qslsdate`.
   - TQSL must be installed with a valid certificate. Its path is auto-detected and can be overridden in Prefs.
+  - **Propagation mode:** QSOs via repeater (`RPT`) or internet (`INTERNET`) are not sent to LoTW. Other values TQSL does not accept (`GWAVE`, `LOS`) are left out of the upload record.
 
 ### 8.4 eQSL
 
@@ -554,8 +596,9 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 | Section | Settings |
 |---|---|
 | General | Language (English / 简体中文), date/time display, theme follows the OS |
-| Station profiles | One or more profiles |
-| Logging | Sticky fields, default RST by mode group, dupe block window (30 s), dupe warning window (24 h), allow-dupes switch, auto-lookup |
+| Station profiles | One or more profiles; each is a personal or a club station (§6.3) |
+| Satellites | Satellites offered in the entry form (LoTW / TQSL list + your own), and the name sent to each service |
+| Logging | Sticky fields, RX = TX default, default RST by mode group, dupe block window (30 s), dupe warning window (24 h), allow-dupes switch, auto-lookup |
 | Lookup | QRZ XML user/password, HamQTH user/password, cache TTL, `cty.csv` update |
 | Services | LoTW user/password + TQSL path + station location per profile; eQSL user/password/QTH nickname; QRZ API key per logbook; HRDLog call + upload code (+ website login if download works); upload-on-log switches; satellite name map per service |
 | Database | Path, backup count |
@@ -594,6 +637,11 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | MacLoggerDX data | Migrated from the database file, with upload history; a bare `Y` in the sent column is ignored; both MLDX files are git-ignored | §8.1.1 |
 | Location data | Country, Province, Address, CQ zone, ITU zone are enough; MLDX `ext_val_3` is lookup province text, normalised into Province | §4.1, §6, §8.1.1, §9 |
 | WSJT-X / JTDX / N1MM UDP | Later milestone | M9 |
+| Time Off | Follows Time On + 1 min when Time On is changed; earlier than Time On is refused | §6 |
+| Entry dropdowns | Mode, satellite and propagation are dropdowns; propagation uses TQSL's list; satellites can be added in Prefs | §6 |
+| Dupe display | A side-by-side compare / review window | §6.2 |
+| Operators | Personal or club station; club asks at the first QSO, again on a new UTC day or after a 3-hour break | §6.3 |
+| Logo and About | The BY1QH logo is the app icon; About lists authors Han Zhang (BI1NWO) and Claude, copyright Han Zhang, credit BY1QH | §14 |
 | License | MIT | `LICENSE` |
 
 ### Open
@@ -619,4 +667,6 @@ Where the code differs from, or adds to, the plan above:
 - **MASTER.SCP** is downloaded on request into the log's folder. Check Partial also uses every call in your log.
 - **The country file** is checked weekly and downloaded to `Documents/QHlogger/cty.csv`. The bundled copy is the fallback.
 - **The MacLoggerDX importer** also maps the remaining MLDX columns: `azimuth`, `elevation`, `distance`, latitude/longitude and the `ext_val_*` fields go to `extra`. MLDX grid-line pairs (`OM32,OM33`) go to `*_VUCC_GRIDS`.
-
+- **Branding:** the BY1QH logo (`resources/brand/by1qh.png`) is the window and app icon; PyInstaller converts it to `.icns` / `.ico` with Pillow at build time. Help → About (or the version button in the toolbar) shows the authors (Han Zhang BI1NWO, Claude), copyright (Han Zhang), the BY1QH credit, data and software credits, and system info that can be copied into bug reports.
+- **Tester sample:** `tests/fixtures/sample.adi` is a synthetic 17-QSO log (satellite pass, HF, one strict and one suspicious dupe) for trying the app; a test keeps it importable.
+- **TQSL data:** the propagation list and five extra satellites come from TQSL's current configuration (`config.tq6` v11.34, lotw.arrl.org). RS95S is on LoTW's FAQ list but not yet in that configuration; both sources are kept.

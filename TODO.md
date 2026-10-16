@@ -12,9 +12,11 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 
 ## Next
 
-- [ ] App icon (.icns / .ico) and macOS code signing + notarization
+- [ ] macOS code signing + notarization (the BY1QH icon is in place)
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
-- [ ] Screenshots for the README, made from a synthetic log
+- [ ] Screenshots for the README, made from `tests/fixtures/sample.adi`
+- [ ] Contest entry line: show and change the operator there too (today it shares the DX panel's operator)
+- [ ] Bulk edit: refuse a Time Off earlier than Time On, as the entry form does
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
 - [ ] Bulk "Look up and fill" progress dialog with cancel
 - [ ] Find duplicates: merge two QSOs field by field
@@ -43,3 +45,14 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 - [x] M7 Contest: setup with contest dropdown, N1MM entry keys, serials, live dupes and score, Check Partial / N+1 / Score / Multipliers / Rate docks, MASTER.SCP download, Cabrillo export, user-defined contests
 - [x] M8 Simplified Chinese UI; PyInstaller spec, Inno Setup script, release workflow
 - [x] Country file (cty.csv) update from country-files.com, checked weekly
+
+## Done after first testing (2026-10-16)
+
+- [x] Time Off follows Time On + 1 min when Time On is changed (an edited QSO keeps its duration); changing Time Off alone never moves Time On; Time Off earlier than Time On is refused with a warning
+- [x] "MHz" is "TX MHz"; an "= TX" toggle keeps RX MHz equal to TX (off for satellites)
+- [x] Mode is a dropdown; Propagation is a dropdown of TQSL's 16 modes (+ ADIF-only, marked not for LoTW); Satellite is a dropdown, with your own satellites added in Preferences → Satellites
+- [x] LoTW upload leaves out repeater / internet QSOs and drops propagation values TQSL rejects
+- [x] Side-by-side dupe compare / review window (Not a dupe, Merge, Delete, Edit, Previous / Next)
+- [x] Operators: personal vs club station profiles; club asks at the first QSO, again on a new UTC day or after a 3-hour break; Cabrillo OPERATORS from the log
+- [x] BY1QH logo as the app icon (`resources/brand/`); new About page (authors, copyright, credits, system info)
+- [x] README: how to test, file tree, links to PLAN and TODO; synthetic `tests/fixtures/sample.adi`
