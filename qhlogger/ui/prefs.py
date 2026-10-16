@@ -1,0 +1,96 @@
+"""Application preferences (QSettings). Secrets are never stored here; see core.secrets."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from PySide6.QtCore import QSettings
+
+from ..core import db as dbm
+from ..core import secrets
+
+DEFAULTS: dict[str, Any] = {
+    "language": "en",
+    "theme": "system",
+    "db_path": str(dbm.DEFAULT_PATH),
+    "backup_keep": 20,
+    "block_seconds": 30,
+    "warn_hours": 24,
+    "allow_dupes": False,
+    "sticky": ["freq", "mode", "sat", "power"],
+    "auto_lookup": True,
+    "lookup_ttl_days": 30,
+    "qrz_user": "",
+    "hamqth_user": "",
+    "lotw_user": "",
+    "tqsl_path": "",
+    "eqsl_user": "",
+    "hrdlog_call": "",
+    "upload_on_log": {"qrz": False, "eqsl": False, "hrdlog": False},
+    "sat_names": {},
+    "mode_exact": False,
+    "current_contest": None,
+}
+
+SECRET_KEYS = {
+    "qrz_password": ("qrz_xml", "qrz_user"),
+    "hamqth_password": ("hamqth", "hamqth_user"),
+    "lotw_password": ("lotw", "lotw_user"),
+    "eqsl_password": ("eqsl", "eqsl_user"),
+    "hrdlog_code": ("hrdlog", "hrdlog_call"),
+}
+
+
+class Prefs:
+    def __init__(self, settings: QSettings | None = None):
+        self.s = settings or QSettings("QHlogger", "QHlogger")
+
+    def get(self, key: str) -> Any:
+        default = DEFAULTS.get(key)
+        v = self.s.value(key)
+        if v is None:
+            return default
+        if isinstance(default, bool):
+            return v in (True, "true", "1", 1)
+        if isinstance(default, int):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return default
+        if isinstance(default, (list, dict)):
+            if isinstance(v, str):
+                try:
+                    return json.loads(v)
+                except ValueError:
+                    return default
+            return v
+        return v
+
+    def set(self, key: str, value: Any) -> None:
+        if isinstance(value, (list, dict)):
+            value = json.dumps(value)
+        self.s.setValue(key, value)
+
+    # Secrets live in the keychain, keyed by the matching user name.
+    def secret(self, key: str) -> str | None:
+        service, user_key = SECRET_KEYS[key]
+        return secrets.get(service, self.get(user_key) or "")
+
+    def set_secret(self, key: str, value: str | None) -> bool:
+        service, user_key = SECRET_KEYS[key]
+        return secrets.set(service, self.get(user_key) or "", value)
+
+    def qrz_api_key(self, station_call: str) -> str | None:
+        return secrets.get("qrz_logbook", station_call.upper()) if station_call else None
+
+    def set_qrz_api_key(self, station_call: str, key: str | None) -> bool:
+        return secrets.set("qrz_logbook", station_call.upper(), key)
+
+    # UI state
+    def value(self, key: str, default: Any = None) -> Any:
+        v = self.s.value(key)
+        return default if v is None else v
+
+    def set_value(self, key: str, value: Any) -> None:
+        self.s.setValue(key, value)

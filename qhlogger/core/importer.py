@@ -58,12 +58,13 @@ def fill_location(q: dict, cty: dxcc.CtyDB | None = None) -> dict:
 
 
 def apply_profile(q: dict, profile: dict | None) -> dict:
-    if not profile:
+    """Give records without a station callsign the chosen station profile."""
+    if not profile or q.get("station_callsign"):
         return q
     for col in ("station_callsign", "operator", "my_gridsquare"):
         if not q.get(col) and profile.get(col):
             q[col] = profile[col]
-    if not q.get("station_profile_id") and profile.get("id"):
+    if profile.get("id"):
         q["station_profile_id"] = profile["id"]
     return q
 
