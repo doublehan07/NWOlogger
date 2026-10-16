@@ -1,12 +1,9 @@
-<p align="center"><img src="qhlogger/resources/brand/by1qh.png" alt="BY1QH" width="128"></p>
-
-# QHlogger
+# NWOlogger
 
 A minimal, cross-platform amateur radio logger for macOS and Windows. It is modelled on
 **MacLoggerDX** for everyday logging and on **N1MM Logger+** for contesting, with its own
-modern UI, and built with Python and Qt (PySide6). Made for the BY1QH club station.
+modern UI, and built with Python and Qt (PySide6).
 
-> **Status: v0.1.0, first working version, ready for testers.**
 > - Logging, search, bulk edit, dupe review, paper QSL tracking, ADIF, MacLoggerDX migration and contest mode work and are tested.
 > - Uploads to LoTW, eQSL, QRZ.com and HRDLog, downloads from LoTW, eQSL and QRZ.com, and QRZ.com lookups have been tried with real accounts. HamQTH has not yet.
 >
@@ -39,13 +36,13 @@ You need [uv](https://docs.astral.sh/uv/). It fetches the right Python (3.12) by
 | Windows (PowerShell) | `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
 
 ```sh
-git clone https://github.com/BY1QH/QHlogger.git
-cd QHlogger
+git clone https://github.com/doublehan07/NWOlogger.git
+cd NWOlogger
 uv sync                                       # install dependencies (first run takes a minute)
-uv run qhlogger --db ~/qhlogger-test.sqlite   # use a throw-away log file for testing
+uv run nwologger --db ~/nwologger-test.sqlite   # use a throw-away log file for testing
 ```
 
-Without `--db`, QHlogger uses `~/Documents/QHlogger/qhlog.sqlite`. Other options: `--lang zh_CN`, `--theme dark|light`, `--version`.
+Without `--db`, NWOlogger uses `~/Documents/NWOlogger/nwolog.sqlite`. Other options: `--lang zh_CN`, `--theme dark|light`, `--version`.
 
 **A first test, step by step:**
 
@@ -72,7 +69,7 @@ Without `--db`, QHlogger uses `~/Documents/QHlogger/qhlog.sqlite`. Other options
 ```sh
 uv run pytest      # tests (Qt runs off-screen; they never reach the network or your keychain)
 uv run ruff check  # lint
-uv run --with pyinstaller --with pillow pyinstaller packaging/qhlogger.spec --noconfirm   # stand-alone app in dist/
+uv run --with pyinstaller --with pillow pyinstaller packaging/nwologger.spec --noconfirm   # stand-alone app in dist/
 ```
 
 Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Actions build a macOS `.dmg` and a Windows installer.
@@ -82,7 +79,7 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
 - **One SQLite file** holds every QSO.
   - Columns are plain ADIF names, so the log can be queried with any SQLite tool.
   - The log is backed up automatically on open and before every import or bulk edit.
-- **ADIF import and export:** export all, selected, or filtered QSOs. Fields QHlogger doesn't know are kept and written back out.
+- **ADIF import and export:** export all, selected, or filtered QSOs. Fields NWOlogger doesn't know are kept and written back out.
 - **MacLoggerDX migration** straight from its database. It keeps the LoTW, eQSL, QRZ and HRDLog upload history and the paper card dates that MLDX's own ADIF export drops.
 - **Search** across several criteria at once, with `?` / `*` wildcards on callsigns. Mode search is vague by default (`SSB` finds USB/LSB, `DIGI` finds FT8), with an *Exact* option. Searches can be saved.
 - **Sorting** by any column, including satellite name, time on and time off. Columns can be shown, hidden and moved.
@@ -107,7 +104,7 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
 - **Bulk edit** of a selection, with a preview and undo.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
   - **Uploads are always your choice.** *Sync everything* only downloads. QSOs not yet uploaded to all four services are shown in grey (the tooltip names the missing services); the preset *Not uploaded to every service* lists them, and *Upload selected* sends them.
-  - Downloads also record what is already uploaded: LoTW's report of accepted QSOs and the QRZ.com logbook mark those QSOs as uploaded. eQSL (it only offers your inbox) and HRDLog (no download) can't tell QHlogger what you uploaded there before.
+  - Downloads also record what is already uploaded: LoTW's report of accepted QSOs and the QRZ.com logbook mark those QSOs as uploaded. eQSL (it only offers your inbox) and HRDLog (no download) can't tell NWOlogger what you uploaded there before.
 - **Paper QSL cards** tracked separately (sent and received dates, via bureau, direct or manager), with a "to send" queue.
 - **Callsign lookup:** offline country file (`cty.csv`, updated weekly), then QRZ.com XML with HamQTH as fallback. Chinese provinces are normalised to standard codes (BJ, SC, …).
 - **Contest mode (N1MM style):**
@@ -116,7 +113,7 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - Cabrillo export.
 - **Modern UI** with light and dark themes, keyboard-first (command palette ⌘K / Ctrl+K), in **English and 简体中文**.
 
-No rig control, by design: QHlogger never talks to a radio.
+No rig control, by design: NWOlogger never talks to a radio.
 
 ## Keyboard
 
@@ -139,9 +136,9 @@ No rig control, by design: QHlogger never talks to a radio.
 ## What is where
 
 ```
-QHlogger/
-├── qhlogger/                  the app (Python package)
-│   ├── __main__.py            command line: qhlogger [--db FILE] [--lang zh_CN] [--theme dark] [--version]
+NWOlogger/
+├── nwologger/                  the app (Python package)
+│   ├── __main__.py            command line: nwologger [--db FILE] [--lang zh_CN] [--theme dark] [--version]
 │   ├── app.py                 starts Qt: language, theme, log file, main window
 │   ├── i18n.py                tr(): looks up UI text in resources/translations/
 │   ├── core/                  all logic, no Qt (unit-tested)
@@ -169,7 +166,7 @@ QHlogger/
 │   │   ├── list_picker.py     "Other mode… / Other satellite…" search
 │   │   ├── bulk_edit.py, qsl_paper.py, import_dialog.py, prefs_dialog.py, about_dialog.py, …
 │   │   └── theme.py           colours, light / dark stylesheet, icons
-│   └── resources/             cty.csv, sats.json, icons (Lucide), brand/by1qh.png, translations/zh_CN.json
+│   └── resources/             cty.csv, sats.json, icons (Lucide), brand/ (app icon), translations/zh_CN.json
 ├── tests/                     pytest suite; fixtures/sample.adi is a synthetic log for trying the app
 ├── tools/screenshots.py       renders docs/screenshots/ from made-up data
 ├── docs/screenshots/          the README screenshots
@@ -185,14 +182,13 @@ QHlogger/
   - Saved secrets are never shown again. *Forget* in Preferences removes one; renaming an account removes the old account's entry.
   - Deleting the last station profile with a callsign removes that callsign's QRZ Logbook key.
 - Error messages, sync history and logs never contain a password, key, upload code or session token, even when a service echoes one back encoded. Requests go over HTTPS to each service's own hosts only, redirects included. QRZ.com XML gets the password and session key in the request body; LoTW and eQSL only accept them in the (encrypted) URL. HTTP request logging stays off even when the app logs at DEBUG.
-- **If you used v0.1.0:** a LoTW or eQSL download that failed with an HTTP error could save the password in sync history, and imported fields could hold one. After the update QHlogger cleans the log once, using your saved passwords and keys, then lists backups that still hold one (also File → Check backups for saved passwords…; the check runs again after each Preferences save). Delete those backups and change the passwords. A password you have changed since can't be recognised.
 - Uploads to LoTW, eQSL, QRZ.com and HRDLog send only standard ADIF fields, never another program's `APP_…` fields, and never a field holding one of your saved secrets. Imported fields that look like credentials (`EQSL_PSWD`, `…PASSWORD…`, `…TOKEN…`, `APP_…_KEY`) are left out, and never exported.
 - Never commit real log files. `*.sql`, `*.sqlite`, `*.adi` and similar are git-ignored because they contain other operators' personal data. Only synthetic files under `tests/fixtures/` are committed.
 
 ## Credits
 
 - **Authors:** Han Zhang (BI1NWO) and Claude Opus 5.5 Extra High (Anthropic). Copyright © 2026 Han Zhang.
-- **Station:** made for [BY1QH](https://www.qrz.com/db/BY1QH), whose logo is the app icon.
+- **Special thanks** to the [BY1QH](https://www.qrz.com/db/BY1QH) club station.
 - **Data:** AD1C country files ([country-files.com](https://www.country-files.com/)), ARRL LoTW / TQSL lists, Super Check Partial.
 - **Software:** icons by [Lucide](https://lucide.dev/) (ISC); Qt for Python (PySide6).
 

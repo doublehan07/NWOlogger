@@ -122,7 +122,7 @@ def active_secrets() -> list[str]:
 
 
 def _ua(call: str | None = None) -> dict[str, str]:
-    return {"User-Agent": f"QHlogger/{__version__}" + (f" ({call})" if call else "")}
+    return {"User-Agent": f"NWOlogger/{__version__}" + (f" ({call})" if call else "")}
 
 
 def client(service: str, *, call: str | None = None, timeout: float = 60.0, redirects: bool = False

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from qhlogger.core.contest import cabrillo
-from qhlogger.core.contest.engine import Engine, Me, load_all, store_exchange
-from qhlogger.core.contest.scp import Scp
+from nwologger.core.contest import cabrillo
+from nwologger.core.contest.engine import Engine, Me, load_all, store_exchange
+from nwologger.core.contest.scp import Scp
 
 DEFS = load_all()
 

@@ -130,7 +130,7 @@ class MainWindow(QMainWindow):
         self.a_log_tab = A("Show the log", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1")
         self.a_paper_tab = A("Show paper QSL", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2")
         self.a_hist_tab = A("Show sync history", lambda: self.tabs.setCurrentIndex(2), "Ctrl+3")
-        self.a_about = A("About QHlogger", self.about)
+        self.a_about = A("About NWOlogger", self.about)
         self.a_clear_filters = A("Clear filters", lambda: self.filter.clear(), "Ctrl+Shift+K")
         self.a_suspicious = A("Show suspicious dupes", lambda: self.filter.set_preset("suspicious"))
         sync_acts = {}
@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
         self.version_lab = QToolButton()
         self.version_lab.setText(f"v{__version__}")
         self.version_lab.setObjectName("Version")
-        self.version_lab.setToolTip(tr("About QHlogger"))
+        self.version_lab.setToolTip(tr("About NWOlogger"))
         self.version_lab.clicked.connect(self.about)
         tb.addWidget(self.version_lab)
         self._clock_timer = QTimer(self)
@@ -723,7 +723,7 @@ class MainWindow(QMainWindow):
         else:
             ids = None
         default = Path(self.prefs.value("last_export_dir", str(Path.home()))) / \
-            f"qhlogger-{which}-{timeutil.now_utc().strftime('%Y%m%d-%H%M')}.adi"
+            f"nwologger-{which}-{timeutil.now_utc().strftime('%Y%m%d-%H%M')}.adi"
         path, _ = QFileDialog.getSaveFileName(self, tr("Export to ADIF"), str(default), "ADIF (*.adi)")
         if not path:
             return
@@ -754,7 +754,7 @@ class MainWindow(QMainWindow):
         self.shutdown()
         self.db.close()
         self.prefs.set("db_path", path)
-        QMessageBox.information(self, APP_NAME, tr("QHlogger will restart with") + f"\n{path}")
+        QMessageBox.information(self, APP_NAME, tr("NWOlogger will restart with") + f"\n{path}")
         self.app.exit(1000)  # restart code
 
     def new_log(self) -> None:
@@ -821,7 +821,7 @@ class MainWindow(QMainWindow):
     def check_secrets(self, reason: str = "start") -> None:
         """Look for saved passwords and keys left in this log and its backups, and clean the log.
 
-        QHlogger 0.1.0 could save a LoTW / eQSL password in sync history after an HTTP error, and kept credential
+        NWOlogger 0.1.0 could save a LoTW / eQSL password in sync history after an HTTP error, and kept credential
         fields of imported ADIF records. Patterns are cleaned when the log opens; this check also uses the saved
         secrets, so it reads the keychain: once after an update (``start``), after each Preferences save
         (``prefs``, quiet unless something is found) and from File → Check backups for saved passwords (``menu``).
@@ -867,7 +867,7 @@ class MainWindow(QMainWindow):
     def _first_run(self) -> None:
         self.check_secrets("start")
         age = dxcc.user_copy_age_days()
-        if (age is None or age > 7) and not os.environ.get("QHLOGGER_OFFLINE"):
+        if (age is None or age > 7) and not os.environ.get("NWOLOGGER_OFFLINE"):
             QTimer.singleShot(3000, lambda: self.update_cty(quiet=True))
         if not self.db.profiles():
             QMessageBox.information(self, APP_NAME, tr("Welcome! Create a station profile first: your callsign "

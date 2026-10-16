@@ -1,6 +1,6 @@
-# QHlogger — Design Plan
+# NWOlogger — Design Plan
 
-Status: **v0.1.0 implemented** (2026-10-16). Milestones M0–M8 are built; see §14 for where the code differs from
+Status: **v0.1.1** (2026-10-16): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1); see §14 for where the code differs from
 this plan, and [TODO.md](TODO.md) for what is left. Open questions are collected in §13.
 
 ## 1. Requirements
@@ -58,23 +58,23 @@ These may move to TODO later, but they are not part of the core.
 
 ### 2.1 Versioning
 
-- **One source of truth:** the `version` in `pyproject.toml`, read at runtime through `importlib.metadata` and exposed as `qhlogger.__version__`. Versions follow SemVer and start at `0.1.0`. While in `0.x`, a new milestone bumps the minor number and a fix bumps the patch number.
+- **One source of truth:** the `version` in `pyproject.toml`, read at runtime through `importlib.metadata` and exposed as `nwologger.__version__`. Versions follow SemVer and start at `0.1.0`. While in `0.x`, a new milestone bumps the minor number and a fix bumps the patch number.
 - **Shown in the app** in four places:
-  - the window title (`QHlogger v0.1.0 — qhlog.sqlite`)
+  - the window title (`NWOlogger v0.1.1 — nwolog.sqlite`)
   - the right end of the toolbar, as in MacLoggerDX
   - Help → About (version, Qt/PySide6 version, DB schema version, data-file path)
-  - `qhlogger --version`
-- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`QHlogger/0.1.0 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
-- **Releases:** a git tag `v0.1.0` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
+  - `nwologger --version`
+- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.1 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
+- **Releases:** a git tag such as `v0.1.1` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
 
-Architecture rule: `qhlogger/core/` never imports Qt. All logic lives there: DB, ADIF, search, dupes, DXCC, contest scoring and sync.
+Architecture rule: `nwologger/core/` never imports Qt. All logic lives there: DB, ADIF, search, dupes, DXCC, contest scoring and sync.
 The UI layer is thin, so the core is unit-testable and could also back a CLI.
 
 ## 3. Repository layout (planned)
 
 ```
-qhlogger/
-  __main__.py              # `python -m qhlogger`
+nwologger/
+  __main__.py              # `python -m nwologger`
   app.py                   # QApplication setup, translators, main window
   core/                    # pure Python, no Qt
     db.py                  # connection, schema, migrations, backups
@@ -106,7 +106,7 @@ tests/
 
 ## 4. Data model (SQLite)
 
-Default file: `~/Documents/QHlogger/qhlog.sqlite`. It can be changed in Prefs, and several log files can be opened, one at a time.
+Default file: `~/Documents/NWOlogger/nwolog.sqlite`. It can be changed in Prefs, and several log files can be opened, one at a time.
 
 Conventions:
 
@@ -225,7 +225,7 @@ Matching downloaded confirmations is a separate job (§8.2). It prefers an exact
 
 ## 6. Main window
 
-The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on top, log below. The look is QHlogger's own modern design, not a copy of MacLoggerDX, BBLogger or N1MM.
+The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on top, log below. The look is NWOlogger's own modern design, not a copy of MacLoggerDX, BBLogger or N1MM.
 
 **Visual style**
 
@@ -238,7 +238,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 - **Keyboard-first:** every action has a shortcut, plus a command palette (⌘K / Ctrl+K).
 
 ```
-┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.0 ┐
+┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.1 ┐
 ├ Entry panel ── [ DX | Contest ] ─────────────────────────────────────────────────────────────────────────────┤
 │ Call [______]  First  Last    │ Time On  2026-10-16 04:19:35   Time Off                                      │
 │ Address / City                │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │
@@ -247,7 +247,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 │ Comment / Notes               │ ┌ Worked before: similar calls, band × mode matrix, last QSOs, NEW … ┐        │
 │ [LookUp] [Previous] [TimeOn] [TimeOff] [Log QSO ⏎] [Clear ⎋]  sticky: ☑Freq ☑Mode ☑Sat ☑Pwr                  │
 ├ Tabs: [ Log | Paper QSL | Sync history ] ────────────────────────────────────────────────────────────────────┤
-│ 1434 QSOs · 37 shown · /Users/.../qhlog.sqlite        DXCC 75 wkd / 68 cfm                                   │
+│ 1434 QSOs · 37 shown · /Users/.../nwolog.sqlite        DXCC 75 wkd / 68 cfm                                   │
 │ [Call ?*] [Band ▾] [Mode ▾] [Sat ▾] [Country] [Preset ▾]  [More filters…]  [Clear]                           │
 │ Call │ Time On ▾ │ Time Off │ MHz │ Band │ RX MHz │ Band RX │ Mode │ Sat │ Pwr │ RST S │ RST R │ LoTW │ …     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -309,7 +309,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 
 ### 6.1 Bulk edit
 
-Bulk edit follows the BBLogger idea of editing many selected QSOs at once, with QHlogger's own UI. It is a dialog that applies to the selected QSOs:
+Bulk edit follows the BBLogger idea of editing many selected QSOs at once, with NWOlogger's own UI. It is a dialog that applies to the selected QSOs:
 
 - Each field row has a ☐ apply box and an operation:
   - set to value
@@ -399,7 +399,7 @@ With *Exact* ticked, a search finds only that mode and submode.
   - A station profile is assigned when `STATION_CALLSIGN` is missing. If only `OPERATOR` is present, it is copied into `STATION_CALLSIGN`, because LoTW needs it.
   - `NAME` is split into first and last at the last space, so exporting it again gives back exactly the same text.
   - Files from MacLoggerDX (`PROGRAMID=MacLoggerDX`) never set the paper QSL from `QSL_SENT` (§8.1.1).
-- **Writer:** UTF-8 with header `ADIF_VER`, `PROGRAMID=QHlogger`, `PROGRAMVERSION`, `CREATED_TIMESTAMP`.
+- **Writer:** UTF-8 with header `ADIF_VER`, `PROGRAMID=NWOlogger`, `PROGRAMVERSION`, `CREATED_TIMESTAMP`.
   - Exports all / selected / filtered.
   - `NAME` is written as First + space + Last.
   - Optional profiles strip private fields (`notes`, `email`) for service uploads.
@@ -408,7 +408,7 @@ With *Exact* ticked, a search finds only that mode and submode.
 
 Import straight from the MacLoggerDX database (`MacLoggerDX.sql`, table `qso_table_v008`), not from its ADIF export. The ADIF export sets `QSL_SENT=Y` on every QSO and leaves out all upload history. MLDX keeps that history as comma-separated text in two columns, which the importer splits into separate fields:
 
-| MLDX column | Text | QHlogger fields |
+| MLDX column | Text | NWOlogger fields |
 |---|---|---|
 | `qsl_sent` | `Uploaded to LoTW <date>` | `lotw_qsl_sent=Y`, `lotw_qslsdate` |
 | | `Uploaded to eQSL <date>` | `eqsl_qsl_sent=Y`, `eqsl_qslsdate` |
@@ -423,7 +423,7 @@ Import straight from the MacLoggerDX database (`MacLoggerDX.sql`, table `qso_tab
 
 Other columns:
 
-| MLDX column | QHlogger |
+| MLDX column | NWOlogger |
 |---|---|
 | `qso_start`, `qso_done` (Unix time, UTC) | `time_on`, `time_off` |
 | `my_call` | `station_callsign` and `operator` |
@@ -457,11 +457,11 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - Key: same call + band, with `sat_name` when the QSO was via satellite. An exact mode match is preferred; the same mode group is accepted.
   - Time within ±30 min (LoTW's own window). Among candidates, an exact mode match wins, then the nearest time.
   - Records that don't match go to an **Unmatched** list, where they can be added as new QSOs.
-- **Satellite names per service.** QHlogger stores one name per satellite and translates it on upload and when matching downloads.
+- **Satellite names per service.** NWOlogger stores one name per satellite and translates it on upload and when matching downloads.
   - The table is editable in Prefs.
   - LoTW defaults come from the TQSL satellite list.
   - Example: the ISS is `ARISS` for LoTW (TQSL accepts only that) but `ISS` for eQSL (eQSL accepts only that). A QSO stored as `ARISS` is uploaded to eQSL as `ISS`, and eQSL records that say `ISS` match it.
-- **Credentials:** kept only in the OS keychain. Every request uses HTTPS and the User-Agent `QHlogger/<ver> (<call>)`.
+- **Credentials:** kept only in the OS keychain. Every request uses HTTPS and the User-Agent `NWOlogger/<ver> (<call>)`.
   - **Keychain:** only the platform stores are used (macOS Keychain, Windows Credential Manager, SecretService / KWallet). A plaintext, `fail` or `null` keyring backend is refused, and Preferences says so.
   - **Requests** go through `core/net.py`: HTTPS only, to that service's own hosts (lotw.arrl.org, www.eqsl.cc, logbook.qrz.com, xmldata.qrz.com, www.hamqth.com, robot.hrdlog.net), checked before every redirect hop; no URL user info, at most 5 redirects. The eQSL ADIF link must be on www.eqsl.cc (an `http://` link there is upgraded).
   - **Errors** name the service and HTTP status (e.g. "LoTW: HTTP 503 Service Unavailable (the service is down or busy; try again later)"), never the URL. Service reasons (QRZ `REASON`, HRDLog `<error>`, eQSL `Error` lines) are kept, because they say why a QSO was refused.
@@ -483,7 +483,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - The response sets `lotw_qsl_rcvd=Y` and `lotw_qslrdate`, and can optionally fill an empty grid, zone or state from the QSL details.
   - A second pass with `qso_qsl=no` and `qso_qsorxsince` marks QSOs that another program uploaded as `lotw_qsl_sent=Y`.
   - A missing `<EOH>` means the query failed.
-- **Upload:** LoTW only accepts logs signed by **TQSL**. QHlogger exports pending QSOs for each station profile to a temp ADIF and runs `tqsl -x -d -u -a compliant -l "<station location>" file.adi`.
+- **Upload:** LoTW only accepts logs signed by **TQSL**. NWOlogger exports pending QSOs for each station profile to a temp ADIF and runs `tqsl -x -d -u -a compliant -l "<station location>" file.adi`.
   - It then parses the exit code and stderr, and sets `lotw_qsl_sent=Y` and `lotw_qslsdate`.
   - TQSL must be installed with a valid certificate. Its path is auto-detected and can be overridden in Prefs.
   - **Propagation mode:** QSOs via repeater (`RPT`) or internet (`INTERNET`) are not sent to LoTW. Other values TQSL does not accept (`GWAVE`, `LOS`) are left out of the upload record.
@@ -494,7 +494,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - Success is parsed from `Result: x out of y records added` and the per-record warnings. Accepted QSOs get `eqsl_qsl_sent=Y`.
   - The QTH nickname comes from the station profile.
 - **Download:** `GET DownloadInBox.cfm` with `UserName`, `Password`, `RcvdSince`, `QTHNickname`. `RcvdSince` is a date, so the next download starts a day before the last one; cards already applied just match again.
-  - QHlogger finds the generated `.adi` link in the returned HTML and fetches it straight away, since the file expires after a few hours.
+  - NWOlogger finds the generated `.adi` link in the returned HTML and fetches it straight away, since the file expires after a few hours.
   - Matched cards get `eqsl_qsl_rcvd=Y`, `eqsl_qslrdate` and `eqsl_ag`.
 
 ### 8.5 QRZ.com Logbook and HRDLog
@@ -509,7 +509,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - Edits use `Cmd=UPDATE` with an `ADIFKey`.
   - Success sets `hrdlog_qso_upload_status=Y` and its date.
 - **HRDLog download:** HRDLog.net has no documented download API, and a 2015 report says the site has no ADIF export.
-  - With your HRDLog username and password, QHlogger could log in to the website and fetch an export, if the logged-in "ADIF utilities" page offers one. This will be checked with your account during M6.
+  - With your HRDLog username and password, NWOlogger could log in to the website and fetch an export, if the logged-in "ADIF utilities" page offers one. This will be checked with your account during M6.
   - If it works, it is best-effort and can break whenever the site changes. Otherwise HRDLog stays upload-only.
   - HRDLog returns no confirmations either way, so a download would only restore your own log.
 
@@ -642,7 +642,7 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 
 | # | Milestone | Done when |
 |---|---|---|
-| M0 | Scaffold | `uv run qhlogger` opens an empty window showing its version (title, toolbar, About, `--version`); CI runs ruff + pytest on macOS and Windows |
+| M0 | Scaffold | `uv run nwologger` opens an empty window showing its version (title, toolbar, About, `--version`); CI runs ruff + pytest on macOS and Windows |
 | M1 | Core data | Schema + migrations, field registry, modes/bands, ADIF read/write, with round-trip tests |
 | M2 | Log view | Lazy table, sort by any column, column chooser, quick filter + advanced search (wildcards, vague mode), import with dupe marking, MacLoggerDX migration, export all/selected/filtered |
 | M3 | DX entry | Entry panel, `cty.csv` resolver, worked-before, dupe rules (30 s block, warning window), sticky fields, satellite list, edit/delete/undo |
@@ -668,7 +668,7 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | Built-in contests | The first set listed in §10 is enough for now | §10 |
 | Name | First and Last fields, as in MacLoggerDX; joined into ADIF `NAME` on export, split on import | §4.1, §8.1 |
 | Satellite names | Per-service name table, applied on upload and on download matching. ISS: `ARISS` for LoTW/TQSL, `ISS` for eQSL | §8.2 |
-| UI references | No reference screenshots. QHlogger gets its own modern design | §6 |
+| UI references | No reference screenshots. NWOlogger gets its own modern design | §6 |
 | MacLoggerDX data | Migrated from the database file, with upload history; a bare `Y` in the sent column is ignored; both MLDX files are git-ignored | §8.1.1 |
 | Location data | Country, Province, Address, CQ zone, ITU zone are enough; MLDX `ext_val_3` is lookup province text, normalised into Province | §4.1, §6, §8.1.1, §9 |
 | WSJT-X / JTDX / N1MM UDP | Later milestone | M9 |
@@ -699,22 +699,22 @@ None right now. New questions will be added here as they come up during implemen
 
 Where the code differs from, or adds to, the plan above:
 
-- **Translations** use a JSON catalog (`resources/translations/zh_CN.json`) read by `qhlogger.i18n.tr()`, instead of Qt Linguist `.ts/.qm` files.
+- **Translations** use a JSON catalog (`resources/translations/zh_CN.json`) read by `nwologger.i18n.tr()`, instead of Qt Linguist `.ts/.qm` files.
   - There is no build step, and the catalog is easy to edit.
   - Qt's own dialog strings still come from Qt's `qtbase` translations.
-  - Setting `QHLOGGER_I18N_RECORD=<file>` while running the UI lists every string it asks for.
+  - Setting `NWOLOGGER_I18N_RECORD=<file>` while running the UI lists every string it asks for.
 - **Confirmed by QRZ** is stored in `qrz_qsl_rcvd` / `qrz_qslrdate` and exported as QRZ's own `APP_QRZLOG_STATUS` / `APP_QRZLOG_QSLDATE`.
 - **Dupe marks** use `dupe_flag` values `DUPE`, `SUSPECT` and `OK`. `OK` means you said "not a dupe", and later scans leave it alone.
 - **Satellite frequencies** come from your own last QSO on that satellite first, then from a few bundled defaults (`sats.json`).
-- **Contest definitions** are JSON files: built-ins in `core/contest/defs/`, yours in `Documents/QHlogger/contests/`.
+- **Contest definitions** are JSON files: built-ins in `core/contest/defs/`, yours in `Documents/NWOlogger/contests/`.
   - A rules list gives the QSO points; the first matching rule wins.
   - Multipliers are counted per band, band + mode, mode or contest.
   - There are no Python rule modules yet: every built-in contest fits the JSON rules.
 - **Contest exchange storage:** RST goes to `rst_sent` / `rst_rcvd` and serials to `stx` / `srx`. Other exchange fields, space-separated, go to `stx_string` / `srx_string`, and are also copied to their ADIF field where one exists (zone → `cqz` / `ituz`, grid → `gridsquare`, state → `state`).
 - **MASTER.SCP** is downloaded on request into the log's folder. Check Partial also uses every call in your log.
-- **The country file** is checked weekly and downloaded to `Documents/QHlogger/cty.csv`. The bundled copy is the fallback.
+- **The country file** is checked weekly and downloaded to `Documents/NWOlogger/cty.csv`. The bundled copy is the fallback.
 - **The MacLoggerDX importer** also maps the remaining MLDX columns: `azimuth`, `elevation`, `distance`, latitude/longitude and the `ext_val_*` fields go to `extra`. MLDX grid-line pairs (`OM32,OM33`) go to `*_VUCC_GRIDS`.
-- **Screenshots:** `tools/screenshots.py` renders `docs/screenshots/` off-screen from made-up QSOs. Test and screenshot runs set `QHLOGGER_SETTINGS=<file.ini>`, so they never touch your real preferences.
+- **Screenshots:** `tools/screenshots.py` renders `docs/screenshots/` off-screen from made-up QSOs. Test and screenshot runs set `NWOLOGGER_SETTINGS=<file.ini>`, so they never touch your real preferences.
 - **Tests and the outside world:** `tests/conftest.py` gives every test an in-memory keychain and a network transport that fails the test on any request. Service tests answer real `httpx` requests through `mock_net`; `tests/test_security.py` checks that fake secrets never appear in errors, dialogs, `sync_log`, the WAL, backups or HTTPX logs.
 - **Branding:** the BY1QH logo (`resources/brand/by1qh.png`) is the window and app icon; PyInstaller converts it to `.icns` / `.ico` with Pillow at build time. Help → About (or the version button in the toolbar) shows the authors (Han Zhang BI1NWO, Claude Opus 5.5 Extra High), copyright (Han Zhang), the BY1QH credit, data and software credits, and system info that can be copied into bug reports.
 - **Tester sample:** `tests/fixtures/sample.adi` is a synthetic 17-QSO log (satellite pass, HF, one strict and one suspicious dupe) for trying the app; a test keeps it importable.

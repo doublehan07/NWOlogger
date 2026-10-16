@@ -6,9 +6,9 @@ import sqlite3
 
 import pytest
 
-from qhlogger.core import adif, bands, callsign, dupes, dxcc, importer, mldx, modes, qso, regions, search
-from qhlogger.core import db as dbm
-from qhlogger.core.modes import Relation
+from nwologger.core import adif, bands, callsign, dupes, dxcc, importer, mldx, modes, qso, regions, search
+from nwologger.core import db as dbm
+from nwologger.core.modes import Relation
 
 
 @pytest.fixture
@@ -272,7 +272,7 @@ def test_sample_fixture_imports(db):
 
 
 def test_similar_calls_ranking():
-    from qhlogger.core import similar
+    from nwologger.core import similar
 
     idx = similar.CallIndex({"BA1PK": "2026-10-10T15:19:00Z", "BA1PKA": "2026-10-01T00:00:00Z",
                              "BA1PK/P": "2026-10-12T00:00:00Z"}, {"BA1PX": "QRZ.com"}, ["BA1PQ", "BA1PK", "XBA1P"])

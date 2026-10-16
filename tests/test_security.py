@@ -11,11 +11,11 @@ import httpx
 import pytest
 from PySide6.QtCore import QSettings
 
-from qhlogger.core import db as dbm
-from qhlogger.core import importer, net, sats, secrets
-from qhlogger.core import qso as qsomod
-from qhlogger.core.lookup import clients
-from qhlogger.core.sync import apply, services
+from nwologger.core import db as dbm
+from nwologger.core import importer, net, sats, secrets
+from nwologger.core import qso as qsomod
+from nwologger.core.lookup import clients
+from nwologger.core.sync import apply, services
 
 SECRET = "FAKE&pw%+ x/Ü9"  # characters that change under URL and HTML encoding
 KEY = "FAKE-QRZ-API-KEY-1234"
@@ -213,8 +213,8 @@ def _file_bytes(path) -> bytes:
 def ctrl(qtbot, tmp_path, monkeypatch, keyring_store):
     from PySide6.QtWidgets import QMessageBox, QWidget
 
-    from qhlogger.ui.prefs import Prefs
-    from qhlogger.ui.sync_controller import SyncController
+    from nwologger.ui.prefs import Prefs
+    from nwologger.ui.sync_controller import SyncController
 
     prefs = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
     for user_key, value in (("lotw_user", "u"), ("eqsl_user", "u"), ("hrdlog_call", "BI1ZZZ")):
@@ -271,7 +271,7 @@ def test_per_record_upload_errors_are_redacted(ctrl, qtbot, mock_net):
 def test_lotw_upload_removes_its_temp_files(ctrl, qtbot, monkeypatch, tmp_path):
     import tempfile
 
-    from qhlogger.core.sync import tqsl
+    from nwologger.core.sync import tqsl
 
     made = []
     real = tempfile.mkdtemp
@@ -372,7 +372,7 @@ def test_delete_reports_failure(keyring_store):
 
 
 def test_account_rename_deletes_or_moves_the_old_secret(tmp_path, keyring_store):
-    from qhlogger.ui.prefs import Prefs
+    from nwologger.ui.prefs import Prefs
 
     p = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
     secrets.set("lotw", "olduser", "pw-old-1")
@@ -386,8 +386,8 @@ def test_account_rename_deletes_or_moves_the_old_secret(tmp_path, keyring_store)
 def test_prefs_dialog_masks_keys_and_forgets(qtbot, tmp_path, keyring_store):
     from PySide6.QtWidgets import QLineEdit
 
-    from qhlogger.ui import prefs_dialog
-    from qhlogger.ui.prefs import Prefs
+    from nwologger.ui import prefs_dialog
+    from nwologger.ui.prefs import Prefs
 
     p = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
     p.set("lotw_user", "u")
@@ -417,8 +417,8 @@ def test_prefs_dialog_masks_keys_and_forgets(qtbot, tmp_path, keyring_store):
 
 
 def test_deleting_the_last_profile_with_a_call_removes_its_key(qtbot, tmp_path, keyring_store):
-    from qhlogger.ui.prefs import Prefs
-    from qhlogger.ui.prefs_dialog import ProfilesPage
+    from nwologger.ui.prefs import Prefs
+    from nwologger.ui.prefs_dialog import ProfilesPage
 
     p = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
     db = dbm.LogDB(tmp_path / "log.sqlite", backup_on_open=False)
@@ -551,7 +551,7 @@ def test_a_failing_purge_never_stops_the_log_opening(tmp_path, monkeypatch):
 # ------------------------------------------------------------------ round 2: what uploads send
 
 def test_uploads_send_standard_fields_only():
-    from qhlogger.core.fields import ADIF_STANDARD
+    from nwologger.core.fields import ADIF_STANDARD
 
     q = qsomod.normalize({"call": "BA1AA", "time_on": "2026-10-10T15:19:00Z", "mode": "FM", "band": "2m",
                           "gridsquare": "ON80", "comment": "FAKE_SAVED_KEY_1"})

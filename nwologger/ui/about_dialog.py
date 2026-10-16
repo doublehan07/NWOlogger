@@ -1,4 +1,4 @@
-"""About QHlogger: version, authors, credits, system info."""
+"""About NWOlogger: version, authors, credits, system info."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from . import theme
 
 tr = i18n.tr
 
-REPO = "https://github.com/BY1QH/QHlogger"
+REPO = "https://github.com/doublehan07/NWOlogger"
 LOGO = theme.ICONS.parent / "brand" / "by1qh.png"
 
 
@@ -21,7 +21,7 @@ class AboutDialog(QDialog):
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
-        self.setWindowTitle(tr("About QHlogger"))
+        self.setWindowTitle(tr("About NWOlogger"))
         self.resize(620, 560)
         lay = QVBoxLayout(self)
         head = QHBoxLayout()
@@ -52,7 +52,7 @@ class AboutDialog(QDialog):
             f"<h3>{tr('Made for')}</h3>"
             f"<p><b>BY1QH</b> · {tr('club station, China')} · "
             "<a href='https://www.qrz.com/db/BY1QH'>qrz.com/db/BY1QH</a><br>"
-            f"<span style='color:{mut}'>{tr('The BY1QH logo is used as the QHlogger icon.')}</span></p>")
+            f"<span style='color:{mut}'>{tr('The BY1QH logo is used as the NWOlogger icon.')}</span></p>")
         tabs.addTab(about, tr("About"))
         credits = QTextBrowser()
         credits.setOpenExternalLinks(True)

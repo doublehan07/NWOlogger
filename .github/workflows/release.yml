@@ -26,14 +26,14 @@ jobs:
           test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != v$v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
       - run: uv run pytest -q
-      - run: uv run --with pyinstaller --with pillow pyinstaller packaging/qhlogger.spec --noconfirm
+      - run: uv run --with pyinstaller --with pillow pyinstaller packaging/nwologger.spec --noconfirm
       - name: macOS disk image
         if: runner.os == 'macOS'
-        run: hdiutil create -volname QHlogger -srcfolder dist/QHlogger.app -ov -format UDZO "dist/QHlogger-${VERSION}-macos.dmg"
+        run: hdiutil create -volname NWOlogger -srcfolder dist/NWOlogger.app -ov -format UDZO "dist/NWOlogger-${VERSION}-macos.dmg"
       - name: Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" packaging\qhlogger.iss'
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" packaging\nwologger.iss'
       - uses: softprops/action-gh-release@v2
         with:
           files: |

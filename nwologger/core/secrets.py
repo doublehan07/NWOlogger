@@ -10,7 +10,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-SERVICE_PREFIX = "QHlogger"
+SERVICE_PREFIX = "NWOlogger"
 
 SECURE_BACKENDS = {"keyring.backends.macOS", "keyring.backends.Windows", "keyring.backends.SecretService",
                    "keyring.backends.libsecret", "keyring.backends.kwallet"}

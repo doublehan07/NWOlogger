@@ -70,7 +70,7 @@ def qso_line(cdef: ContestDef, q: dict, my_call: str) -> str:
 def export(path: str, cdef: ContestDef, session: dict, qsos: list[dict], me: Me, claimed_score: int) -> int:
     data = session.get("data") or {}
     cats = data.get("categories") or {}
-    lines = ["START-OF-LOG: 3.0", f"CREATED-BY: QHlogger {__version__}", f"CONTEST: {cdef.cabrillo}",
+    lines = ["START-OF-LOG: 3.0", f"CREATED-BY: NWOlogger {__version__}", f"CONTEST: {cdef.cabrillo}",
              f"CALLSIGN: {me.call}"]
     if data.get("location"):
         lines.append(f"LOCATION: {data['location']}")

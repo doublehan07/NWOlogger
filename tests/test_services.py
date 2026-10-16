@@ -5,10 +5,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from qhlogger.core import db as dbm
-from qhlogger.core import qso, sats
-from qhlogger.core.lookup import clients
-from qhlogger.core.sync import apply, services
+from nwologger.core import db as dbm
+from nwologger.core import qso, sats
+from nwologger.core.lookup import clients
+from nwologger.core.sync import apply, services
 
 
 def test_qrz_xml_lookup(mock_net):
@@ -80,7 +80,7 @@ def test_apply_lotw_and_eqsl_sat_names(tmp_path):
 # ------------------------------------------------------------------ found with real accounts (2026-10-16)
 
 def test_upload_rule_is_one_rule(tmp_path):
-    from qhlogger.core import search, uploads
+    from nwologger.core import search, uploads
 
     d = dbm.LogDB(tmp_path / "l.sqlite", backup_on_open=False)
     statuses = [None, "Y", "N", "M", "I", "R", "Q"]
@@ -122,9 +122,9 @@ def test_eqsl_cursor_starts_a_day_early(qtbot, tmp_path, mock_net, monkeypatch):
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QMessageBox, QWidget
 
-    from qhlogger.core import timeutil
-    from qhlogger.ui.prefs import Prefs
-    from qhlogger.ui.sync_controller import SyncController
+    from nwologger.core import timeutil
+    from nwologger.ui.prefs import Prefs
+    from nwologger.ui.sync_controller import SyncController
 
     prefs = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
     prefs.set("eqsl_user", "u")

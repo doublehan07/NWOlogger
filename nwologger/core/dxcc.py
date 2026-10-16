@@ -17,7 +17,7 @@ from pathlib import Path
 from . import callsign
 
 RESOURCE = Path(__file__).resolve().parent.parent / "resources" / "cty.csv"
-USER_COPY = Path.home() / "Documents" / "QHlogger" / "cty.csv"
+USER_COPY = Path.home() / "Documents" / "NWOlogger" / "cty.csv"
 CTY_URL = "https://www.country-files.com/bigcty/cty.csv"
 
 _OVR = re.compile(r"\((\d+)\)|\[(\d+)\]|<([-\d.]+)/([-\d.]+)>|\{([A-Z]{2})\}|~([-\d.]+)~")
@@ -141,7 +141,7 @@ class CtyDB:
 
 @lru_cache(maxsize=1)
 def default() -> CtyDB:
-    """The newer of the downloaded copy (Documents/QHlogger/cty.csv) and the bundled file."""
+    """The newer of the downloaded copy (Documents/NWOlogger/cty.csv) and the bundled file."""
     if USER_COPY.exists() and USER_COPY.stat().st_size > 50_000:
         try:
             return CtyDB.from_file(USER_COPY)

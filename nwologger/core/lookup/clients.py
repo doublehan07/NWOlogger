@@ -49,7 +49,7 @@ class QrzXml:
         return _strip_ns(ET.fromstring(r.content))
 
     def login(self) -> None:
-        root = self._get({"username": self.user, "password": self.password, "agent": f"QHlogger-{__version__}"})
+        root = self._get({"username": self.user, "password": self.password, "agent": f"NWOlogger-{__version__}"})
         sess = root.find("Session")
         key = sess.findtext("Key") if sess is not None else None
         if not key:
@@ -134,7 +134,7 @@ class HamQth:
             for attempt in (0, 1):
                 if not self.sid:
                     self.login()
-                root = self._get({"id": self.sid, "callsign": call, "prg": "QHlogger"})
+                root = self._get({"id": self.sid, "callsign": call, "prg": "NWOlogger"})
                 srch = root.find("search")
                 if srch is not None:
                     return self._map(srch)

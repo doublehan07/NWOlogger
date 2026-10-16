@@ -51,7 +51,7 @@ class OperatorField(QLineEdit):
             if cur:
                 self.setText(cur)
             self.setPlaceholderText(tr("operator callsign (required)"))
-            self.setToolTip(tr("Club station: who is operating. Kept while QHlogger runs; checked again on a new "
+            self.setToolTip(tr("Club station: who is operating. Kept while NWOlogger runs; checked again on a new "
                                "UTC day or after a 3-hour break."))
         else:
             self.setText(self.ops.personal_operator(profile) if profile else "")

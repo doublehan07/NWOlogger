@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ["QHLOGGER_OFFLINE"] = "1"
+os.environ["NWOLOGGER_OFFLINE"] = "1"
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "screenshots"
 sys.path.insert(0, str(ROOT))
@@ -21,17 +21,17 @@ sys.path.insert(0, str(ROOT))
 from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-TMP = Path(tempfile.mkdtemp(prefix="qhlogger-shots-"))
-os.environ["QHLOGGER_SETTINGS"] = str(TMP / "settings.ini")  # never touch your real preferences
+TMP = Path(tempfile.mkdtemp(prefix="nwologger-shots-"))
+os.environ["NWOLOGGER_SETTINGS"] = str(TMP / "settings.ini")  # never touch your real preferences
 app = QApplication(sys.argv)
 
-from qhlogger import i18n  # noqa: E402
-from qhlogger.core import db as dbm  # noqa: E402
-from qhlogger.core import dupes, importer, qso, secrets  # noqa: E402
-from qhlogger.ui import theme  # noqa: E402
-from qhlogger.ui.main_window import MainWindow  # noqa: E402
-from qhlogger.ui.prefs import Prefs  # noqa: E402
-from qhlogger.ui.widgets import set_combo_data  # noqa: E402
+from nwologger import i18n  # noqa: E402
+from nwologger.core import db as dbm  # noqa: E402
+from nwologger.core import dupes, importer, qso, secrets  # noqa: E402
+from nwologger.ui import theme  # noqa: E402
+from nwologger.ui.main_window import MainWindow  # noqa: E402
+from nwologger.ui.prefs import Prefs  # noqa: E402
+from nwologger.ui.widgets import set_combo_data  # noqa: E402
 
 _fake_keychain: dict = {}  # never read or write the real keychain
 secrets._keyring = lambda: type("FakeKeyring", (), {
@@ -91,7 +91,7 @@ def build_db(path: Path) -> dbm.LogDB:
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    db = build_db(TMP / "qhlog.sqlite")
+    db = build_db(TMP / "nwolog.sqlite")
     prefs = Prefs()
     state = {"step": 0}
     shots: list = []
@@ -130,7 +130,7 @@ def main() -> None:
             shots.append(w)
             QTimer.singleShot(500, lambda: (save(w, "main"), step()))
         elif s == 1:
-            from qhlogger.ui.dupe_dialog import DupeCompareDialog, flagged_ids
+            from nwologger.ui.dupe_dialog import DupeCompareDialog, flagged_ids
 
             w = shots[-1]
             groups = dupes.groups_for(db, flagged_ids(db))
@@ -140,7 +140,7 @@ def main() -> None:
             d.show()
             QTimer.singleShot(400, lambda: (save(d, "compare"), d.close(), step()))
         elif s == 2:
-            from qhlogger.ui.prefs_dialog import PrefsDialog
+            from nwologger.ui.prefs_dialog import PrefsDialog
 
             w = shots[-1]
             d = PrefsDialog(db, prefs, w, page="Modes")

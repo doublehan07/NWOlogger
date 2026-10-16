@@ -5,8 +5,8 @@ import httpx
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("QHLOGGER_OFFLINE", "1")
-os.environ.setdefault("QHLOGGER_SETTINGS", os.path.join(os.path.dirname(__file__), ".pytest-settings.ini"))
+os.environ.setdefault("NWOLOGGER_OFFLINE", "1")
+os.environ.setdefault("NWOLOGGER_SETTINGS", os.path.join(os.path.dirname(__file__), ".pytest-settings.ini"))
 
 
 class FakeKeyring:
@@ -32,7 +32,7 @@ class FakeKeyring:
 
 @pytest.fixture(autouse=True)
 def keyring_store(monkeypatch):
-    from qhlogger.core import secrets
+    from nwologger.core import secrets
 
     fake = FakeKeyring()
     monkeypatch.setattr(secrets, "_keyring", lambda: fake)
@@ -42,7 +42,7 @@ def keyring_store(monkeypatch):
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     """Service requests fail the test unless it installs its own handler with ``mock_net``."""
-    from qhlogger.core import net
+    from nwologger.core import net
 
     def refuse(req):
         raise AssertionError(f"a test tried to reach the network: {req.url.host}")
@@ -54,7 +54,7 @@ def no_network(monkeypatch):
 def mock_net(monkeypatch):
     """``mock_net(handler)`` answers service requests with ``handler(request) -> httpx.Response``; the list it
     returns records every request that reached the transport."""
-    from qhlogger.core import net
+    from nwologger.core import net
 
     def use(handler):
         seen: list[httpx.Request] = []

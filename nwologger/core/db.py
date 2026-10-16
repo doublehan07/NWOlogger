@@ -84,8 +84,8 @@ class _SecretScan:
 
 SCHEMA_VERSION = 1
 
-DEFAULT_DIR = Path.home() / "Documents" / "QHlogger"
-DEFAULT_PATH = DEFAULT_DIR / "qhlog.sqlite"
+DEFAULT_DIR = Path.home() / "Documents" / "NWOlogger"
+DEFAULT_PATH = DEFAULT_DIR / "nwolog.sqlite"
 
 _OTHER_TABLES = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -177,7 +177,7 @@ class LogDB:
 
     # ------------------------------------------------------------------ secrets left by older versions
     def _scrub_on_open(self) -> None:
-        """Remove what QHlogger 0.1.0 could leave behind: passwords in sync history error messages, and
+        """Remove what NWOlogger 0.1.0 could leave behind: passwords in sync history error messages, and
         credential-named ADIF tags in imported QSOs and undo history. Runs once per log file; never stops it opening.
         Secrets that only the saved values reveal are cleaned later by :meth:`scrub_secrets`."""
         c = self.conn

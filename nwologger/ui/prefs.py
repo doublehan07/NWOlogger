@@ -49,11 +49,11 @@ SECRET_KEYS = {
 
 class Prefs:
     def __init__(self, settings: QSettings | None = None):
-        # QHLOGGER_SETTINGS=<file.ini> keeps test and screenshot runs away from your real preferences.
-        path = os.environ.get("QHLOGGER_SETTINGS")
+        # NWOLOGGER_SETTINGS=<file.ini> keeps test and screenshot runs away from your real preferences.
+        path = os.environ.get("NWOLOGGER_SETTINGS")
         if settings is None and path:
             settings = QSettings(path, QSettings.Format.IniFormat)
-        self.s = settings or QSettings("QHlogger", "QHlogger")
+        self.s = settings or QSettings("NWOlogger", "NWOlogger")
 
     def get(self, key: str) -> Any:
         default = DEFAULTS.get(key)

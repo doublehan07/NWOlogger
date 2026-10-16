@@ -12,8 +12,8 @@ LANGUAGES = {"en": "English", "zh_CN": "简体中文"}
 
 _catalog: dict[str, str] = {}
 _lang = "en"
-# Developer aid: QHLOGGER_I18N_RECORD=<file> collects every string the UI asks to translate.
-_record_path = os.environ.get("QHLOGGER_I18N_RECORD")
+# Developer aid: NWOLOGGER_I18N_RECORD=<file> collects every string the UI asks to translate.
+_record_path = os.environ.get("NWOLOGGER_I18N_RECORD")
 _recorded: set[str] = set()
 if _record_path:
     def _dump() -> None:

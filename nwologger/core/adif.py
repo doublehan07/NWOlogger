@@ -106,7 +106,7 @@ def _field(tag: str, value: str) -> str:
     return f"<{tag}:{len(value)}>{value}"
 
 
-def dumps(records: Iterable[dict[str, str]], *, program_version: str, program_id: str = "QHlogger",
+def dumps(records: Iterable[dict[str, str]], *, program_version: str, program_id: str = "NWOlogger",
           comment: str | None = None) -> str:
     created = datetime.now(UTC).strftime("%Y%m%d %H%M%S")
     lines = [comment or f"ADIF export from {program_id} {program_version}", ""]

@@ -152,7 +152,7 @@ class ProfilesPage(QWidget):
             form.addRow(tr(label), e)
             if key == "station_callsign":
                 form.addRow(tr("Station type"), self.station_type)
-                hint = QLabel(tr("Club stations ask for the operator at the first QSO, keep it while QHlogger "
+                hint = QLabel(tr("Club stations ask for the operator at the first QSO, keep it while NWOlogger "
                                  "runs, and ask again on a new UTC day or after a 3-hour break."))
                 hint.setObjectName("Hint")
                 hint.setWordWrap(True)
@@ -301,7 +301,7 @@ class PrefsDialog(QDialog):
             self.theme.addItem(tr(name), code)
         self.theme.setCurrentIndex(max(0, self.theme.findData(prefs.get("theme"))))
         f.addRow(tr("Language"), self.lang)
-        lang_hint = QLabel(tr("Language changes apply after restarting QHlogger."))
+        lang_hint = QLabel(tr("Language changes apply after restarting NWOlogger."))
         lang_hint.setObjectName("Hint")
         f.addRow("", lang_hint)
         f.addRow(tr("Theme"), self.theme)

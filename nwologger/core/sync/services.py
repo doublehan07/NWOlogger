@@ -58,7 +58,7 @@ def eqsl_upload(user: str, password: str, records: list[dict[str, str]]) -> tupl
     """Upload ADIF records (≤ 250 per call). Returns (added, total, warning/error lines)."""
     head = f"<EQSL_USER:{len(user)}>{user}<EQSL_PSWD:{len(password)}>{password}<EOH>\n"
     body = "\n".join(" ".join(f"<{k}:{len(v)}>{v}" for k, v in rec.items()) + " <EOR>" for rec in records)
-    files = {"Filename": ("qhlogger.adi", (head + body).encode("utf-8"), "text/plain")}
+    files = {"Filename": ("nwologger.adi", (head + body).encode("utf-8"), "text/plain")}
     data = {"EQSLUSER": user, "EQSLPSWD": password}
     r = net.request("eqsl", "POST", EQSL_UPLOAD, data=data, files=files, secrets=[password], timeout=TIMEOUT)
     text = html.unescape(re.sub(r"<[^>]+>", "\n", r.text))
@@ -176,7 +176,7 @@ HRDLOG_URL = "https://robot.hrdlog.net/NewEntry.aspx"
 def hrdlog_upload(call: str, code: str, record: dict[str, str], *, update_key: str | None = None
                   ) -> tuple[bool, str]:
     text = " ".join(f"<{k}:{len(v)}>{v}" for k, v in record.items()) + " <EOR>"
-    data = {"Callsign": call, "Code": code, "App": f"QHlogger {__version__}", "ADIFData": text}
+    data = {"Callsign": call, "Code": code, "App": f"NWOlogger {__version__}", "ADIFData": text}
     if update_key:
         data["Cmd"] = "UPDATE"
         data["ADIFKey"] = update_key

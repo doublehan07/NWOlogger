@@ -1,4 +1,4 @@
-"""``qhlogger`` / ``python -m qhlogger`` entry point."""
+"""``nwologger`` / ``python -m nwologger`` entry point."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from . import APP_NAME, __version__
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    p = argparse.ArgumentParser(prog="qhlogger", description=f"{APP_NAME}: a minimal amateur radio logger")
+    p = argparse.ArgumentParser(prog="nwologger", description=f"{APP_NAME}: a minimal amateur radio logger")
     p.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     p.add_argument("--db", help="open this log file (SQLite)")
     p.add_argument("--lang", choices=["en", "zh_CN"], help="UI language for this run")

@@ -87,7 +87,7 @@ class SyncController(QObject):
 
     def _progress(self, text: str) -> QProgressDialog:
         dlg = QProgressDialog(text, tr("Hide"), 0, 0, self.win)
-        dlg.setWindowTitle("QHlogger")
+        dlg.setWindowTitle("NWOlogger")
         dlg.setWindowModality(Qt.WindowModality.NonModal)
         dlg.setMinimumDuration(300)
         dlg.show()
@@ -173,7 +173,7 @@ class SyncController(QObject):
             if not groups:
                 return
         cat, secrets = self.catalog(), self._secrets(qsos)
-        tmpdir = tempfile.mkdtemp(prefix="qhlogger-lotw-")
+        tmpdir = tempfile.mkdtemp(prefix="nwologger-lotw-")
         jobs = []
         for loc, qs in groups.items():
             recs = [apply.upload_record(q, "lotw", cat, secrets=secrets) for q in qs]
@@ -348,7 +348,7 @@ class SyncController(QObject):
     # ------------------------------------------------------------------ download
     def download(self, service: str) -> None:
         if service == "hrdlog":
-            QMessageBox.information(self.win, "HRDLog", tr("HRDLog.net has no public download API, so QHlogger can "
+            QMessageBox.information(self.win, "HRDLog", tr("HRDLog.net has no public download API, so NWOlogger can "
                                                            "only upload to it. (It sends no confirmations back.)"))
             return
         if service + "down" in self.busy:

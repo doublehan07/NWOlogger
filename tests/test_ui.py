@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import QSettings
 
-from qhlogger.core import db as dbm
+from nwologger.core import db as dbm
 
 
 @pytest.fixture
 def win(qtbot, tmp_path):
-    from qhlogger.ui import theme
-    from qhlogger.ui.main_window import MainWindow
-    from qhlogger.ui.prefs import Prefs
+    from nwologger.ui import theme
+    from nwologger.ui.main_window import MainWindow
+    from nwologger.ui.prefs import Prefs
 
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     prefs = Prefs(settings)
@@ -65,7 +65,7 @@ def test_log_dupe_and_bulk_edit(win, qtbot):
     assert db.count() == 2
     assert db.get(2)["dupe_flag"] == "SUSPECT"
     # Bulk edit then undo.
-    from qhlogger.ui.bulk_edit import BulkEditDialog
+    from nwologger.ui.bulk_edit import BulkEditDialog
 
     dlg = BulkEditDialog(db, [1, 2], win)
     row = next(f for f in dlg.fields if f.col == "rst_sent")
@@ -88,7 +88,7 @@ def test_filters_and_export(win, qtbot, tmp_path):
     win.filter.mode.setCurrentText("DIGI")
     win.filter.emit()
     assert len(win.model.ids) == 3
-    from qhlogger.core import exporter
+    from nwologger.core import exporter
 
     out = tmp_path / "out.adi"
     assert exporter.export_ids(win.db, win.model.ids, str(out)) == 3
@@ -135,7 +135,7 @@ def test_rx_follows_tx_when_synced(win, qtbot):
 def test_club_station_operator_field(win, qtbot):
     from datetime import timedelta
 
-    from qhlogger.core import timeutil
+    from nwologger.core import timeutil
 
     db = win.db
     pid = db.save_profile({"name": "BY1QQ club", "station_callsign": "BY1QQ", "station_type": "club",
@@ -163,7 +163,7 @@ def test_club_station_operator_field(win, qtbot):
 def test_operator_session_rechecks_after_break():
     from datetime import UTC, datetime, timedelta
 
-    from qhlogger.core.operators import OperatorSession
+    from nwologger.core.operators import OperatorSession
 
     prof = {"station_callsign": "BY1QQ", "station_type": "club"}
     s = OperatorSession()
@@ -177,8 +177,8 @@ def test_operator_session_rechecks_after_break():
 
 
 def test_lotw_propagation_rules(tmp_path):
-    from qhlogger.core import qso, sats
-    from qhlogger.core.sync import apply
+    from nwologger.core import qso, sats
+    from nwologger.core.sync import apply
 
     d = dbm.LogDB(tmp_path / "p.sqlite", backup_on_open=False)
     d.insert(qso.normalize({"call": "BA1AA", "time_on": "2026-10-10T15:19:00Z", "mode": "FM", "band": "2m",
@@ -194,8 +194,8 @@ def test_lotw_propagation_rules(tmp_path):
 def test_dupe_group_of_three(win, qtbot, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
-    from qhlogger.core import dupes, qso
-    from qhlogger.ui.dupe_dialog import DupeCompareDialog, flagged_ids
+    from nwologger.core import dupes, qso
+    from nwologger.ui.dupe_dialog import DupeCompareDialog, flagged_ids
 
     db = win.db
     rows = [("2026-10-10T10:00:00Z", "FT8", None), ("2026-10-10T10:00:20Z", "FT8", None),
@@ -209,7 +209,7 @@ def test_dupe_group_of_three(win, qtbot, monkeypatch):
     dlg = DupeCompareDialog(db, win.prefs, groups=groups, parent=win)
     assert dlg.table.columnCount() == 3
     # Edit a cell and save.
-    from qhlogger.ui.dupe_dialog import ROWS
+    from nwologger.ui.dupe_dialog import ROWS
 
     r = ROWS.index("rst_sent")
     dlg.table.item(r, 1).setText("-05")
@@ -227,7 +227,7 @@ def test_dupe_group_of_three(win, qtbot, monkeypatch):
 def test_sat_name_without_sat_propagation(win, qtbot, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
-    from qhlogger.ui.widgets import set_combo_data
+    from nwologger.ui.widgets import set_combo_data
 
     p = win.dx
     p.call.setText("BA1AA")
@@ -245,7 +245,7 @@ def test_sat_name_without_sat_propagation(win, qtbot, monkeypatch):
 
 
 def test_custom_mode_list(win, qtbot):
-    from qhlogger.ui.widgets import OTHER, fill_mode_combo
+    from nwologger.ui.widgets import OTHER, fill_mode_combo
 
     win.prefs.set("mode_list", ["CW", "FT8"])
     fill_mode_combo(win.dx.mode, win.prefs)
@@ -256,7 +256,7 @@ def test_custom_mode_list(win, qtbot):
 
 
 def test_time_on_now_returns_to_the_default(win, qtbot, monkeypatch):
-    from qhlogger.core import timeutil
+    from nwologger.core import timeutil
 
     p = win.dx
     p.call.setText("BA1AA")
@@ -282,7 +282,7 @@ def test_time_on_now_returns_to_the_default(win, qtbot, monkeypatch):
 
 
 def test_clear_empties_the_contact_section_whatever_keep_says(win, qtbot):
-    from qhlogger.ui.widgets import combo_value, set_combo_data
+    from nwologger.ui.widgets import combo_value, set_combo_data
 
     p = win.dx
     for cb in p.sticky.values():
@@ -353,7 +353,7 @@ def test_similar_calls_in_worked_before(win, qtbot):
 
 
 def test_unknown_call_checks_one_edit_candidates_online(win, qtbot, monkeypatch):
-    from qhlogger.core.lookup import clients as lookup_clients
+    from nwologger.core.lookup import clients as lookup_clients
 
     class FakeClient:
         name = "QRZ.com"
@@ -415,8 +415,8 @@ def test_sync_everything_never_uploads(win, monkeypatch):
 def test_qsos_not_uploaded_everywhere_are_grey(win, qtbot):
     from PySide6.QtCore import Qt
 
-    from qhlogger.core import qso as qsomod
-    from qhlogger.ui import theme
+    from nwologger.core import qso as qsomod
+    from nwologger.ui import theme
 
     done = {"lotw_qsl_sent": "Y", "eqsl_qsl_sent": "Y", "qrzcom_qso_upload_status": "Y",
             "hrdlog_qso_upload_status": "Y"}

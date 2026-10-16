@@ -2,7 +2,7 @@
 
 Reads ``qso_table_v008`` from a MacLoggerDX ``.sql`` (SQLite) file, read-only. MLDX keeps all upload and
 confirmation history as comma-separated text in ``qsl_sent`` / ``qsl_received``; those tokens are split into
-QHlogger's per-service fields here.
+NWOlogger's per-service fields here.
 """
 
 from __future__ import annotations
