@@ -1,124 +1,23 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they land.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; what is left is below.
 
-## Now: plan review
+## Needs real accounts (written, tested against canned responses only)
 
-- [x] First round of open questions answered (PLAN §13 "Decided")
-- [x] MacLoggerDX database and ADIF export analysed (PLAN §8.1.1)
-- [x] License: MIT
-- [x] `.gitignore` keeps personal log data out of git
-- [x] ISS satellite name per service; MLDX bare `Y` ignored
-- [x] MLDX `ext_val_3` = lookup province text → normalised Province
+- [ ] LoTW: download confirmations and upload via TQSL with a real certificate and station location
+- [ ] eQSL: upload and inbox download (incl. the ISS name and QTH nicknames)
+- [ ] QRZ.com Logbook: INSERT / REPLACE upload and FETCH paging with a real API key
+- [ ] HRDLog: upload with a real upload code; check whether the logged-in website offers an ADIF export (PLAN §8.5)
+- [ ] QRZ.com XML and HamQTH lookups with real accounts; evaluate HamQTH API v2
 
-## M0 — Scaffold
+## Next
 
-- [ ] `pyproject.toml` (uv, Python ≥ 3.12, PySide6, httpx, keyring; dev: pytest, pytest-qt, ruff)
-- [ ] `qhlogger` package with `python -m qhlogger` / `qhlogger` entry point
-- [ ] Single-source version (`pyproject.toml` → `qhlogger.__version__`), starting at 0.1.0
-- [ ] Version shown in the window title, toolbar (right side), Help → About and `--version`
-- [ ] Modern style base: design tokens, app stylesheet on Fusion, light/dark following the OS, SVG icon set
-- [ ] Empty main window: toolbar, entry-panel placeholder, log-tab placeholder
-- [ ] GitHub Actions: ruff + pytest on macOS and Windows
-- [ ] `CONTRIBUTING` notes (commit style: one sentence; no real log data in fixtures)
-
-## M1 — Core data
-
-- [ ] SQLite schema v1 (`qso`, `station_profile`, `contest_session`, `saved_filter`, `lookup_cache`, `sync_state`, `sync_log`, `undo_log`, `meta`)
-- [ ] Migration runner + automatic rotating backups
-- [ ] Field registry (ADIF name, column, type, label, group, i18n label)
-- [ ] Mode/submode table, mode groups (CW / PHONE / DATA / IMAGE), input aliases (USB → SSB/USB, DIGI → DATA, …)
-- [ ] Mode relation table: same / could be the same / siblings / unrelated
-- [ ] Band table, freq → band
-- [ ] ADIF ADI reader (case-insensitive, byte/char length tolerant, UTF-8/Latin-1, APP_/USERDEF)
-- [ ] ADIF writer (3.1.8 header, PROGRAMID/PROGRAMVERSION, NAME from First + Last)
-- [ ] Lossless round-trip of unknown fields via `extra`; NAME split/join round-trips exactly
-- [ ] Tests: round-trip, mode relations, band edges, malformed files
-
-## M2 — Log view, search, import/export
-
-- [ ] Lazy SQL table model (`fetchMore`) for 100k+ QSOs
-- [ ] Sort any column via SQL `ORDER BY` (time_on as tiebreaker)
-- [ ] Column chooser + reorder, persisted in QSettings
-- [ ] Confirmation columns (LoTW / eQSL / QRZ / HRDLog / Paper)
-- [ ] Quick filter bar (Call with `?*`, Band, Mode, Sat, Country, Presets incl. Suspicious dupes)
-- [ ] Advanced search dialog (multi-criteria AND) + saved filters
-- [ ] Vague mode search by default (SSB → USB/LSB, DIGI → FT8 …), *Exact* option
-- [ ] Wildcard → SQLite GLOB conversion with escaping
-- [ ] ADIF import: every record imported, suspicious dupes marked `DUPE` / `SUSPECT`, preview counts, optional merge mode
-- [ ] OPERATOR → STATION_CALLSIGN fill when missing
-- [ ] MacLoggerDX database importer: upload-history text → per-service fields, paper `Mail Card` dates, bare `Y` ignored, Province from `state`/`ext_val_3` (normalised, conflicts reported), epoch times, mode/submode, dry-run report, re-runnable via `APP_MLDX_PK`
-- [ ] Ignore `QSL_SENT` as paper in MacLoggerDX ADIF files
-- [ ] Export all / selected / filtered
-- [ ] Status line: total, shown, DB path; DXCC worked/confirmed counter
-
-## M3 — DX entry
-
-- [ ] Entry panel in grouped sections (Contact, Station, Location, References, QSL), no rig panel
-- [ ] First and Last name fields
-- [ ] Location section: Country, Province, Address (street, city), CQ zone, ITU zone
-- [ ] Summary line: last confirmation, bearing and distance from the two grids
-- [ ] TimeOn/TimeOff auto + buttons, UTC/local clock
-- [ ] Sticky fields (freq, mode, sat, power)
-- [ ] Satellite dropdown from `sats.json` (sets PROP_MODE=SAT, freqs, bands, mode); free-text names allowed
-- [ ] `cty.csv` resolver (exact calls, longest prefix, portable suffixes) + bundled file + weekly update
-- [ ] Worked-before box (band × mode-group matrix, NEW DXCC/BAND/MODE badges)
-- [ ] **Dupe rules: same mode within 30 s disables Log; same mode later, or a related mode (SSB/USB, USB/LSB, DIGI/FT8, FT8/FT4), only warns; marks stored**
-- [ ] Prefs: block window (30 s), warning window (24 h), allow-dupes switch (off)
-- [ ] Edit an existing QSO in the panel; delete; undo
-- [ ] Previous (recall last QSO)
-- [ ] Command palette (⌘K / Ctrl+K) and shortcuts for every action
-
-## M4 — Bulk edit and paper QSL
-
-- [ ] Bulk edit dialog: per-field set / clear / replace / fill from lookup
-- [ ] Diff preview, single transaction, undo
-- [ ] Mark QRZ/HRDLog status `M` after editing uploaded QSOs
-- [ ] Paper QSL tab: to-send queue, mark sent/received with date + via
-- [ ] Find duplicates tool (`DUPE` / `SUSPECT`) with Not a dupe / Merge / Delete actions
-
-## M5 — Callsign lookup
-
-- [ ] QRZ.com XML client (session key, re-login on expiry; fname/name → First/Last)
-- [ ] HamQTH client (v1 session; evaluate v2 API)
-- [ ] Lookup cache with TTL
-- [ ] Fill empty fields only; discard stale results; tint lookup-filled fields
-- [ ] China province: normalise lookup text to ISO 3166-2:CN codes; guess from call district + suffix letter (marked as a guess)
-- [ ] Credentials via keyring
-
-## M6 — Sync
-
-- [ ] Adapter interface, background workers, progress UI, sync history
-- [ ] Confirmation matcher (call + band + sat, ±30 min; exact mode preferred, related mode accepted) + Unmatched list
-- [ ] Satellite name map per service (defaults from TQSL list; ISS: `ARISS` for LoTW, `ISS` for eQSL), editable in Prefs
-- [ ] QRZ Logbook: INSERT / REPLACE upload, FETCH download with paging
-- [ ] eQSL: ImportADIF upload (chunked), DownloadInBox download
-- [ ] LoTW: lotwreport.adi download (QSL + QSO-rx passes), TQSL CLI upload, exit-code handling
-- [ ] HRDLog: NewEntry upload + UPDATE
-- [ ] HRDLog: check the logged-in website for an ADIF export; add best-effort download if it exists
-- [ ] Upload-on-log switches (QRZ, eQSL, HRDLog)
-
-## M7 — Contest mode
-
-- [ ] Contest definition JSON schema + loader + validation
-- [ ] Contest setup dialog with contest dropdown (built-ins + user-defined)
-- [ ] Contest entry line (N1MM keys: Space, Enter-ESM, Esc/Alt+W, freq/mode typed in Call field)
-- [ ] Serial numbers per session
-- [ ] Live dupe check per definition rule; dupe disables Log, suspect warns
-- [ ] Check Partial (MASTER.SCP + own log) and N+1 panes
-- [ ] Scoring engine: points table, multiplier types, per-band/mode scopes, live totals
-- [ ] Score summary, multipliers and rate panes (dockable / floatable)
-- [ ] Built-in definitions: CQ WW DX, CQ WPX, IARU HF, ARRL DX, ARRL 10 m, All Asian DX, CQ WW VHF, DX serial / DX zone templates
-- [ ] User-defined contest editor
-- [ ] Cabrillo 3.0 export; session ADIF export
-
-## M8 — i18n and release
-
-- [ ] All UI strings via `tr()`; `pyside6-lupdate` workflow
-- [ ] Simplified Chinese translation (`zh_CN`)
-- [ ] Language switch in Prefs
-- [ ] PyInstaller builds: macOS `.app`/`.dmg`, Windows installer
-- [ ] Release workflow on `v*` tags (tag must match `pyproject.toml` version)
+- [ ] App icon (.icns / .ico) and macOS code signing + notarization
+- [ ] First GitHub Actions run (CI and the release workflow have not run yet)
+- [ ] Screenshots for the README, made from a synthetic log
+- [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
+- [ ] Bulk "Look up and fill" progress dialog with cancel
+- [ ] Find duplicates: merge two QSOs field by field
 
 ## M9 — Integrations (later)
 
@@ -130,5 +29,17 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
 - [ ] Paper QSL label printing
-- [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA)
-- [ ] macOS code signing + notarization
+- [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
+
+## Done in v0.1.0
+
+- [x] M0 Scaffold: uv project, version in title / toolbar / About / `--version`, modern theme (light/dark), CI workflow
+- [x] M1 Core data: SQLite schema from the field registry, migrations, backups, undo; modes, mode relations, bands; ADIF reader/writer with lossless round-trip
+- [x] M2 Log view: lazy table, sort any column, column chooser, quick filter + advanced search (wildcards, vague/exact mode, saved searches), ADIF import with dupe marking and merge mode, MacLoggerDX importer, export all / selected / filtered
+- [x] M3 DX entry: grouped sections, auto times, sticky fields, satellite memory, country file + China province guess, worked-before matrix, strict dupe rules (30 s block / 24 h warning), edit and delete
+- [x] M4 Bulk edit with preview and undo; Paper QSL tab; Find duplicates; Not a dupe
+- [x] M5 Lookup: QRZ.com XML, HamQTH fallback, cache, fill-empty-only with tinted fields
+- [x] M6 Sync: LoTW (TQSL), eQSL, QRZ.com Logbook, HRDLog upload; confirmation matching; satellite names per service; unmatched list; sync history; upload on log
+- [x] M7 Contest: setup with contest dropdown, N1MM entry keys, serials, live dupes and score, Check Partial / N+1 / Score / Multipliers / Rate docks, MASTER.SCP download, Cabrillo export, user-defined contests
+- [x] M8 Simplified Chinese UI; PyInstaller spec, Inno Setup script, release workflow
+- [x] Country file (cty.csv) update from country-files.com, checked weekly

@@ -1,7 +1,7 @@
 # QHlogger — Design Plan
 
-Status: **draft for review** (updated 2026-10-15). Nothing here is implemented yet.
-Open questions are collected at the end; answers will be folded back into this file.
+Status: **v0.1.0 implemented** (2026-10-16). Milestones M0–M8 are built; see §14 for where the code differs from
+this plan, and [TODO.md](TODO.md) for what is left. Open questions are collected in §13.
 
 ## 1. Requirements
 
@@ -599,3 +599,24 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 ### Open
 
 None right now. New questions will be added here as they come up during implementation.
+
+## 14. Implementation notes (v0.1.0)
+
+Where the code differs from, or adds to, the plan above:
+
+- **Translations** use a JSON catalog (`resources/translations/zh_CN.json`) read by `qhlogger.i18n.tr()`, instead of Qt Linguist `.ts/.qm` files.
+  - There is no build step, and the catalog is easy to edit.
+  - Qt's own dialog strings still come from Qt's `qtbase` translations.
+  - Setting `QHLOGGER_I18N_RECORD=<file>` while running the UI lists every string it asks for.
+- **Confirmed by QRZ** is stored in `qrz_qsl_rcvd` / `qrz_qslrdate` and exported as QRZ's own `APP_QRZLOG_STATUS` / `APP_QRZLOG_QSLDATE`.
+- **Dupe marks** use `dupe_flag` values `DUPE`, `SUSPECT` and `OK`. `OK` means you said "not a dupe", and later scans leave it alone.
+- **Satellite frequencies** come from your own last QSO on that satellite first, then from a few bundled defaults (`sats.json`).
+- **Contest definitions** are JSON files: built-ins in `core/contest/defs/`, yours in `Documents/QHlogger/contests/`.
+  - A rules list gives the QSO points; the first matching rule wins.
+  - Multipliers are counted per band, band + mode, mode or contest.
+  - There are no Python rule modules yet: every built-in contest fits the JSON rules.
+- **Contest exchange storage:** RST goes to `rst_sent` / `rst_rcvd` and serials to `stx` / `srx`. Other exchange fields, space-separated, go to `stx_string` / `srx_string`, and are also copied to their ADIF field where one exists (zone → `cqz` / `ituz`, grid → `gridsquare`, state → `state`).
+- **MASTER.SCP** is downloaded on request into the log's folder. Check Partial also uses every call in your log.
+- **The country file** is checked weekly and downloaded to `Documents/QHlogger/cty.csv`. The bundled copy is the fallback.
+- **The MacLoggerDX importer** also maps the remaining MLDX columns: `azimuth`, `elevation`, `distance`, latitude/longitude and the `ext_val_*` fields go to `extra`. MLDX grid-line pairs (`OM32,OM33`) go to `*_VUCC_GRIDS`.
+

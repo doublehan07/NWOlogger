@@ -17,6 +17,8 @@ from pathlib import Path
 from . import callsign
 
 RESOURCE = Path(__file__).resolve().parent.parent / "resources" / "cty.csv"
+USER_COPY = Path.home() / "Documents" / "QHlogger" / "cty.csv"
+CTY_URL = "https://www.country-files.com/bigcty/cty.csv"
 
 _OVR = re.compile(r"\((\d+)\)|\[(\d+)\]|<([-\d.]+)/([-\d.]+)>|\{([A-Z]{2})\}|~([-\d.]+)~")
 
@@ -139,4 +141,35 @@ class CtyDB:
 
 @lru_cache(maxsize=1)
 def default() -> CtyDB:
+    """The newer of the downloaded copy (Documents/QHlogger/cty.csv) and the bundled file."""
+    if USER_COPY.exists() and USER_COPY.stat().st_size > 50_000:
+        try:
+            return CtyDB.from_file(USER_COPY)
+        except (OSError, ValueError):
+            pass
     return CtyDB.from_file(RESOURCE)
+
+
+def download(dest: Path = USER_COPY) -> int:
+    """Fetch the latest Big CTY country file. Network only; call ``default.cache_clear()`` afterwards."""
+    import httpx  # noqa: PLC0415
+
+    r = httpx.get(CTY_URL, timeout=60, follow_redirects=True)
+    r.raise_for_status()
+    text = r.text
+    CtyDB(text)  # parse check before replacing
+    if text.count("\n") < 300:
+        raise ValueError("country file looks incomplete")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(dest)
+    return text.count("\n")
+
+
+def user_copy_age_days() -> float | None:
+    import time  # noqa: PLC0415
+
+    if not USER_COPY.exists():
+        return None
+    return (time.time() - USER_COPY.stat().st_mtime) / 86400

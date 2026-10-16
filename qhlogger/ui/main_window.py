@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -111,6 +112,7 @@ class MainWindow(QMainWindow):
         self.a_paper_queue = A("Queue paper QSL to send", lambda: mark_paper(self, self.db,
                                                                             self.view.selected_ids(), "queue"))
         self.a_recompute = A("Recompute country, DXCC and zones", self.recompute_dxcc)
+        self.a_cty = A("Update country file (cty.csv)", lambda: self.update_cty(quiet=False))
         self.a_lookup_fill = A("Look up and fill missing fields", self.lookup_fill_selected)
         self.a_select_all = A("Select all shown", lambda: self.view.selectAll(), QKeySequence.StandardKey.SelectAll)
         self.a_prefs = A("Preferences…", self.open_prefs, QKeySequence.StandardKey.Preferences, "settings")
@@ -154,7 +156,7 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
         for a in (self.a_new_log, self.a_open_log, None, self.a_import, self.a_export_all, self.a_export_sel,
-                  self.a_export_flt, None, self.a_backup, None, self.a_quit):
+                  self.a_export_flt, None, self.a_backup, self.a_cty, None, self.a_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
         for a in (self.a_undo, None, self.a_edit, self.a_bulk, self.a_delete, self.a_select_all, None,
@@ -721,7 +723,22 @@ class MainWindow(QMainWindow):
                           f"{tr('Database schema')} v{SCHEMA_VERSION}<br>{self.db.path}</p>"
                           "<p>MIT License · Country data: AD1C country-files.com · Icons: Lucide (ISC)</p>")
 
+    def update_cty(self, quiet: bool = True) -> None:
+        def done(n):
+            dxcc.default.cache_clear()
+            self.dx.cty = dxcc.default()
+            self.flash(tr("Country file updated") + f" ({n} " + tr("entities") + ")")
+
+        def fail(msg):
+            if not quiet:
+                QMessageBox.warning(self, tr("Country file"), msg)
+
+        run_async(dxcc.download, on_done=done, on_error=fail)
+
     def _first_run(self) -> None:
+        age = dxcc.user_copy_age_days()
+        if (age is None or age > 7) and not os.environ.get("QHLOGGER_OFFLINE"):
+            QTimer.singleShot(3000, lambda: self.update_cty(quiet=True))
         if not self.db.profiles():
             QMessageBox.information(self, APP_NAME, tr("Welcome! Create a station profile first: your callsign "
                                                        "and grid are added to every QSO you log."))

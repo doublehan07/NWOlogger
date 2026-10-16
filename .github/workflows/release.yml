@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - name: Tag must match pyproject version
+        shell: bash
+        run: |
+          v=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != v$v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - run: uv run pytest -q
+      - run: uv run --with pyinstaller pyinstaller packaging/qhlogger.spec --noconfirm
+      - name: macOS disk image
+        if: runner.os == 'macOS'
+        run: hdiutil create -volname QHlogger -srcfolder dist/QHlogger.app -ov -format UDZO "dist/QHlogger-${VERSION}-macos.dmg"
+      - name: Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" packaging\qhlogger.iss'
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*-setup.exe
