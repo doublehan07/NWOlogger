@@ -103,7 +103,8 @@ QLineEdit[autofill="true"], QComboBox[autofill="true"] {{ background: {t.tint}; 
 QDateTimeEdit[invalid="true"] {{ border: 1px solid {t.bad}; color: {t.bad}; }}
 QPushButton#SyncBtn {{ padding: 3px 8px; font-family: "{mono}"; }}
 QPushButton#SyncBtn:checked {{ background: {t.accent_soft}; color: {t.accent}; border: 1px solid {t.accent}; }}
-QPushButton#OpBtn {{ font-family: "{mono}"; font-weight: 600; text-align: left; }}
+QLineEdit[opstate="bad"] {{ border: 2px solid {t.bad}; }}
+QLineEdit[opstate="check"] {{ border: 2px solid {t.warn}; background: {t.warn_soft}; }}
 QLineEdit[guess="true"] {{ background: {t.tint}; font-style: italic; color: {t.muted}; }}
 QLineEdit[mono="true"] {{ font-family: "{mono}"; }}
 QLineEdit#CallEdit {{ font-family: "{mono}"; font-size: 22px; font-weight: 600; padding: 5px 10px;

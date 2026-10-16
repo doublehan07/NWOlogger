@@ -17,6 +17,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+tests/.pytest-settings.ini
 .ruff_cache/
 *.egg-info/
 

@@ -34,6 +34,7 @@ from .. import i18n
 from ..core import dxcc, sats
 from ..core.sync import tqsl
 from . import theme
+from .widgets import MODE_FIRST, all_modes, mode_list, sat_list
 
 tr = i18n.tr
 
@@ -62,6 +63,8 @@ class ProfilesPage(QWidget):
         left = QVBoxLayout()
         self.list = QListWidget()
         self.list.currentRowChanged.connect(self._load)
+        self.list.itemDoubleClicked.connect(self._make_default)
+        self.list.setToolTip(tr("Double-click a profile to make it the default"))
         left.addWidget(self.list, 1)
         row = QHBoxLayout()
         add = QPushButton(tr("New"))
@@ -193,6 +196,14 @@ class ProfilesPage(QWidget):
         data["is_default"] = self.default.isChecked()
         pid = self.db.save_profile(data)
         self._reload(select=pid)
+
+    def _make_default(self, item) -> None:
+        pid = item.data(Qt.ItemDataRole.UserRole)
+        p = self.db.profile(pid)
+        if p:
+            p["is_default"] = True
+            self.db.save_profile(p)
+            self._reload(select=pid)
 
     def _delete(self) -> None:
         if self.current_id is None:
@@ -333,13 +344,37 @@ class PrefsDialog(QDialog):
         f.addRow(tr("Upload each QSO when logged"), up)
         self.tabs.addTab(sv, tr("Services"))
 
+        # Modes shown in the entry form
+        mw = QWidget()
+        ml = QVBoxLayout(mw)
+        ml.addWidget(self._hint(tr("Tick the modes to list in the entry form, and drag them into the order you "
+                                   "like. Every other mode stays available under “Other mode…”.")))
+        mrow = QHBoxLayout()
+        self.mode_find = QLineEdit()
+        self.mode_find.setPlaceholderText(tr("Search…"))
+        self.mode_find.setClearButtonEnabled(True)
+        self.mode_find.textChanged.connect(self._filter_modes)
+        reset = QPushButton(tr("Reset to default"))
+        reset.clicked.connect(lambda: self._fill_modes(list(MODE_FIRST)))
+        mrow.addWidget(self.mode_find, 1)
+        mrow.addWidget(reset)
+        ml.addLayout(mrow)
+        self.mode_list = QListWidget()
+        self.mode_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        ml.addWidget(self.mode_list, 1)
+        self._fill_modes(mode_list(prefs))
+        self.tabs.addTab(mw, tr("Modes"))
+
         # Satellite names
         st = QWidget()
         sl = QVBoxLayout(st)
-        sl.addWidget(self._hint(tr("Satellites offered in the entry form, and the name sent to each service. Your "
-                                   "log keeps one name per satellite. Add satellites that are not on the list "
-                                   "yet.")))
+        sl.addWidget(self._hint(tr("Tick the satellites to list in the entry form (the others stay under “Other "
+                                   "satellite…”), and set the name sent to each service. Your log keeps one name per "
+                                   "satellite. Add satellites that are not on the list yet.")))
         self.user_sats = list(prefs.get("user_sats") or [])
+        cat0 = sats.load(overrides=prefs.get("sat_names"), extra=self.user_sats)
+        self.worked_sats = [n.upper() for n in db.distinct("sat_name")]
+        self.sat_checked = set(sat_list(prefs, cat0, self.worked_sats))
         sb = QHBoxLayout()
         add_sat = QPushButton(tr("Add satellite…"))
         add_sat.setIcon(theme.icon("plus"))
@@ -352,7 +387,8 @@ class PrefsDialog(QDialog):
         sb.addStretch(1)
         sl.addLayout(sb)
         self.satmap = QTableWidget(0, 3)
-        self.satmap.setHorizontalHeaderLabels([tr("Satellite (stored)"), "LoTW", "eQSL"])
+        self.satmap.setHorizontalHeaderLabels([tr("In form · satellite (stored)"), "LoTW", "eQSL"])
+        self.satmap.itemChanged.connect(self._sat_check_changed)
         self.satmap.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.satmap.verticalHeader().setVisible(False)
         self.satmap.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -391,20 +427,51 @@ class PrefsDialog(QDialog):
                 if self.tabs.tabText(i) == tr(page):
                     self.tabs.setCurrentIndex(i)
 
+    def _fill_modes(self, chosen: list[str]) -> None:
+        self.mode_list.clear()
+        order = [*chosen, *[m for m in all_modes() if m not in chosen]]
+        for m in order:
+            it = QListWidgetItem(m)
+            it.setData(Qt.ItemDataRole.UserRole, m)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
+            it.setCheckState(Qt.CheckState.Checked if m in chosen else Qt.CheckState.Unchecked)
+            self.mode_list.addItem(it)
+
+    def _filter_modes(self, text: str) -> None:
+        t = text.strip().upper()
+        for i in range(self.mode_list.count()):
+            it = self.mode_list.item(i)
+            it.setHidden(bool(t) and t not in it.text().upper())
+
+    def _sat_check_changed(self, it) -> None:
+        if it.column() != 0:
+            return
+        name = it.data(Qt.ItemDataRole.UserRole)
+        if it.checkState() == Qt.CheckState.Checked:
+            self.sat_checked.add(name)
+        else:
+            self.sat_checked.discard(name)
+
     def _fill_satmap(self) -> None:
         cat = sats.load(overrides=self.prefs.get("sat_names"), extra=self.user_sats)
         added = {(s.get("name") or "").upper() for s in self.user_sats}
+        known = {s.name.upper() for s in cat.sats}
+        rows = [(s.name, s.description) for s in cat.sats]
+        rows += [(n, tr("From your log")) for n in self.worked_sats if n not in known]
+        self.satmap.blockSignals(True)
         self.satmap.setRowCount(0)
-        for s in cat.sats:
+        for name, desc in rows:
             r = self.satmap.rowCount()
             self.satmap.insertRow(r)
-            it = QTableWidgetItem(s.name + ("   ★" if s.name.upper() in added else ""))
-            it.setData(Qt.ItemDataRole.UserRole, s.name)
-            it.setToolTip(s.description or "")
-            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            it = QTableWidgetItem(name + ("   ★" if name.upper() in added else ""))
+            it.setData(Qt.ItemDataRole.UserRole, name)
+            it.setToolTip(desc or "")
+            it.setFlags((it.flags() & ~Qt.ItemFlag.ItemIsEditable) | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked if name in self.sat_checked else Qt.CheckState.Unchecked)
             self.satmap.setItem(r, 0, it)
-            self.satmap.setItem(r, 1, QTableWidgetItem(cat.to_service("lotw", s.name)))
-            self.satmap.setItem(r, 2, QTableWidgetItem(cat.to_service("eqsl", s.name)))
+            self.satmap.setItem(r, 1, QTableWidgetItem(cat.to_service("lotw", name)))
+            self.satmap.setItem(r, 2, QTableWidgetItem(cat.to_service("eqsl", name)))
+        self.satmap.blockSignals(False)
 
     def _add_sat(self) -> None:
         dlg = QDialog(self)
@@ -434,6 +501,7 @@ class PrefsDialog(QDialog):
         self.user_sats = [s for s in self.user_sats if (s.get("name") or "").upper() != name.text().strip().upper()]
         self.user_sats.append({"name": name.text().strip().upper(), "description": desc.text().strip(),
                                "uplink": num(up), "downlink": num(down)})
+        self.sat_checked.add(name.text().strip().upper())
         self._fill_satmap()
 
     def _remove_sat(self) -> None:
@@ -493,6 +561,11 @@ class PrefsDialog(QDialog):
         p.set("upload_on_log", {"qrz": self.up_qrz.isChecked(), "eqsl": self.up_eqsl.isChecked(),
                                 "hrdlog": self.up_hrd.isChecked()})
         p.set("user_sats", self.user_sats)
+        modes_chosen = [self.mode_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.mode_list.count())
+                        if self.mode_list.item(i).checkState() == Qt.CheckState.Checked]
+        p.set("mode_list", modes_chosen or list(MODE_FIRST))
+        p.set("sat_list", [self.satmap.item(r, 0).data(Qt.ItemDataRole.UserRole) for r in range(self.satmap.rowCount())
+                           if self.satmap.item(r, 0).checkState() == Qt.CheckState.Checked])
         base = sats.load(extra=self.user_sats)
         over: dict[str, dict[str, str]] = {}
         for r in range(self.satmap.rowCount()):

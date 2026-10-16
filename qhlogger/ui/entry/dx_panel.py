@@ -27,19 +27,24 @@ from ...core import bands, callsign, dupes, dxcc, geo, modes, regions, sats, tim
 from ...core import qso as qsomod
 from ...core.operators import OperatorSession, is_club
 from .. import theme
-from ..operator_dialog import ensure_operator
+from ..list_picker import ListPicker
+from ..operator_field import OperatorField
 from ..widgets import (
+    OTHER,
     AutoLineEdit,
     Chip,
     Section,
     UtcDateTimeEdit,
+    all_modes,
     combo_value,
+    fill_mode_combo,
     fill_sat_combo,
     fmt,
     mode_combo,
     mode_text,
     primary,
     prop_combo,
+    sat_list,
     set_combo_data,
 )
 
@@ -148,17 +153,6 @@ class DXPanel(QWidget):
         prof_box.addWidget(lab)
         prof_box.addWidget(self.profile)
         top.addLayout(prof_box)
-        op_box = QVBoxLayout()
-        op_box.setSpacing(2)
-        op_lab = QLabel(tr("Operator"))
-        op_lab.setObjectName("Hint")
-        self.op_btn = QPushButton("")
-        self.op_btn.setObjectName("OpBtn")
-        self.op_btn.setMinimumWidth(120)
-        self.op_btn.clicked.connect(self.change_operator)
-        op_box.addWidget(op_lab)
-        op_box.addWidget(self.op_btn)
-        top.addLayout(op_box)
         root.addLayout(top)
 
         # Sections
@@ -207,31 +201,39 @@ class DXPanel(QWidget):
         rxl.addWidget(self.rx_sync)
         c.row(3, tr("RX MHz"), rxw)
         c.grid.addWidget(self.band_rx_lab, 3, 2)
-        self.mode = mode_combo()
+        self.mode = mode_combo(self.prefs)
+        self.mode.setToolTip(tr("Choose which modes are listed in Preferences → Modes"))
+        self._mode_prev = "SSB"
         set_combo_data(self.mode, "SSB")
         c.row(4, tr("Mode"), self.mode)
-        self.w["tx_pwr"] = AutoLineEdit(mono=True)
-        c.row(5, tr("Power"), self.w["tx_pwr"])
         rst = QHBoxLayout()
         self.w["rst_sent"] = AutoLineEdit(mono=True)
         self.w["rst_rcvd"] = AutoLineEdit(mono=True)
+        self.w["tx_pwr"] = AutoLineEdit(mono=True)
         self.w["rst_sent"].setPlaceholderText(tr("Sent"))
         self.w["rst_rcvd"].setPlaceholderText(tr("Rcvd"))
-        rst.addWidget(self.w["rst_sent"])
-        rst.addWidget(self.w["rst_rcvd"])
+        self.w["tx_pwr"].setPlaceholderText(tr("W"))
+        self.w["tx_pwr"].setToolTip(tr("Power (W)"))
+        for k in ("rst_sent", "rst_rcvd", "tx_pwr"):
+            rst.addWidget(self.w[k])
         rst_w = QWidget()
         rst_w.setLayout(rst)
         rst.setContentsMargins(0, 0, 0, 0)
-        c.row(6, tr("RST"), rst_w)
-        self.sat = QComboBox()
-        fill_sat_combo(self.sat, self.sats, self.db.distinct("sat_name"))
-        self.sat.setToolTip(tr("Satellite names come from LoTW / TQSL. Add new ones in Preferences → Satellites."))
-        self.sat.currentIndexChanged.connect(self._sat_changed)
-        c.row(7, tr("Satellite"), self.sat)
+        c.row(5, tr("RST · Power"), rst_w)
         self.prop = prop_combo()
         self.prop.setToolTip(tr("Propagation mode (TQSL / LoTW list)"))
         self.prop.currentIndexChanged.connect(self._prop_changed)
-        c.row(8, tr("Propagation"), self.prop)
+        c.row(6, tr("Propagation"), self.prop)
+        self.sat = QComboBox()
+        self._sat_prev = ""
+        fill_sat_combo(self.sat, self.sats, sat_list(self.prefs, self.sats, self.db.distinct("sat_name")))
+        self.sat.setToolTip(tr("Choose which satellites are listed in Preferences → Satellites"))
+        self.sat.currentIndexChanged.connect(self._sat_changed)
+        c.row(7, tr("Satellite"), self.sat)
+        self.op_field = OperatorField(self.ops)
+        self.op_field.message.connect(self.message)
+        self.op_field.returnPressed.connect(self.commit)
+        c.row(8, tr("Operator"), self.op_field)
         c.grid.setColumnStretch(1, 1)
         grid.addWidget(c, 0, 0)
 
@@ -360,7 +362,7 @@ class DXPanel(QWidget):
         self.w["freq"].textChanged.connect(self._freq_changed)
         self.w["freq"].textChanged.connect(self._sync_rx)
         self.w["freq_rx"].textChanged.connect(self._freq_changed)
-        self.mode.currentIndexChanged.connect(lambda *_: self._mode_changed(combo_value(self.mode) or ""))
+        self.mode.currentIndexChanged.connect(self._mode_picked)
         for wdg in self.w.values():
             if isinstance(wdg, AutoLineEdit):
                 wdg.returnPressed.connect(self.commit)
@@ -459,36 +461,59 @@ class DXPanel(QWidget):
             w._edited("")
 
     def _prop_changed(self) -> None:
-        if combo_value(self.prop) != "SAT" and combo_value(self.sat):
-            self.sat.blockSignals(True)
-            self.sat.setCurrentIndex(0)
-            self.sat.blockSignals(False)
-            if not self.rx_sync.isChecked() and self.prefs.get("rx_sync"):
-                self.rx_sync.setChecked(True)
+        # The satellite name is kept even when propagation is not SAT; a chip warns about it.
         self._check_timer.start()
+
+    def sat_prop_warning(self) -> str | None:
+        sat, prop = combo_value(self.sat), combo_value(self.prop)
+        if sat and prop and prop != "SAT":
+            return tr("Satellite is set, but propagation is not SAT")
+        if prop == "SAT" and not sat:
+            return tr("Propagation is SAT, but no satellite is chosen")
+        return None
 
     def reload_sats(self) -> None:
         self.sats = sats.load(overrides=self.prefs.get("sat_names"), extra=self.prefs.get("user_sats"))
-        fill_sat_combo(self.sat, self.sats, self.db.distinct("sat_name"))
+        fill_sat_combo(self.sat, self.sats, sat_list(self.prefs, self.sats, self.db.distinct("sat_name")))
+
+    def reload_lists(self) -> None:
+        fill_mode_combo(self.mode, self.prefs)
+        self.reload_sats()
+
+    def _mode_picked(self, *_a) -> None:
+        if self.mode.currentData() == OTHER:
+            dlg = ListPicker(tr("Other mode"), [(m, "") for m in all_modes()], self,
+                             add_label=tr("Also add it to my mode list"))
+            chosen = dlg.value if dlg.exec() else None
+            self.mode.blockSignals(True)
+            if chosen:
+                if dlg.add.isChecked():
+                    lst = [m for m in (self.prefs.get("mode_list") or []) if m] or self._default_modes()
+                    if chosen not in lst:
+                        lst.append(chosen)
+                    self.prefs.set("mode_list", lst)
+                    fill_mode_combo(self.mode, self.prefs)
+                set_combo_data(self.mode, chosen)
+            else:
+                set_combo_data(self.mode, self._mode_prev)
+            self.mode.blockSignals(False)
+        self._mode_prev = combo_value(self.mode) or self._mode_prev
+        self._mode_changed(combo_value(self.mode) or "")
+
+    @staticmethod
+    def _default_modes() -> list[str]:
+        from ..widgets import MODE_FIRST  # noqa: PLC0415
+
+        return list(MODE_FIRST)
 
     # ------------------------------------------------------------------ operator
     def _update_operator(self) -> None:
-        prof = self.current_profile()
-        op = self.ops.current(prof)
-        if is_club(prof):
-            self.op_btn.setText((op or tr("ask at first QSO")) + "  ✎")
-            self.op_btn.setToolTip(tr("Club station: click to change the operator"))
-        else:
-            self.op_btn.setText(op or "—")
-            self.op_btn.setToolTip(tr("Personal station: the operator comes from the station profile"))
+        if self.edit_id is None:
+            self.op_field.show_for(self.current_profile())
 
     def change_operator(self) -> None:
-        prof = self.current_profile()
-        if is_club(prof):
-            ensure_operator(self, self.ops, self.db, prof, force=True)
-            self._update_operator()
-        else:
-            self.profiles_requested.emit()
+        self.op_field.setFocus()
+        self.op_field.selectAll()
 
     def _compare(self) -> None:
         hit = self.current_dupe()
@@ -499,7 +524,7 @@ class DXPanel(QWidget):
         draft = qsomod.normalize(self.values())
         if self.edit_id is not None:
             draft["id"] = self.edit_id
-        DupeCompareDialog(self.db, self.prefs, draft=draft, other_id=hit.other_id, parent=self).exec()
+        DupeCompareDialog(self.db, self.prefs, draft=draft, parent=self).exec()
 
     # ------------------------------------------------------------------ field access
     def _get(self, col: str) -> Any:
@@ -654,6 +679,22 @@ class DXPanel(QWidget):
         self._check_timer.start()
 
     def _sat_changed(self, *_a) -> None:
+        if self.sat.currentData() == OTHER:
+            items = [(s.name, s.description) for s in self.sats.sats]
+            dlg = ListPicker(tr("Other satellite"), items, self, add_label=tr("Also add it to my satellite list"))
+            chosen = dlg.value if dlg.exec() else None
+            self.sat.blockSignals(True)
+            if chosen and dlg.add.isChecked():
+                lst = sat_list(self.prefs, self.sats, self.db.distinct("sat_name"))
+                if chosen not in lst:
+                    lst.append(chosen)
+                self.prefs.set("sat_list", lst)
+                fill_sat_combo(self.sat, self.sats, lst)
+            set_combo_data(self.sat, chosen or self._sat_prev)
+            self.sat.blockSignals(False)
+            if not chosen:
+                return
+        self._sat_prev = combo_value(self.sat) or ""
         name = combo_value(self.sat)
         if not name:
             if combo_value(self.prop) == "SAT":
@@ -753,6 +794,9 @@ class DXPanel(QWidget):
                          None if q.get("gridsquare") else ((r.lat, r.lon) if r else None))
             if p:
                 summary_parts.append(f"Az {p[0]:.0f}° · LP {p[1]:.0f}° · {p[2]:,.0f} km")
+        warn = self.sat_prop_warning()
+        if warn:
+            chips.append((warn, "warn"))
         self._set_chips(chips)
         self.compare_btn.setVisible(hit is not None)
         self.summary.setText("   —   ".join(summary_parts))
@@ -803,6 +847,7 @@ class DXPanel(QWidget):
         freq, freq_rx = self._get("freq"), self._get("freq_rx")
         mode, power = combo_value(self.mode), self._get("tx_pwr")
         sat, prop = combo_value(self.sat), combo_value(self.prop)
+        was_editing = self.edit_id is not None
         self.edit_id = None
         self.call.blockSignals(True)
         self.call.clear()
@@ -833,7 +878,8 @@ class DXPanel(QWidget):
         self.time_off_mode = "live"
         self._duration = 60.0
         self._tick()
-        self._update_operator()
+        if was_editing or not self.op_field.text():
+            self._update_operator()
         self.edit_banner.hide()
         self.delete_btn.hide()
         self.cancel_btn.hide()
@@ -883,6 +929,7 @@ class DXPanel(QWidget):
             w.blockSignals(False)
         self._check_times()
         self._hidden = {"cont": q.get("cont")} if q.get("cont") else {}
+        self.op_field.setText(q.get("operator") or "")
         self.edit_banner.setText(tr("Editing") + f"  {qsomod.summary(q)}")
         self.edit_banner.show()
         self.delete_btn.show()
@@ -924,8 +971,17 @@ class DXPanel(QWidget):
         if hit and hit.level == "DUPE" and not self.prefs.get("allow_dupes"):
             self.message.emit(tr("Dupe: logging is blocked for the same mode within the block window."))
             return
+        warn = self.sat_prop_warning()
+        if warn and QMessageBox.question(
+                self, tr("Satellite and propagation"),
+                warn + ".\n\n" + tr("Log it anyway? The satellite name and propagation are saved as shown.")
+        ) != QMessageBox.StandardButton.Yes:
+            return
         if self.edit_id is not None:
             before = self.db.get(self.edit_id) or {}
+            op = callsign.clean(self.op_field.text())
+            if op != (before.get("operator") or ""):
+                nq["operator"] = op or None
             changes = {k: v for k, v in nq.items() if k in before and before.get(k) != v}
             for k in ("dupe_flag", "dupe_of"):
                 changes.pop(k, None)
@@ -940,9 +996,8 @@ class DXPanel(QWidget):
             self.clear_form()
             return
         prof = self.current_profile() or {}
-        op = ensure_operator(self, self.ops, self.db, prof) if prof else None
+        op = self.op_field.resolve(prof) if prof else callsign.clean(self.op_field.text()) or None
         if prof and op is None and is_club(prof):
-            self.message.emit(tr("Not logged: enter the operator first."))
             return
         for col in PROFILE_COLS:
             if prof.get(col) not in (None, ""):

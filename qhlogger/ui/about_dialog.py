@@ -46,7 +46,7 @@ class AboutDialog(QDialog):
         about.setOpenExternalLinks(True)
         about.setHtml(
             f"<h3>{tr('Authors')}</h3>"
-            "<p>Han Zhang (BI1NWO)<br>Claude (Anthropic)</p>"
+            "<p>Han Zhang (BI1NWO)<br>Claude Opus 5.5 Extra High (Anthropic)</p>"
             f"<h3>{tr('Copyright')}</h3>"
             f"<p>© 2026 Han Zhang. {tr('Released under the MIT License.')}</p>"
             f"<h3>{tr('Made for')}</h3>"

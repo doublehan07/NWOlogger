@@ -38,7 +38,7 @@ from . import theme
 from .about_dialog import AboutDialog
 from .bulk_edit import BulkEditDialog
 from .command_palette import CommandPalette
-from .dupe_dialog import DupeCompareDialog, show_review
+from .dupe_dialog import show_review
 from .entry.dx_panel import DXPanel
 from .import_dialog import ImportDialog
 from .log.filter_bar import FilterBar
@@ -108,7 +108,7 @@ class MainWindow(QMainWindow):
         self.a_not_dupe = A("Not a dupe", self.not_dupe)
         self.a_show_dupe = A("Compare with the original…", self.show_dupe_partner)
         self.a_review = A("Review suspicious dupes…", self.review_dupes, "Ctrl+Shift+D", "copy-check")
-        self.a_operator = A("Change operator…", lambda: self.dx.change_operator(), "Ctrl+Shift+O", "user-round")
+        self.a_operator = A("Change operator…", self.change_operator, "Ctrl+Shift+O", "user-round")
         self.a_paper_sent = A("Mark paper QSL sent…", lambda: mark_paper(self, self.db, self.view.selected_ids(),
                                                                         "sent"))
         self.a_paper_rcvd = A("Mark paper QSL received…", lambda: mark_paper(self, self.db,
@@ -396,12 +396,22 @@ class MainWindow(QMainWindow):
         if prev != i:
             self.prefs.set_value(f"window/split{prev}", self.splitter.sizes())
         self.entry_stack.setCurrentIndex(i)
+        # Only the visible page decides how small the entry area may get.
+        for k in range(self.entry_stack.count()):
+            pol = QSizePolicy.Policy.Preferred if k == i else QSizePolicy.Policy.Ignored
+            self.entry_stack.widget(k).setSizePolicy(pol, pol)
+        self.entry_stack.updateGeometry()
         sizes = self.prefs.value(f"window/split{i}")
         total = sum(self.splitter.sizes())
         if isinstance(sizes, list) and len(sizes) == 2:
-            self.splitter.setSizes([int(x) for x in sizes])
+            want = [int(x) for x in sizes]
         elif i == 1 and total:
-            self.splitter.setSizes([300, max(200, total - 300)])
+            want = [300, max(200, total - 300)]
+        else:
+            want = None
+        if want:
+            self.splitter.setSizes(want)
+            QTimer.singleShot(0, lambda w=want: self.splitter.setSizes(w))  # again after the contest panes appear
         (self.a_view_log if i == 0 else self.a_view_contest).setChecked(True)
         if i == 1 and self.contest is not None:
             self.contest.activate()
@@ -525,20 +535,17 @@ class MainWindow(QMainWindow):
         self.db.update_many(ids, {"dupe_flag": "OK", "dupe_of": None}, label=tr("Not a dupe"), track_service=False)
 
     def show_dupe_partner(self) -> None:
-        ids = self.view.selected_ids()
-        flagged = [i for i in ids if (self.db.get(i) or {}).get("dupe_flag") in ("DUPE", "SUSPECT")]
-        if flagged:
-            show_review(self, self.db, self.prefs, flagged, on_edit=self.edit_qso)
+        ids = self.view.selected_ids() or ([self.view.current_id()] if self.view.current_id() else [])
+        if not ids:
             return
-        qid = self.view.current_id()
-        q = self.db.get(qid) if qid else None
-        hit = dupes.check(self.db, q, block_s=self.prefs.get("block_seconds"),
-                          warn_s=self.prefs.get("warn_hours") * 3600, exclude_id=qid) if q else None
-        if not hit:
-            self.flash(tr("This QSO is not marked as a dupe."))
-            return
-        dlg = DupeCompareDialog(self.db, self.prefs, draft=q, other_id=hit.other_id, parent=self)
-        dlg.exec()
+        show_review(self, self.db, self.prefs, ids, on_edit=self.edit_qso)
+
+    def change_operator(self) -> None:
+        if self.entry_stack.currentIndex() == 1 and self.contest is not None:
+            self.contest.op_field.setFocus()
+            self.contest.op_field.selectAll()
+        else:
+            self.dx.change_operator()
 
     def review_dupes(self) -> None:
         show_review(self, self.db, self.prefs, on_edit=self.edit_qso)
@@ -736,7 +743,7 @@ class MainWindow(QMainWindow):
             theme.apply(self.app, self.prefs.get("theme"))
             self._lookup_clients = None
             self.dx.reload_profiles()
-            self.dx.reload_sats()
+            self.dx.reload_lists()
             self.dx.clear_form()
             self.model.refresh()
         else:

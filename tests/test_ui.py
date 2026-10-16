@@ -132,27 +132,32 @@ def test_rx_follows_tx_when_synced(win, qtbot):
     assert p.w["freq_rx"].text() == "7.074"
 
 
-def test_club_station_asks_for_operator(win, qtbot, monkeypatch):
-    from qhlogger.ui import operator_dialog
+def test_club_station_operator_field(win, qtbot):
+    from datetime import timedelta
+
+    from qhlogger.core import timeutil
 
     db = win.db
     pid = db.save_profile({"name": "BY1QQ club", "station_callsign": "BY1QQ", "station_type": "club",
                            "my_gridsquare": "ON80", "is_default": True})
     win.dx.reload_profiles()
     win.dx.profile.setCurrentIndex(win.dx.profile.findData(pid))
-    asked = []
-
-    def fake_exec(self):
-        asked.append(1)
-        self.value = "BI1XYZ"
-        return operator_dialog.QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(operator_dialog.OperatorDialog, "exec", fake_exec)
+    win.dx.op_field.clear()
     log_one(win, qtbot, "BA1AA")
+    assert db.count() == 0 and win.dx.op_field.property("opstate") == "bad"  # empty operator: not logged
+    win.dx.op_field.setText("BI1XYZ")
+    win.dx.commit()
+    assert db.count() == 1
     log_one(win, qtbot, "BA1BB")
-    assert len(asked) == 1
-    ops = {r[0] for r in db.conn.execute("SELECT operator FROM qso")}
-    assert ops == {"BI1XYZ"}
+    assert db.count() == 2  # kept for the session
+    # After a break the field asks for a check once; a second Enter logs.
+    prof = db.profile(pid)
+    win.ops.set(prof, "BI1XYZ", timeutil.now_utc() - timedelta(hours=4))
+    log_one(win, qtbot, "BA1CC")
+    assert db.count() == 2 and win.dx.op_field.property("opstate") == "check"
+    win.dx.commit()
+    assert db.count() == 3
+    assert {r[0] for r in db.conn.execute("SELECT operator FROM qso")} == {"BI1XYZ"}
 
 
 def test_operator_session_rechecks_after_break():
@@ -186,20 +191,65 @@ def test_lotw_propagation_rules(tmp_path):
     d.close()
 
 
-def test_dupe_compare_dialog(win, qtbot):
-    log_one(win, qtbot, "BA1AA", mode="USB")
-    win.dx.mode.setCurrentText("LSB")
-    win.dx.call.setText("BA1AA")
-    win.dx._call_edited("BA1AA")
-    win.dx.w["freq"].setText("14.2")
-    win.dx._refresh_checks()
-    assert win.dx.compare_btn.isVisibleTo(win.dx)
-    win.dx.commit()
+def test_dupe_group_of_three(win, qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from qhlogger.core import dupes, qso
     from qhlogger.ui.dupe_dialog import DupeCompareDialog, flagged_ids
 
-    ids = flagged_ids(win.db)
-    assert len(ids) == 1
-    dlg = DupeCompareDialog(win.db, win.prefs, queue=ids, parent=win)
-    assert dlg.table.rowCount() > 10
-    dlg._not_dupe()
-    assert win.db.get(ids[0])["dupe_flag"] == "OK"
+    db = win.db
+    rows = [("2026-10-10T10:00:00Z", "FT8", None), ("2026-10-10T10:00:20Z", "FT8", None),
+            ("2026-10-10T10:10:00Z", "FT4", None)]
+    ids = [db.insert(qso.normalize({"call": "BA1AA", "time_on": t, "mode": m, "band": "20m", "freq": 14.074}))
+           for t, m, _ in rows]
+    db.update(ids[2], {"lotw_qsl_rcvd": "Y", "lotw_qslrdate": "2026-10-12"}, track_service=False)
+    dupes.mark(db, ids)
+    groups = dupes.groups_for(db, flagged_ids(db))
+    assert groups == [ids]  # one group holding all three
+    dlg = DupeCompareDialog(db, win.prefs, groups=groups, parent=win)
+    assert dlg.table.columnCount() == 3
+    # Edit a cell and save.
+    from qhlogger.ui.dupe_dialog import ROWS
+
+    r = ROWS.index("rst_sent")
+    dlg.table.item(r, 1).setText("-05")
+    assert dlg.edits and dlg.save_btn.isEnabled()
+    dlg._save()
+    assert db.get(ids[1])["rst_sent"] == "-05"
+    # Keep the first, merge the others into it: the LoTW confirmation moves over.
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    dlg.keep_and_merge(0, confirm=False)
+    assert db.count() == 1
+    kept = db.get(ids[0])
+    assert kept["lotw_qsl_rcvd"] == "Y" and kept["dupe_flag"] is None
+
+
+def test_sat_name_without_sat_propagation(win, qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from qhlogger.ui.widgets import set_combo_data
+
+    p = win.dx
+    p.call.setText("BA1AA")
+    p._call_edited("BA1AA")
+    set_combo_data(p.sat, "ARISS")
+    set_combo_data(p.prop, "ES")
+    assert p.sat_prop_warning()
+    p.w["freq"].setText("145.99")
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(1) or QMessageBox.StandardButton.Yes)
+    p.commit()
+    assert asked and win.db.count() == 1
+    row = win.db.get(1)
+    assert row["sat_name"] == "ARISS" and row["prop_mode"] == "ES"
+
+
+def test_custom_mode_list(win, qtbot):
+    from qhlogger.ui.widgets import OTHER, fill_mode_combo
+
+    win.prefs.set("mode_list", ["CW", "FT8"])
+    fill_mode_combo(win.dx.mode, win.prefs)
+    items = [win.dx.mode.itemData(i) for i in range(win.dx.mode.count()) if win.dx.mode.itemData(i)]
+    assert items == ["CW", "FT8", OTHER]
+
+

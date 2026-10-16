@@ -14,8 +14,6 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 
 - [ ] macOS code signing + notarization (the BY1QH icon is in place)
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
-- [ ] Screenshots for the README, made from `tests/fixtures/sample.adi`
-- [ ] Contest entry line: show and change the operator there too (today it shares the DX panel's operator)
 - [ ] Bulk edit: refuse a Time Off earlier than Time On, as the entry form does
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
 - [ ] Bulk "Look up and fill" progress dialog with cancel
@@ -56,3 +54,12 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 - [x] Operators: personal vs club station profiles; club asks at the first QSO, again on a new UTC day or after a 3-hour break; Cabrillo OPERATORS from the log
 - [x] BY1QH logo as the app icon (`resources/brand/`); new About page (authors, copyright, credits, system info)
 - [x] README: how to test, file tree, links to PLAN and TODO; synthetic `tests/fixtures/sample.adi`
+
+## Done after second testing (2026-10-16)
+
+- [x] Mode and satellite dropdowns list only your choice (Preferences → Modes, Satellites "In form"); *Other…* searches the rest and can add to your list
+- [x] Propagation sits before Satellite; a satellite with non-SAT propagation is kept, with a warning and a confirmation
+- [x] Operator is a field in the entry form and the contest bar (no pop-up); club stations must fill it; amber check on a new UTC day or after a 3-hour break
+- [x] Double-click a station profile to make it the default
+- [x] Dupe compare shows a whole group (3+ QSOs), with editable cells, Save edits, Keep #n + merge others, Delete, Not dupes
+- [x] README screenshots from made-up data (`tools/screenshots.py`); test runs no longer touch real preferences

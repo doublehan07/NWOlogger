@@ -13,6 +13,22 @@ modern UI, and built with Python and Qt (PySide6). Made for the BY1QH club stati
 > - **Design:** [PLAN.md](PLAN.md)
 > - **Remaining work:** [TODO.md](TODO.md)
 
+## Screenshots
+
+![Main window: entry form above the log. A possible dupe is flagged while typing.](docs/screenshots/main.png)
+*Main window: the entry form above the log. The call is flagged as a possible dupe while you type, and **Compare…** opens the dupe window.*
+
+| | |
+|---|---|
+| ![Dupe compare](docs/screenshots/compare.png) | ![Contest mode](docs/screenshots/contest.png) |
+| *A group of three possible dupes side by side. Cells are editable; keep one and merge the others.* | *Contest mode (CQ WW): entry line, live score, Check Partial and N+1.* |
+| ![Dark theme](docs/screenshots/dark.png) | ![Simplified Chinese](docs/screenshots/zh_CN.png) |
+| *Dark theme* | *简体中文* |
+| ![Preferences: modes](docs/screenshots/prefs-modes.png) | |
+| *Preferences → Modes: choose and order the modes in the dropdown* | |
+
+All screenshots use made-up QSOs. To regenerate them, run `uv run python tools/screenshots.py`.
+
 ## Try it
 
 You need [uv](https://docs.astral.sh/uv/). It fetches the right Python (3.12) by itself.
@@ -33,11 +49,11 @@ Without `--db`, QHlogger uses `~/Documents/QHlogger/qhlog.sqlite`. Other options
 
 **A first test, step by step:**
 
-1. **Create a station profile** when asked. Choose *Club station* if several people operate the call; QHlogger then asks who is operating.
+1. **Create a station profile** when asked. Choose *Club station* if several people operate the call; the Operator field in the entry form must then be filled in. Double-click a profile to make it the default.
 2. **Import the sample log:** File → Import, then pick [`tests/fixtures/sample.adi`](tests/fixtures/sample.adi). These are 17 made-up QSOs: a satellite pass, HF FT8/SSB/CW, one strict dupe and one suspicious dupe. When asked, review the dupes side by side.
 3. **Log a QSO.**
    - Type a call. Country, zones and Chinese provinces fill in by themselves (tinted).
-   - Try TX/RX MHz with the **= TX** toggle, the Mode, Satellite and Propagation dropdowns, and Enter to log.
+   - Try TX/RX MHz with the **= TX** toggle, the Mode, Propagation and Satellite dropdowns (choose what they list in Preferences → Modes / Satellites), and Enter to log.
    - Change Time On and see Time Off move to Time On + 1 min.
 4. **Search:** `BA*` or `B?1*` in the call box; mode `SSB` (finds USB/LSB) with and without *Exact*; presets such as *Suspicious dupes* and *Paper to send*.
 5. **Edit many QSOs:** select several rows → right-click → Bulk edit. Undo with ⌘Z / Ctrl+Z.
@@ -70,14 +86,20 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
 - **Sorting** by any column, including satellite name, time on and time off. Columns can be shown, hidden and moved.
 - **Entry form:**
   - TX / RX MHz, with an *= TX* sync toggle.
-  - Dropdowns for mode, satellite and propagation (TQSL's list). You can add your own satellites in Preferences.
+  - Dropdowns for mode, propagation (TQSL's list) and satellite.
+    - You choose which modes and satellites are listed; *Other…* reaches the rest.
+    - You can add your own satellites.
+    - A satellite with a non-SAT propagation is kept, with a warning.
   - Time Off follows Time On + 1 min. A Time Off earlier than Time On is refused.
   - Fields stay set for a whole satellite pass.
-- **Operators:** personal stations log your call as operator. Club stations ask who is operating at the first QSO, then again on a new UTC day or after a 3-hour break.
+- **Operators:** an Operator field in the entry form.
+  - Personal stations fill in your call.
+  - Club stations must enter the operator, which then stays for the session.
+  - On a new UTC day or after a 3-hour break, the field turns amber once to be checked.
 - **Strict dupe checking:**
   - Only the same call, band and exact mode within 30 seconds blocks logging.
   - The same mode later, or a related mode (SSB vs USB, USB vs LSB, FT8 vs FT4), only warns.
-  - A side-by-side compare window lets you resolve marks: not a dupe, merge, delete, or edit.
+  - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, or keep one QSO and merge the others into it, delete one, or mark them as not dupes.
 - **Bulk edit** of a selection, with a preview and undo.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
 - **Paper QSL cards** tracked separately (sent and received dates, via bureau, direct or manager), with a "to send" queue.
@@ -103,7 +125,7 @@ No rig control, by design: QHlogger never talks to a radio.
 | ⌘F / Ctrl+F | Search log |
 | ⌘B / Ctrl+B | Bulk edit the selection |
 | ⇧⌘D / Ctrl+Shift+D | Review suspicious dupes |
-| ⇧⌘O / Ctrl+Shift+O | Change operator (club station) |
+| ⇧⌘O / Ctrl+Shift+O | Go to the Operator field |
 | ⌘Z / Ctrl+Z | Undo (log, edit, bulk edit, delete, import) |
 | ⌘1–3 / Ctrl+1–3 | Log · Paper QSL · Sync history tabs |
 | ⇧⌘1 / ⇧⌘2 | DX view / Contest view |
@@ -134,11 +156,15 @@ QHlogger/
 │   │   ├── entry/dx_panel.py  the DX entry form
 │   │   ├── log/               log table model / view, filter bar, advanced search
 │   │   ├── contest/           contest entry line and panes, setup, user-defined contests
-│   │   ├── dupe_dialog.py     side-by-side dupe compare / review
+│   │   ├── dupe_dialog.py     side-by-side dupe groups: compare, edit, merge
+│   │   ├── operator_field.py  the Operator field (personal / club station rules)
+│   │   ├── list_picker.py     "Other mode… / Other satellite…" search
 │   │   ├── bulk_edit.py, qsl_paper.py, import_dialog.py, prefs_dialog.py, about_dialog.py, …
 │   │   └── theme.py           colours, light / dark stylesheet, icons
 │   └── resources/             cty.csv, sats.json, icons (Lucide), brand/by1qh.png, translations/zh_CN.json
 ├── tests/                     pytest suite; fixtures/sample.adi is a synthetic log for trying the app
+├── tools/screenshots.py       renders docs/screenshots/ from made-up data
+├── docs/screenshots/          the README screenshots
 ├── packaging/                 PyInstaller spec, Inno Setup script (Windows installer)
 ├── .github/workflows/         CI (tests on macOS + Windows) and release builds
 ├── PLAN.md, TODO.md           design and remaining work
@@ -152,7 +178,7 @@ QHlogger/
 
 ## Credits
 
-- **Authors:** Han Zhang (BI1NWO) and Claude (Anthropic). Copyright © 2026 Han Zhang.
+- **Authors:** Han Zhang (BI1NWO) and Claude Opus 5.5 Extra High (Anthropic). Copyright © 2026 Han Zhang.
 - **Station:** made for [BY1QH](https://www.qrz.com/db/BY1QH), whose logo is the app icon.
 - **Data:** AD1C country files ([country-files.com](https://www.country-files.com/)), ARRL LoTW / TQSL lists, Super Check Partial.
 - **Software:** icons by [Lucide](https://lucide.dev/) (ISC); Qt for Python (PySide6).

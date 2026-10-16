@@ -264,14 +264,16 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
   - **Frequencies:** the field is labelled **TX MHz**; RX MHz sits below it.
     - An **= TX** toggle keeps RX equal to TX, for simplex.
     - Picking a satellite turns it off, because satellites are split; clearing the satellite turns it back on.
-  - **Mode** is a plain dropdown: common modes first, then every ADIF mode and submode, plus generic DATA / PHONE.
+  - **Mode** is a plain dropdown of *your* modes (Preferences → Modes: tick and drag to order; default = the common ones), then *Other mode…*, which searches every ADIF mode and submode and can add the choice to your list.
   - **Propagation** is a dropdown of TQSL's 16 propagation modes (AS, AUE, AUR, BS, ECH, EME, ES, F2, FAI, ION, IRL, MS, RS, SAT, TEP, TR).
     - It also offers the ADIF-only GWAVE, INTERNET, LOS and RPT, marked "not for LoTW".
     - The ADIF `SAT_MODE` field is no longer on the form; it is kept when an import brings it.
-  - **Satellite** is a dropdown: the LoTW / TQSL list (`sats.json`), satellites you added in Preferences → Satellites, and names found only in your log.
+  - **Propagation comes before Satellite** in the form.
+  - **Satellite** is a dropdown of *your* satellites (Preferences → Satellites, "In form" column; until you choose, the ones you worked plus popular ones), then *Other satellite…*, which searches the full LoTW / TQSL list, your added satellites and names found only in your log.
+    - **Satellite without SAT propagation:** the satellite name is kept. An amber chip says "Satellite is set, but propagation is not SAT" and logging asks once. The reverse ("Propagation is SAT, but no satellite") is treated the same way. A satellite with an *empty* propagation is stored as SAT, as ADIF expects.
     - Picking one sets propagation SAT and fills the frequencies and mode from your last QSO on it (else its defaults).
     - Per-service names are handled on upload (§8.2).
-  - **Operator** box (top right) shows who is operating. See §6.3.
+  - **Operator** is a field in the Contact section (and in the contest bar). See §6.3.
   - *Sticky* fields carry over to the next QSO, which matters for satellite passes.
   - *Previous* recalls the last QSO's fields.
   - Enter logs the QSO, Esc clears the form.
@@ -311,13 +313,18 @@ Bulk edit follows the BBLogger idea of editing many selected QSOs at once, with 
 
 ### 6.2 Dupe compare and review
 
-A window shows a QSO and the earlier QSO it may duplicate side by side.
-- **Layout:** fields that differ are highlighted, and the fields that decide a dupe (call, band, mode, satellite, time) are bold. A line on top says why it was flagged, e.g. "same mode and submode, 21 min apart. Warning only."
-- **Actions:**
-  - *Not a dupe*: marks it `OK`, so later scans leave it alone.
-  - *Merge into original*: copies the fields and confirmations the original is missing, then deletes this QSO.
-  - *Delete this QSO* / *Delete original*.
-  - *Edit…*: opens the QSO in the entry form.
+A QSO can collide with more than one other QSO, so the window shows a **group**.
+- **What a group is:** every QSO linked by possible-dupe relations (same call and band, related mode, within the warning window; found transitively, at most 12), oldest first, one column each.
+- **Layout:**
+  - The column header shows the time and the mark (Dupe / Suspect).
+  - Fields that differ are highlighted, and the fields that decide a dupe (call, band, mode, propagation, satellite, time) are bold.
+  - The top lists each QSO against the earlier ones, e.g. "#2 dupe of #1: same mode and submode, 15 s apart; #3 possible dupe of #2: related modes, 12 min apart".
+- **Editing in the window:** double-click a cell and type, then *Save edits*. All edits are saved as one undo step and the group's marks are recomputed. A Time Off earlier than Time On is refused.
+- **Actions** (click a column header to select a QSO):
+  - *Not dupes*: marks every QSO in the group `OK`, so later scans leave them alone.
+  - *Keep #n, merge others*: copies the fields and confirmations #n is missing from the others, then deletes the others.
+  - *Delete selected*.
+  - *Open in entry form*.
   - Every action can be undone.
 - **Opened from:**
   - *Review suspicious dupes…* (⇧⌘D / Ctrl+Shift+D), which steps through every marked QSO with Previous / Next.
@@ -330,12 +337,12 @@ A window shows a QSO and the earlier QSO it may duplicate side by side.
 Each station profile is a **personal** or a **club** station.
 
 - **Personal:** the operator is the profile's operator, or else its station callsign.
-- **Club:** QHlogger asks *who is operating* at the first QSO after start, and keeps the answer while the app runs.
-  - It asks again, prefilled, when a new UTC day starts or after a 3-hour break without logging. The break catches a change of operator between shifts.
-  - The operator box and ⇧⌘O / Ctrl+Shift+O change the operator at any time.
-  - The list offers the station's recent operators from the log.
-- The operator goes into ADIF `OPERATOR`. Cabrillo `OPERATORS` lists every operator of a contest session.
-- Logging is refused if the operator prompt is cancelled.
+- **Club:** the **Operator field** (Contact section; also in the contest bar) must be filled in. There is no pop-up.
+  - An empty field turns red and the QSO is not logged.
+  - The operator is kept while the app runs.
+  - On a new UTC day, or after a 3-hour break without logging, the field turns amber once ("check the operator") and a second Enter logs. The break catches a change of operator between shifts.
+  - ⇧⌘O / Ctrl+Shift+O jumps to the field.
+- **The value** goes into ADIF `OPERATOR`. Cabrillo `OPERATORS` lists every operator of a contest session.
 
 ## 7. Search
 
@@ -596,8 +603,9 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 | Section | Settings |
 |---|---|
 | General | Language (English / 简体中文), date/time display, theme follows the OS |
-| Station profiles | One or more profiles; each is a personal or a club station (§6.3) |
-| Satellites | Satellites offered in the entry form (LoTW / TQSL list + your own), and the name sent to each service |
+| Station profiles | One or more profiles; each is a personal or a club station (§6.3); double-click makes one the default |
+| Modes | Which modes the entry dropdown lists, and their order |
+| Satellites | Which satellites the entry dropdown lists ("In form"), satellites you add, and the name sent to each service |
 | Logging | Sticky fields, RX = TX default, default RST by mode group, dupe block window (30 s), dupe warning window (24 h), allow-dupes switch, auto-lookup |
 | Lookup | QRZ XML user/password, HamQTH user/password, cache TTL, `cty.csv` update |
 | Services | LoTW user/password + TQSL path + station location per profile; eQSL user/password/QTH nickname; QRZ API key per logbook; HRDLog call + upload code (+ website login if download works); upload-on-log switches; satellite name map per service |
@@ -640,7 +648,10 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | Time Off | Follows Time On + 1 min when Time On is changed; earlier than Time On is refused | §6 |
 | Entry dropdowns | Mode, satellite and propagation are dropdowns; propagation uses TQSL's list; satellites can be added in Prefs | §6 |
 | Dupe display | A side-by-side compare / review window | §6.2 |
-| Operators | Personal or club station; club asks at the first QSO, again on a new UTC day or after a 3-hour break | §6.3 |
+| Operators | Personal or club station; an Operator field in the form (no pop-up); club must fill it, checked again on a new UTC day or after a 3-hour break | §6.3 |
+| Dropdown lists | Modes and satellites listed in the entry form are chosen in Preferences; *Other…* reaches the rest | §6, §11 |
+| Satellite vs propagation | A satellite with non-SAT propagation is kept, with a warning and a confirmation | §6 |
+| Dupe groups | The compare window shows every QSO of a dupe group, is editable, and can keep one and merge the others | §6.2 |
 | Logo and About | The BY1QH logo is the app icon; About lists authors Han Zhang (BI1NWO) and Claude, copyright Han Zhang, credit BY1QH | §14 |
 | License | MIT | `LICENSE` |
 
@@ -667,6 +678,7 @@ Where the code differs from, or adds to, the plan above:
 - **MASTER.SCP** is downloaded on request into the log's folder. Check Partial also uses every call in your log.
 - **The country file** is checked weekly and downloaded to `Documents/QHlogger/cty.csv`. The bundled copy is the fallback.
 - **The MacLoggerDX importer** also maps the remaining MLDX columns: `azimuth`, `elevation`, `distance`, latitude/longitude and the `ext_val_*` fields go to `extra`. MLDX grid-line pairs (`OM32,OM33`) go to `*_VUCC_GRIDS`.
-- **Branding:** the BY1QH logo (`resources/brand/by1qh.png`) is the window and app icon; PyInstaller converts it to `.icns` / `.ico` with Pillow at build time. Help → About (or the version button in the toolbar) shows the authors (Han Zhang BI1NWO, Claude), copyright (Han Zhang), the BY1QH credit, data and software credits, and system info that can be copied into bug reports.
+- **Screenshots:** `tools/screenshots.py` renders `docs/screenshots/` off-screen from made-up QSOs. Test and screenshot runs set `QHLOGGER_SETTINGS=<file.ini>`, so they never touch your real preferences.
+- **Branding:** the BY1QH logo (`resources/brand/by1qh.png`) is the window and app icon; PyInstaller converts it to `.icns` / `.ico` with Pillow at build time. Help → About (or the version button in the toolbar) shows the authors (Han Zhang BI1NWO, Claude Opus 5.5 Extra High), copyright (Han Zhang), the BY1QH credit, data and software credits, and system info that can be copied into bug reports.
 - **Tester sample:** `tests/fixtures/sample.adi` is a synthetic 17-QSO log (satellite pass, HF, one strict and one suspicious dupe) for trying the app; a test keeps it importable.
 - **TQSL data:** the propagation list and five extra satellites come from TQSL's current configuration (`config.tq6` v11.34, lotw.arrl.org). RS95S is on LoTW's FAQ list but not yet in that configuration; both sources are kept.

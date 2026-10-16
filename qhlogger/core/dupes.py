@@ -152,3 +152,61 @@ def rescan(db, *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS) 
             if q["dupe_flag"] != flag or q["dupe_of"] != other:
                 db.update(q["id"], {"dupe_flag": flag, "dupe_of": other}, track_service=False, normalized=True)
     return d, s
+
+
+def hits(db, q: dict, *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS,
+         exclude_id: int | None = None) -> list[DupeHit]:
+    """Every QSO this one may duplicate, most severe and nearest first."""
+    call = (q.get("call") or "").upper()
+    band = (q.get("band") or "").lower()
+    t = timeutil.parse_iso(q.get("time_on"))
+    if not call or not band or t is None:
+        return []
+    lo = timeutil.to_iso(t - timedelta(seconds=warn_s))
+    hi = timeutil.to_iso(t + timedelta(seconds=warn_s))
+    out: list[DupeHit] = []
+    for r in db.conn.execute("SELECT * FROM qso WHERE call = ? AND band = ? AND time_on BETWEEN ? AND ?",
+                             (call, band, lo, hi)):
+        other = {k: r[k] for k in r.keys()}
+        if exclude_id is not None and other["id"] == exclude_id:
+            continue
+        res = classify(q, other, block_s=block_s, warn_s=warn_s)
+        if res:
+            out.append(DupeHit(res[0], other["id"], res[1], res[2], other))
+    out.sort(key=lambda h: (h.level != "DUPE", h.seconds))
+    return out
+
+
+def group(db, qid: int, *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS,
+          limit: int = 12) -> list[dict]:
+    """A QSO and every QSO linked to it by possible-dupe relations (transitively), oldest first."""
+    seen: dict[int, dict] = {}
+    todo = [qid]
+    while todo and len(seen) < limit:
+        i = todo.pop()
+        if i in seen:
+            continue
+        q = db.get(i)
+        if not q:
+            continue
+        seen[i] = q
+        for h in hits(db, q, block_s=block_s, warn_s=warn_s, exclude_id=i):
+            if h.other_id not in seen:
+                todo.append(h.other_id)
+    return sorted(seen.values(), key=lambda q: (q.get("time_on") or "", q["id"]))
+
+
+def groups_for(db, ids: list[int], *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS
+               ) -> list[list[int]]:
+    """Cluster QSOs into dupe groups (each QSO in at most one group), groups of two or more, oldest first."""
+    placed: set[int] = set()
+    out: list[list[int]] = []
+    for i in ids:
+        if i in placed:
+            continue
+        g = group(db, i, block_s=block_s, warn_s=warn_s)
+        gids = [q["id"] for q in g if q["id"] not in placed]
+        placed.update(q["id"] for q in g)
+        if len(gids) >= 2:
+            out.append(gids)
+    return out

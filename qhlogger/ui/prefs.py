@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from PySide6.QtCore import QSettings
@@ -30,6 +31,8 @@ DEFAULTS: dict[str, Any] = {
     "upload_on_log": {"qrz": False, "eqsl": False, "hrdlog": False},
     "sat_names": {},
     "user_sats": [],
+    "sat_list": [],
+    "mode_list": [],
     "rx_sync": True,
     "mode_exact": False,
     "current_contest": None,
@@ -46,6 +49,10 @@ SECRET_KEYS = {
 
 class Prefs:
     def __init__(self, settings: QSettings | None = None):
+        # QHLOGGER_SETTINGS=<file.ini> keeps test and screenshot runs away from your real preferences.
+        path = os.environ.get("QHLOGGER_SETTINGS")
+        if settings is None and path:
+            settings = QSettings(path, QSettings.Format.IniFormat)
         self.s = settings or QSettings("QHlogger", "QHlogger")
 
     def get(self, key: str) -> Any:

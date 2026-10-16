@@ -266,22 +266,54 @@ def run_async(fn: Callable[..., Any], *args: Any, on_done: Callable[[Any], None]
 
 MODE_FIRST = ["SSB", "USB", "LSB", "CW", "FM", "AM", "FT8", "FT4", "RTTY", "PSK31", "JS8", "Q65", "MSK144",
               "JT65", "SSTV", "C4FM", "DSTAR", "DMR", "FREEDV", "M17"]
+POPULAR_SATS = ["ARISS", "SO-50", "PO-101", "AO-91", "RS-44", "QO-100", "AO-123", "SO-124", "SO-125", "RS95S",
+                "IO-117", "FO-29", "AO-7", "TEVEL5"]
+OTHER = "__other__"
 
 
-def mode_combo() -> QComboBox:
-    """A plain (non-editable) mode list: common modes first, then every ADIF mode and submode."""
+def all_modes() -> list[str]:
+    """Every mode for the pickers: common ones first, then all ADIF modes and submodes."""
+    rest = sorted(set(modes.all_mode_names()) - set(MODE_FIRST) - {"IMAGE"})
+    return MODE_FIRST + rest
+
+
+def mode_list(prefs) -> list[str]:
+    chosen = [m for m in (prefs.get("mode_list") or []) if m] if prefs is not None else []
+    return chosen or list(MODE_FIRST)
+
+
+def sat_list(prefs, catalog, worked: list[str]) -> list[str]:
+    """Satellites shown in the entry form: your list, or (until you choose) the ones you worked plus popular ones."""
+    chosen = [s for s in (prefs.get("sat_list") or []) if s] if prefs is not None else []
+    if chosen:
+        return chosen
+    out: list[str] = []
+    for n in [*worked, *POPULAR_SATS]:
+        n = (n or "").upper()
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
+def mode_combo(prefs=None) -> QComboBox:
+    """Your mode list (Preferences → Modes), then "Other mode…" for the rest."""
     c = QComboBox()
     c.setMaxVisibleItems(24)
-    for m in MODE_FIRST:
-        c.addItem(m, m)
-    c.insertSeparator(c.count())
-    for m in ("DATA", "PHONE"):
-        c.addItem(f"{m} ({tr('generic')})", m)
-    c.insertSeparator(c.count())
-    rest = sorted(set(modes.all_mode_names()) - set(MODE_FIRST) - {"DATA", "PHONE", "IMAGE"})
-    for m in rest:
-        c.addItem(m, m)
+    fill_mode_combo(c, prefs)
     return c
+
+
+def fill_mode_combo(c: QComboBox, prefs=None) -> None:
+    cur = c.currentData()
+    c.blockSignals(True)
+    c.clear()
+    for m in mode_list(prefs):
+        c.addItem(f"{m} ({tr('generic')})" if m in ("DATA", "PHONE") else m, m)
+    c.insertSeparator(c.count())
+    c.addItem(tr("Other mode…"), OTHER)
+    i = c.findData(cur) if cur and cur != OTHER else 0
+    c.setCurrentIndex(i if i >= 0 else 0)
+    c.blockSignals(False)
 
 
 def set_combo_data(c: QComboBox, value, label: str | None = None) -> None:
@@ -289,8 +321,10 @@ def set_combo_data(c: QComboBox, value, label: str | None = None) -> None:
     v = value if value not in (None, "") else ""
     i = c.findData(v)
     if i < 0 and v != "":
-        c.addItem(label or str(v), v)
-        i = c.count() - 1
+        other = c.findData(OTHER)
+        at = other - 1 if other > 0 else c.count()  # before the separator + "Other…"
+        c.insertItem(at, label or str(v), v)
+        i = at
     if i < 0:
         i = 0
     c.setCurrentIndex(i)
@@ -298,7 +332,7 @@ def set_combo_data(c: QComboBox, value, label: str | None = None) -> None:
 
 def combo_value(c: QComboBox) -> str | None:
     v = c.currentData()
-    return v or None
+    return v if v and v != OTHER else None
 
 
 def prop_combo() -> QComboBox:
@@ -315,23 +349,21 @@ def prop_combo() -> QComboBox:
     return c
 
 
-def fill_sat_combo(c: QComboBox, catalog, extra_names: list[str] | None = None) -> None:
-    """Satellites from the catalog, then names found only in your log."""
+def fill_sat_combo(c: QComboBox, catalog, names: list[str]) -> None:
+    """The satellites in ``names`` (your list), then "Other satellite…" for the full list."""
     cur = c.currentData()
     c.blockSignals(True)
     c.clear()
     c.setMaxVisibleItems(24)
     c.addItem("—", "")
-    for s in catalog.sats:
-        c.addItem(s.name, s.name)
-        c.setItemData(c.count() - 1, s.description, Qt.ItemDataRole.ToolTipRole)
-    known = {s.name.upper() for s in catalog.sats}
-    others = sorted({n.upper() for n in (extra_names or []) if n and n.upper() not in known})
-    if others:
-        c.insertSeparator(c.count())
-        for n in others:
-            c.addItem(n, n)
-            c.setItemData(c.count() - 1, tr("From your log"), Qt.ItemDataRole.ToolTipRole)
-    i = c.findData(cur) if cur else 0
-    c.setCurrentIndex(max(0, i))
+    for n in names:
+        s = catalog.get(n)
+        c.addItem(n, n)
+        c.setItemData(c.count() - 1, s.description if s else tr("From your log"), Qt.ItemDataRole.ToolTipRole)
+    c.insertSeparator(c.count())
+    c.addItem(tr("Other satellite…"), OTHER)
+    if cur and cur != OTHER:
+        set_combo_data(c, cur)
+    else:
+        c.setCurrentIndex(0)
     c.blockSignals(False)

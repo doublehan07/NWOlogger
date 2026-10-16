@@ -44,7 +44,7 @@ from ...core.contest.engine import (
 from ...core.contest.scp import SCP_URL, Scp
 from ...core.operators import is_club
 from .. import theme
-from ..operator_dialog import ensure_operator
+from ..operator_field import OperatorField
 from ..widgets import Chip, Section, primary, run_async
 
 tr = i18n.tr
@@ -139,6 +139,14 @@ class ContestPanel(QWidget):
         udc.clicked.connect(self.edit_definitions)
         top.addWidget(QLabel(tr("Contest")))
         top.addWidget(self.sess)
+        top.addSpacing(10)
+        top.addWidget(QLabel(tr("Operator")))
+        self.op_field = OperatorField(self.win.ops)
+        self.op_field.setMinimumWidth(110)
+        self.op_field.setMaximumWidth(140)
+        self.op_field.message.connect(self.message)
+        self.op_field.returnPressed.connect(lambda: self.call.setFocus())
+        top.addWidget(self.op_field)
         top.addWidget(new)
         top.addWidget(edit)
         top.addWidget(cab)
@@ -296,6 +304,7 @@ class ContestPanel(QWidget):
                 d.show()
         if not self.session:
             QTimer.singleShot(0, self.new_session)
+        self.op_field.show_for(self.profile())
         self.call.setFocus()
 
     def deactivate(self) -> None:
@@ -334,6 +343,7 @@ class ContestPanel(QWidget):
         if self.session and not self.cdef:
             self.message.emit(tr("Contest definition not found") + f": {self.session['contest_def']}")
         self.prefs.set("current_contest", sid)
+        self.op_field.show_for(self.profile())
         self._setup_entry()
         self.rebuild()
         self.session_changed.emit(sid)
@@ -715,9 +725,8 @@ class ContestPanel(QWidget):
         q["time_on"] = now
         q["time_off"] = now
         prof = self.profile() or {}
-        op = ensure_operator(self, self.win.ops, self.db, prof) if prof else None
+        op = self.op_field.resolve(prof) if prof else None
         if prof and op is None and is_club(prof):
-            self.message.emit(tr("Not logged: enter the operator first."))
             return
         for col in ("station_callsign", "my_gridsquare", "my_cq_zone", "my_itu_zone", "my_dxcc",
                     "my_state", "my_rig", "my_antenna"):
