@@ -39,7 +39,7 @@ def lotw_download(user: str, password: str, *, qsl: bool = True, since: str | No
         params["qso_qsorxsince"] = since or "1900-01-01"
     if own_call:
         params["qso_owncall"] = own_call
-    r = net.request("lotw", "GET", LOTW_REPORT, params=params, timeout=300.0)
+    r = net.request("lotw", "GET", LOTW_REPORT, params=params, secrets=[password], timeout=300.0)
     text = r.text
     if not re.search(r"<eoh>", text, re.I):
         msg = re.sub(r"<[^>]+>", " ", text)
@@ -60,7 +60,7 @@ def eqsl_upload(user: str, password: str, records: list[dict[str, str]]) -> tupl
     body = "\n".join(" ".join(f"<{k}:{len(v)}>{v}" for k, v in rec.items()) + " <EOR>" for rec in records)
     files = {"Filename": ("qhlogger.adi", (head + body).encode("utf-8"), "text/plain")}
     data = {"EQSLUSER": user, "EQSLPSWD": password}
-    r = net.request("eqsl", "POST", EQSL_UPLOAD, data=data, files=files, timeout=TIMEOUT)
+    r = net.request("eqsl", "POST", EQSL_UPLOAD, data=data, files=files, secrets=[password], timeout=TIMEOUT)
     text = html.unescape(re.sub(r"<[^>]+>", "\n", r.text))
     m = re.search(r"Result:\s*(\d+)\s+out of\s+(\d+)\s+records added", text, re.I)
     lines = [net.redact(ln.strip(), [password]) for ln in text.splitlines()
@@ -79,7 +79,8 @@ def eqsl_download(user: str, password: str, *, since: str | None = None,
         params["RcvdSince"] = since
     if qth_nickname:
         params["QTHNickname"] = qth_nickname
-    r = net.request("eqsl", "GET", EQSL_INBOX, params=params, timeout=TIMEOUT, redirects=True)
+    r = net.request("eqsl", "GET", EQSL_INBOX, params=params, secrets=[password], timeout=TIMEOUT,
+                    redirects=True)
     m = re.search(r'href="([^"]+\.adi)"', r.text, re.I)
     if not m:
         msg = net.redact(" ".join(re.sub(r"<[^>]+>", " ", r.text).split()), [password])
@@ -89,7 +90,7 @@ def eqsl_download(user: str, password: str, *, since: str | None = None,
     url = httpx.URL(urljoin(str(r.url), m.group(1)))
     if url.scheme == "http" and url.host in net.HOSTS["eqsl"]:
         url = url.copy_with(scheme="https")  # same host; other hosts are refused by net.request
-    f = net.request("eqsl", "GET", str(url), timeout=TIMEOUT, redirects=True)
+    f = net.request("eqsl", "GET", str(url), secrets=[password], timeout=TIMEOUT, redirects=True)
     return adif.parse(f.content)
 
 
@@ -112,7 +113,7 @@ def _qrz_parse(text: str) -> dict[str, str]:
 
 def qrz_call(key: str, action: str, call: str | None = None, **params: str) -> dict[str, str]:
     data = {"KEY": key, "ACTION": action, **params}
-    r = net.request("qrz", "POST", QRZ_API, data=data, timeout=TIMEOUT, call=call)
+    r = net.request("qrz", "POST", QRZ_API, data=data, secrets=[key], timeout=TIMEOUT, call=call)
     res = _qrz_parse(r.text)
     if "REASON" in res:
         res["REASON"] = net.redact(res["REASON"], [key])
@@ -179,7 +180,7 @@ def hrdlog_upload(call: str, code: str, record: dict[str, str], *, update_key: s
     if update_key:
         data["Cmd"] = "UPDATE"
         data["ADIFKey"] = update_key
-    r = net.request("hrdlog", "POST", HRDLOG_URL, data=data, timeout=TIMEOUT, call=call)
+    r = net.request("hrdlog", "POST", HRDLOG_URL, data=data, secrets=[code], timeout=TIMEOUT, call=call)
     body = r.text
     err = re.search(r"<error>(.*?)</error>", body, re.I | re.S)
     if err:

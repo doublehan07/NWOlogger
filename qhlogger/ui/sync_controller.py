@@ -97,6 +97,11 @@ class SyncController(QObject):
         """Every message shown or stored goes through here: no URL query, password, key or upload code."""
         return net.redact(msg, secrets)
 
+    def _secrets(self, qsos: list[dict]) -> list[str]:
+        """All saved secrets: no upload record may carry one, whichever service it goes to."""
+        calls = {p.get("station_callsign") for p in self.db.profiles()} | {q.get("station_callsign") for q in qsos}
+        return self.prefs.saved_secrets({(c or "").upper() for c in calls})
+
     def _log(self, service: str, direction: str, started: str, secrets=(), **kw) -> None:
         if "message" in kw:
             kw["message"] = self._safe(kw["message"], secrets)
@@ -166,11 +171,11 @@ class SyncController(QObject):
                                 + "\n• " + "\n• ".join(sorted(missing_loc)))
             if not groups:
                 return
-        cat = self.catalog()
+        cat, secrets = self.catalog(), self._secrets(qsos)
         tmpdir = tempfile.mkdtemp(prefix="qhlogger-lotw-")
         jobs = []
         for loc, qs in groups.items():
-            recs = [apply.upload_record(q, "lotw", cat) for q in qs]
+            recs = [apply.upload_record(q, "lotw", cat, secrets=secrets) for q in qs]
             fn = os.path.join(tmpdir, f"lotw-{abs(hash(loc))}.adi")
             adif.write_file(fn, recs, program_version=__version__)
             jobs.append((loc, fn, [q["id"] for q in qs]))
@@ -211,8 +216,9 @@ class SyncController(QObject):
         user, pw = self.prefs.get("eqsl_user"), self.prefs.secret("eqsl_password")
         if not self._need((tr("eQSL user"), user), (tr("eQSL password"), pw), quiet=quiet):
             return
-        cat = self.catalog()
-        recs = [(q["id"], q.get("call"), apply.upload_record(q, "eqsl", cat, self._profile_for(q))) for q in qsos]
+        cat, secrets = self.catalog(), self._secrets(qsos)
+        recs = [(q["id"], q.get("call"), apply.upload_record(q, "eqsl", cat, self._profile_for(q), secrets))
+                for q in qsos]
         chunks = [recs[i:i + 250] for i in range(0, len(recs), 250)]
         started = timeutil.now_iso()
         self.busy.add("eqslup")
@@ -261,8 +267,8 @@ class SyncController(QObject):
                                                             "Preferences → Services:") + "\n• " + "\n• ".join(missing))
             if all(not k for k in keys.values()):
                 return
-        cat = self.catalog()
-        jobs = [(q["id"], c, keys[c], apply.upload_record(q, "qrz", cat),
+        cat, secrets = self.catalog(), self._secrets(qsos)
+        jobs = [(q["id"], c, keys[c], apply.upload_record(q, "qrz", cat, secrets=secrets),
                  q.get("qrzcom_qso_upload_status") == "M") for c, qs in by_call.items() if keys.get(c) for q in qs]
         started = timeutil.now_iso()
         self.busy.add("qrzup")
@@ -299,10 +305,10 @@ class SyncController(QObject):
         call, code = self.prefs.get("hrdlog_call"), self.prefs.secret("hrdlog_code")
         if not self._need((tr("HRDLog callsign"), call), (tr("HRDLog upload code"), code), quiet=quiet):
             return
-        cat = self.catalog()
+        cat, secrets = self.catalog(), self._secrets(qsos)
         jobs = []
         for q in qsos:
-            rec = apply.upload_record(q, "hrdlog", cat)
+            rec = apply.upload_record(q, "hrdlog", cat, secrets=secrets)
             key = None
             if q.get("hrdlog_qso_upload_status") == "M":
                 on = timeutil.iso_to_adif(q.get("time_on"))

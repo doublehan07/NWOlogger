@@ -82,3 +82,11 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 - [x] Time On *Now* goes back to the default: both times now, Time Off follows the clock
 - [x] *Clear* (Esc) empties the whole Contact section (TX / RX MHz, mode, RST, power, propagation, satellite) whatever *Keep* says; logging needs a mode; an empty Power logs the profile's default
 - [x] Similar calls in Worked before: your log first, then calls QRZ.com / HamQTH know, then MASTER.SCP; a call not found online checks up to three one-letter-away MASTER.SCP calls; File → Update MASTER.SCP
+
+## Done after the second credential review (2026-10-16)
+
+- [x] Secrets echoed back encoded (`&#39;`, `&apos;`, `%27`, double encoding) or shorter than 4 characters are masked too
+- [x] HTTPX / httpcore logs stay at WARNING even when the app logs at DEBUG; their child loggers mask headers, cookies and the secrets of requests in flight
+- [x] The leftover check uses your saved secrets (once after an update, after each Preferences save, and from the menu), so `Wrong code …`-style messages are found; credential tags are removed from imported QSOs and undo history; the cleanup waits for other programs that have the file open, never blocks opening, and the "no backup" message no longer overclaims
+- [x] Uploads send only standard ADIF fields plus the service's own tags, and no field holding a saved secret; more credential-like tag names are dropped on import and export
+- [x] Status bar messages no longer fire after their window is closed

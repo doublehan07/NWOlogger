@@ -182,9 +182,9 @@ QHlogger/
 - Passwords, upload codes and API keys go to the system keychain only (macOS Keychain / Windows Credential Manager). Any other keyring backend, such as a plaintext file, is refused.
   - Saved secrets are never shown again. *Forget* in Preferences removes one; renaming an account removes the old account's entry.
   - Deleting the last station profile with a callsign removes that callsign's QRZ Logbook key.
-- Error messages, sync history and logs never contain a password, key, upload code or session token. Requests go over HTTPS to each service's own hosts only, redirects included.
-- **If you used v0.1.0:** a LoTW or eQSL download that failed with an HTTP error could save the password in sync history. QHlogger cleans the open log at start, then lists backups that still hold one (also File → Check backups for saved passwords…). Delete those backups and change the LoTW / eQSL password.
-- Imported ADIF fields that look like passwords (`EQSL_PSWD`, `…PASSWORD…`) are left out, and never exported or uploaded.
+- Error messages, sync history and logs never contain a password, key, upload code or session token, even when a service echoes one back encoded. Requests go over HTTPS to each service's own hosts only, redirects included. HTTP request logging stays off even when the app logs at DEBUG.
+- **If you used v0.1.0:** a LoTW or eQSL download that failed with an HTTP error could save the password in sync history, and imported fields could hold one. After the update QHlogger cleans the log once, using your saved passwords and keys, then lists backups that still hold one (also File → Check backups for saved passwords…; the check runs again after each Preferences save). Delete those backups and change the passwords. A password you have changed since can't be recognised.
+- Uploads to LoTW, eQSL, QRZ.com and HRDLog send only standard ADIF fields, never another program's `APP_…` fields, and never a field holding one of your saved secrets. Imported fields that look like credentials (`EQSL_PSWD`, `…PASSWORD…`, `…TOKEN…`, `APP_…_KEY`) are left out, and never exported.
 - Never commit real log files. `*.sql`, `*.sqlite`, `*.adi` and similar are git-ignored because they contain other operators' personal data. Only synthetic files under `tests/fixtures/` are committed.
 
 ## Credits

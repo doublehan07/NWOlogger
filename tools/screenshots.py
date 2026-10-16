@@ -27,11 +27,19 @@ app = QApplication(sys.argv)
 
 from qhlogger import i18n  # noqa: E402
 from qhlogger.core import db as dbm  # noqa: E402
-from qhlogger.core import dupes, importer, qso  # noqa: E402
+from qhlogger.core import dupes, importer, qso, secrets  # noqa: E402
 from qhlogger.ui import theme  # noqa: E402
 from qhlogger.ui.main_window import MainWindow  # noqa: E402
 from qhlogger.ui.prefs import Prefs  # noqa: E402
 from qhlogger.ui.widgets import set_combo_data  # noqa: E402
+
+_fake_keychain: dict = {}  # never read or write the real keychain
+secrets._keyring = lambda: type("FakeKeyring", (), {
+    "errors": __import__("keyring").errors,
+    "get_password": staticmethod(lambda s, a: _fake_keychain.get((s, a))),
+    "set_password": staticmethod(lambda s, a, v: _fake_keychain.__setitem__((s, a), v)),
+    "delete_password": staticmethod(lambda s, a: _fake_keychain.pop((s, a), None)),
+})
 
 PREFIXES = ["BA1", "BG2", "BH4", "BD7", "BI8", "JA1", "JH3", "HL2", "DS5", "UA9", "DL1", "DK3", "F5", "G4", "I2",
             "K1", "W6", "N7", "VE3", "VK2", "ZL1", "PY2", "LU5", "OH2", "SM5", "OK1", "SP9", "YB1", "9M2", "HS0"]

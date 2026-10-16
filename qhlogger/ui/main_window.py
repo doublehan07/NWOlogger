@@ -119,7 +119,7 @@ class MainWindow(QMainWindow):
         self.a_recompute = A("Recompute country, DXCC and zones", self.recompute_dxcc)
         self.a_cty = A("Update country file (cty.csv)", lambda: self.update_cty(quiet=False))
         self.a_scp = A("Update MASTER.SCP (similar calls)", self.update_scp)
-        self.a_check_backups = A("Check backups for saved passwords…", lambda: self.check_secrets(always=True))
+        self.a_check_backups = A("Check backups for saved passwords…", lambda: self.check_secrets("menu"))
         self.a_lookup_fill = A("Look up and fill missing fields", self.lookup_fill_selected)
         self.a_select_all = A("Select all shown", lambda: self.view.selectAll(), QKeySequence.StandardKey.SelectAll)
         self.a_prefs = A("Preferences…", self.open_prefs, QKeySequence.StandardKey.Preferences, "settings")
@@ -360,7 +360,9 @@ class MainWindow(QMainWindow):
 
     def flash(self, text: str) -> None:
         self.st_msg.setText(text)
-        QTimer.singleShot(8000, lambda t=text: self.st_msg.setText("") if self.st_msg.text() == t else None)
+        # The label is the timer's context, so a window closed within 8 s doesn't get the call.
+        QTimer.singleShot(8000, self.st_msg, lambda t=text: self.st_msg.setText("") if self.st_msg.text() == t
+                          else None)
 
     def _on_db_change(self, kind: str, _ids: list[int]) -> None:
         if kind in ("insert", "delete", "reset", "update"):
@@ -776,6 +778,7 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             theme.apply(self.app, self.prefs.get("theme"))
             self._lookup_clients = None
+            self.check_secrets("prefs")
             self.dx.reload_profiles()
             self.dx.reload_lists()
             self.dx.clear_form()
@@ -811,26 +814,44 @@ class MainWindow(QMainWindow):
         run_async(scpmod.download, scpmod.path_for(self.db.path), on_done=done,
                   on_error=lambda m: QMessageBox.warning(self, "MASTER.SCP", m))
 
-    def check_secrets(self, always: bool = False) -> None:
-        """QHlogger 0.1.0 could save a LoTW / eQSL password in sync history after an HTTP error. The open log is
-        cleaned when it is opened; backups are only listed, for you to delete."""
-        if not always and self.db.meta("secret_notice_shown"):
+    SECRET_CHECK = "2"  # bump to run the check once more after an update
+
+    def check_secrets(self, reason: str = "start") -> None:
+        """Look for saved passwords and keys left in this log and its backups, and clean the log.
+
+        QHlogger 0.1.0 could save a LoTW / eQSL password in sync history after an HTTP error, and kept credential
+        fields of imported ADIF records. Patterns are cleaned when the log opens; this check also uses the saved
+        secrets, so it reads the keychain: once after an update (``start``), after each Preferences save
+        (``prefs``, quiet unless something is found) and from File → Check backups for saved passwords (``menu``).
+        Backups are only listed, for you to delete."""
+        if reason == "start" and self.db.meta("secret_check") == self.SECRET_CHECK:
             return
-        cleaned = int(self.db.meta("sync_log_scrubbed") or 0)
-        found = self.db.backups_with_secrets()
-        self.db.set_meta("secret_notice_shown", "1")
-        if not cleaned and not found:
-            if always:
-                QMessageBox.information(self, tr("Saved passwords"), tr("No backup holds a saved password."))
+        values = self.prefs.saved_secrets({p.get("station_callsign") for p in self.db.profiles()})
+        cleaned = self.db.scrub_secrets(values)
+        if reason == "start":
+            cleaned += int(self.db.meta("secrets_scrubbed") or 0)
+        if cleaned and reason == "start":
+            self.db.renew_open_backup()  # nothing changed since open but the cleanup: retake that copy clean
+        found = self.db.backups_with_secrets(values)
+        pending = self.db.purge_pending()
+        self.db.set_meta("secret_check", self.SECRET_CHECK)
+        if not cleaned and not found and not pending:
+            if reason == "menu":
+                QMessageBox.information(self, tr("Saved passwords"), tr(
+                    "No backup holds any of your saved passwords or keys, or a password in a web address. "
+                    "Passwords you have changed since can't be recognised."))
             return
         text = []
         if cleaned:
-            text.append(tr("Sync history messages that held a password from an old error were cleaned in this "
-                           "log:") + f" {cleaned}.")
+            text.append(tr("Items that held a password or key were cleaned in this log (sync history, imported "
+                           "fields, undo history):") + f" {cleaned}.")
+        if pending:
+            text.append(tr("Another program has this log file open. The cleanup finishes when it closes the file."))
         if found:
             text.append(tr("These backups still hold one. Delete them (Show in Finder / Explorer):") + "\n• " +
                         "\n• ".join(f"{p.name} ({n})" for p, n in found))
-        text.append(tr("Change your LoTW and eQSL passwords: copies may also be in Time Machine or cloud backups."))
+        text.append(tr("Change those passwords and keys at LoTW, eQSL, QRZ.com or HRDLog: copies may also be in "
+                       "Time Machine or cloud backups."))
         box = QMessageBox(QMessageBox.Icon.Warning, tr("Saved passwords"), "\n\n".join(text), parent=self)
         show = box.addButton(tr("Show backups"), QMessageBox.ButtonRole.ActionRole) if found else None
         box.addButton(QMessageBox.StandardButton.Close)
@@ -842,7 +863,7 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.db.backup_dir)))
 
     def _first_run(self) -> None:
-        self.check_secrets()
+        self.check_secrets("start")
         age = dxcc.user_copy_age_days()
         if (age is None or age > 7) and not os.environ.get("QHLOGGER_OFFLINE"):
             QTimer.singleShot(3000, lambda: self.update_cty(quiet=True))

@@ -17,8 +17,10 @@ GRID_RE = re.compile(r"^([A-Ra-r]{2})(\d{2})([A-Xa-x]{2})?(\d{2})?$")
 
 PRIVATE_COLS = {"notes", "email"}
 # Record tags that look like account credentials (e.g. EQSL_PSWD pasted into a QSO by another program): never
-# kept on import, never written to an export or a service upload.
-_CREDENTIAL_TAG = re.compile(r"PASSWORD|PASSWD|PSWD|APIKEY|API_KEY|^EQSL_USER$")
+# kept on import, never written to an export. Uploads go further and send only standard ADIF fields
+# (sync.apply.upload_record), since a list of names can never be complete.
+_CREDENTIAL_TAG = re.compile(r"PASSWORD|PASSWD|PSWD|PASSCODE|APIKEY|API_KEY|(^|_)(SECRET|TOKEN|SESSION|AUTH)(_|$)"
+                             r"|^EQSL_USER$|^APP_\w*_(CODE|KEY)$")
 
 
 def is_credential_tag(tag: str) -> bool:

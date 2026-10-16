@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import sqlite3
 import uuid as uuidlib
 from collections.abc import Callable, Iterable, Iterator
@@ -15,7 +17,70 @@ from typing import Any
 from . import fields, timeutil
 from . import qso as qsomod
 from .fields import BY_COL, FIELDS, SERVICE_KEY_FIELDS
-from .net import redact
+from .net import contains_secret, leaks, redact
+
+log = logging.getLogger(__name__)
+
+# A cheap first test before parsing a JSON blob: could it hold a credential-named tag?
+_CRED_HINT = re.compile(r'PASSWORD|PASSWD|PSWD|PASSCODE|APIKEY|API_KEY|SECRET|TOKEN|SESSION|AUTH|EQSL_USER|_CODE"|_KEY"',
+                        re.I)
+
+
+class _SecretScan:
+    """Finds and removes secrets in sync history, ``qso.extra`` and undo before-images.
+
+    Without values only URL queries, password=… pairs and credential-named ADIF tags are found; with the saved
+    secrets, any text that holds one is found too."""
+
+    def __init__(self, values=()):
+        self.values = [v for v in values if v]
+        self._low = {f.lower() for v in self.values for f in (v, json.dumps(v)[1:-1])}
+
+    def _maybe(self, raw: str) -> bool:
+        low = raw.lower()
+        return bool(_CRED_HINT.search(raw)) or any(f in low for f in self._low)
+
+    def message(self, msg: str | None) -> str | None:
+        """The cleaned message, or None when it holds nothing to hide."""
+        return redact(msg, self.values) if msg and leaks(msg, self.values) else None
+
+    def extra(self, raw: str | None) -> tuple[str | None, bool]:
+        if not raw or not self._maybe(raw):
+            return raw, False
+        ex = qsomod.load_extra({"extra": raw})
+        keep = {k: v for k, v in ex.items()
+                if not qsomod.is_credential_tag(k) and not contains_secret(str(v), self.values)}
+        return (qsomod.dump_extra(keep), True) if len(keep) != len(ex) else (raw, False)
+
+    def before(self, raw: str | None) -> tuple[str | None, bool]:
+        if not raw or not self._maybe(raw):
+            return raw, False
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            return raw, False
+        if not isinstance(row, dict):
+            return raw, False
+        changed = False
+        new_extra, ch = self.extra(row.get("extra"))
+        if ch:
+            row["extra"], changed = new_extra, True
+        for k, v in row.items():
+            if k != "extra" and isinstance(v, str) and contains_secret(v, self.values):
+                row[k], changed = redact(v, self.values), True
+        return (json.dumps(row), True) if changed else (raw, False)
+
+    def changes(self, conn) -> list[tuple[str, list[tuple]]]:
+        """UPDATE statements with their rows, for everything in ``conn`` that holds something to hide."""
+        hist = [(new, r[0]) for r in conn.execute("SELECT id, message FROM sync_log WHERE message IS NOT NULL")
+                if (new := self.message(r[1])) is not None]
+        qsos = [(res[0], r[0]) for r in conn.execute("SELECT id, extra FROM qso WHERE extra IS NOT NULL AND extra != ''")
+                if (res := self.extra(r[1]))[1]]
+        undo = [(res[0], r[0]) for r in conn.execute("SELECT id, before FROM undo_log WHERE before IS NOT NULL")
+                if (res := self.before(r[1]))[1]]
+        return [(sql, rows) for sql, rows in (("UPDATE sync_log SET message=? WHERE id=?", hist),
+                                              ("UPDATE qso SET extra=? WHERE id=?", qsos),
+                                              ("UPDATE undo_log SET before=? WHERE id=?", undo)) if rows]
 
 SCHEMA_VERSION = 1
 
@@ -89,9 +154,10 @@ class LogDB:
         self._listeners: list[ChangeListener] = []
         self._batch_id: int | None = None
         self._pending: list[tuple[str, list[int]]] = []
-        self._scrub_sync_log()  # before the backup, so a new backup never holds an old password
+        self.open_backup: Path | None = None
+        self._scrub_on_open()  # before the backup, so a new backup never holds an old password
         if existed and backup_on_open:
-            self.backup("open")
+            self.open_backup = self.backup("open")
         self._migrate()
 
     # ------------------------------------------------------------------ setup
@@ -109,46 +175,116 @@ class LogDB:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
             self.set_meta("created_at", timeutil.now_iso())
 
-    def _scrub_sync_log(self) -> None:
-        """Remove passwords that QHlogger 0.1.0 stored in sync history error messages. Runs once per log file."""
+    # ------------------------------------------------------------------ secrets left by older versions
+    def _scrub_on_open(self) -> None:
+        """Remove what QHlogger 0.1.0 could leave behind: passwords in sync history error messages, and
+        credential-named ADIF tags in imported QSOs and undo history. Runs once per log file; never stops it opening.
+        Secrets that only the saved values reveal are cleaned later by :meth:`scrub_secrets`."""
         c = self.conn
         try:
-            if c.execute("SELECT 1 FROM meta WHERE key='sync_log_scrubbed'").fetchone():
-                return
-            rows = c.execute("SELECT id, message FROM sync_log WHERE message IS NOT NULL AND message != ''").fetchall()
+            done = {r[0] for r in c.execute("SELECT key FROM meta WHERE key IN ('secrets_scrubbed', 'purge_pending') "
+                                            "AND value IS NOT NULL")}
         except sqlite3.OperationalError:
             return  # a new file: _migrate creates the tables, and the next open records the check
-        changes = [(new, r["id"]) for r in rows if (new := redact(r["message"])) != r["message"]]
-        if changes:
-            c.execute("PRAGMA secure_delete=ON")  # zero the old text instead of leaving it in free space
-            c.execute("BEGIN")
-            c.executemany("UPDATE sync_log SET message=? WHERE id=?", changes)
-            c.execute("COMMIT")
-            c.execute("VACUUM")
-            c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            c.execute("PRAGMA secure_delete=OFF")
-        c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('sync_log_scrubbed', ?)", (str(len(changes)),))
+        try:
+            if "secrets_scrubbed" not in done:
+                n = self._rewrite(_SecretScan().changes(c))
+                c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('secrets_scrubbed', ?)", (str(n),))
+            elif "purge_pending" in done:
+                self._purge()
+        except sqlite3.Error as e:  # e.g. another program is writing: try again at the next open
+            log.warning("cleaning old secrets failed (%s)", type(e).__name__)
 
-    def backups_with_secrets(self) -> list[tuple[Path, int]]:
-        """Backups whose sync history still holds a password from an old error message, with the count."""
+    def scrub_secrets(self, values) -> int:
+        """Remove every trace of these saved secrets (and URL queries, password=… pairs, credential tags) from
+        sync history, imported QSO fields and undo history. Returns the number of rows changed."""
+        return self._rewrite(_SecretScan(values).changes(self.conn))
+
+    def _rewrite(self, changes: list[tuple[str, list[tuple]]]) -> int:
+        n = sum(len(rows) for _sql, rows in changes)
+        if not n:
+            return 0
+        c = self.conn
+        c.execute("PRAGMA secure_delete=ON")  # zero the old text instead of leaving it in free space
+        try:
+            c.execute("BEGIN")
+            for sql, rows in changes:
+                c.executemany(sql, rows)
+            c.execute("COMMIT")
+        except sqlite3.Error:
+            if c.in_transaction:
+                c.execute("ROLLBACK")
+            raise
+        finally:
+            c.execute("PRAGMA secure_delete=OFF")
+        self._purge()
+        return n
+
+    def _vacuum(self) -> None:
+        self.conn.execute("VACUUM")
+
+    def _purge(self) -> bool:
+        """Rewrite the file and empty the WAL, so replaced text is physically gone. When another program has the
+        file open the WAL cannot be emptied yet: ``purge_pending`` is kept and the purge is retried on close and
+        at the next open."""
+        ok = False
+        self.conn.execute("PRAGMA busy_timeout=250")  # don't hang the app waiting for the other program
+        try:
+            self._vacuum()
+            busy, wal, copied = tuple(self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone())
+            ok = busy == 0 and wal == copied
+        except sqlite3.Error as e:
+            log.warning("purge failed (%s)", type(e).__name__)
+        finally:
+            self.conn.execute("PRAGMA busy_timeout=5000")  # sqlite3.connect's default
+        try:
+            self.set_meta("purge_pending", None if ok else "1")
+            if ok:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            pass
+        return ok
+
+    def purge_pending(self) -> bool:
+        return bool(self.meta("purge_pending"))
+
+    def renew_open_backup(self) -> None:
+        """Replace this session's open backup with a copy of the log as it is now (after a cleanup)."""
+        if self.open_backup is not None and self.open_backup.exists():
+            try:
+                self.open_backup.unlink()
+            except OSError:
+                return
+            self.open_backup = self.backup("open")
+
+    def backups_with_secrets(self, values=()) -> list[tuple[Path, int]]:
+        """Backups that still hold a password, key or code (in sync history, imported fields or undo history),
+        with the number of rows. ``values`` are the saved secrets; without them only URL queries, password=…
+        pairs and credential-named tags are found."""
+        scan = _SecretScan(values)
         out = []
         for p in sorted(self.backup_dir.glob("*.sqlite")):
             try:
                 con = sqlite3.connect(p.as_uri() + "?mode=ro&immutable=1", uri=True)
                 try:
-                    msgs = [m for (m,) in con.execute("SELECT message FROM sync_log WHERE message IS NOT NULL")]
+                    n = 0
+                    for _sql, rows in scan.changes(con):
+                        n += len(rows)
+                except sqlite3.OperationalError:
+                    n = 0  # an old backup without one of the tables
                 finally:
                     con.close()
             except sqlite3.Error:
                 continue
-            n = sum(1 for m in msgs if redact(m) != m)
             if n:
                 out.append((p, n))
         return out
 
     def close(self) -> None:
         try:
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            busy, wal, copied = tuple(self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone())
+            if busy == 0 and wal == copied and self.meta("purge_pending"):
+                self._purge()
         except sqlite3.Error:
             pass
         self.conn.close()
