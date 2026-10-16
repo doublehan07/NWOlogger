@@ -86,6 +86,7 @@ qhlogger/
     search.py              # filter spec → SQL WHERE (wildcards)
     dupes.py               # mode relations, dupe checks and suspicious-dupe marking
     callsign.py            # call normalisation, portable suffixes, WPX prefix
+    regions.py             # province normalisation (China: ISO 3166-2:CN codes), call-district guess
     dxcc.py                # cty.csv loader + call → entity resolver
     lookup/                # qrz_xml.py, hamqth.py, cache.py
     sync/                  # base.py, matcher.py, lotw.py, tqsl.py, eqsl.py, qrz.py, hrdlog.py
@@ -136,6 +137,7 @@ Conventions:
 Notes on the model:
 
 - **Lossless ADIF round-trip.** A field without its own column goes to `extra` and is written back out on export. The schema stays small without losing any data.
+- **Province is ADIF `STATE`.** For China it holds the ISO 3166-2:CN letter code (`BJ`, `SC`, `XJ`, …), shown with its name (北京 / Beijing). For other countries it holds what the lookup returns, e.g. a US state.
 - **Paper and electronic records never share a column.** ADIF `QSL_SENT`/`QSL_RCVD` and their dates are paper only. Every electronic service has its own fields.
 - **Edits after upload.** Editing an uploaded QSO sets its QRZ and HRDLog status to `M` (modified, an ADIF enum value), so the next sync re-sends it. LoTW and eQSL do not support in-place edits, so they are flagged in the UI instead.
 - **Indexes:** `call`, `time_on`, `band`, `mode_group`, `sat_name`, `dxcc`, `station_callsign`, `contest_session_id`, `dupe_flag`, plus a composite dupe index `(call, band, time_on)`.
@@ -238,8 +240,8 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 ┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.0 ┐
 ├ Entry panel ── [ DX | Contest ] ─────────────────────────────────────────────────────────────────────────────┤
 │ Call [______]  First  Last    │ Time On  2026-10-16 04:19:35   Time Off                                      │
-│ Address / QTH / County        │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │
-│ State / Country               │ Sat [SO-50 ▾]  Sat mode [ ]  Prop [SAT]  Power [25]  RST S [59]  RST R [59]  │
+│ Address / City                │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │
+│ Province / Country            │ Sat [SO-50 ▾]  Sat mode [ ]  Prop [SAT]  Power [25]  RST S [59]  RST R [59]  │
 │ Email / Web                   │ Grid  ITU  CQ  DXCC  IOTA  SOTA  POTA  WWFF  SKCC  QSL Via                    │
 │ Comment / Notes               │ ┌ Worked before: band × mode-group matrix, last QSOs, NEW DXCC/BAND/MODE ┐    │
 │ [LookUp] [Previous] [TimeOn] [TimeOff] [Log QSO ⏎] [Clear ⎋]  sticky: ☑Freq ☑Mode ☑Sat ☑Pwr                  │
@@ -251,6 +253,8 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 ```
 
 - **Entry panel (DX).** The field set follows MacLoggerDX, without rig info. Name is split into First and Last, as in MLDX.
+  - **Location** is kept to what is needed: Country, Province, Address (street, city → ADIF `ADDRESS` / `QTH`), CQ zone, ITU zone. County, lat/lon and other location fields are not on the form; they are kept if an import brings them.
+  - A summary line under the call shows the last confirmation (e.g. "Confirmed 2025-08-18 on 70CM FM"), plus bearing and distance computed from the two grids.
   - Times stamp automatically. TimeOn/TimeOff buttons re-stamp "now".
   - *Sticky* fields carry over to the next QSO, which matters for satellite passes.
   - The **Sat dropdown** comes from a bundled `sats.json` of LoTW-accepted `SAT_NAME`s. Picking a satellite sets `prop_mode=SAT` and fills its default up/down frequencies and mode.
@@ -372,8 +376,14 @@ Other columns:
 | `tx_frequency`, `rx_frequency`, `band_tx`, `band_rx` | `freq`, `freq_rx`, `band`, `band_rx` |
 | `my_grid`, `my_rig` | `my_gridsquare`, `my_rig`. Each distinct (call, grid) pair is offered as a station profile |
 | `street`, `city`, `zip`, `postal_country` | `address`, `qth` |
+| `state`, `ext_val_3` | Province (`state`), see below |
 | `azimuth`, `elevation`, `distance` | `ANT_AZ`, `ANT_EL`, `DISTANCE` (in `extra`) |
-| `ext_val_1` … `ext_val_4` | `extra` (meaning of `ext_val_3` pending, §13) |
+| `ext_val_1`, `ext_val_2`, `ext_val_4` | Empty in your log; kept in `extra` if present |
+
+`ext_val_3` is province text that MLDX took from callsign lookups. The importer handles it as follows:
+- **Province comes from MLDX `state`** when it is a recognised province, otherwise from `ext_val_3`.
+- **Values are normalised.** For example `新疆`, `Sichuan`, `Nei Mongol Zizhiqu` and `湘` become `XJ`, `SC`, `NM` and `HN`.
+- **Unusable text is set aside.** When the two columns conflict, or the text is not a province (`yi`, `在线`, `邮编`, …), the dry-run report lists it and the raw value is kept in `extra`.
 
 The migration runs as a dry run first. It reports counts per mapping and lists any text it didn't recognise, and nothing is written until you confirm. The MLDX row id is kept (`APP_MLDX_PK`), so running it again updates QSOs instead of duplicating them.
 
@@ -441,7 +451,31 @@ The lookup runs when the call field loses focus, after a short pause while typin
 3. **QRZ.com XML** (`xmldata.qrz.com/xml/current/`, session key) gives name, address, QTH, state, county, grid, email, QSL via and LoTW/eQSL flags. Full data needs an XML subscription.
 4. **HamQTH** fallback: `xml.php` session, valid 1 h. Its API v2 (bearer token) will be checked during implementation.
 
-Lookups fill **empty fields only** and never overwrite what you typed. They run in a background thread, and a result that arrives after the call has changed is thrown away.
+Lookups fill **empty fields only** and never overwrite what you typed. They run in a background thread, and a result that arrives after the call has changed is thrown away. Fields filled by lookup are tinted until you edit them, so you can tell them from typed ones.
+
+**Province for Chinese calls** (DXCC 318):
+1. Use the lookup's state/province, normalised to the ISO 3166-2:CN code (from English, pinyin or Chinese names and abbreviations).
+2. If there is none, guess from the call district and the first suffix letter, using the standard allocation in the table below.
+   - Guessed values are marked as guesses, because stations that move keep their call.
+   - Suffix letters Y–Z are not guessed: your log shows them used in many provinces.
+
+| District | Suffix A–H | I–P | Q–X |
+|---|---|---|---|
+| 1 | BJ | BJ | BJ |
+| 2 | HL | JL | LN |
+| 4 | SH | SD | JS |
+| 5 | ZJ | JX | FJ |
+| 6 | AH | HA | HB |
+| 7 | HN | GD | GX |
+
+| District | Suffix A–F | G–L | M–R | S–X |
+|---|---|---|---|---|
+| 3 | TJ | NM | HE | SX |
+| 8 | SC | CQ | GZ | YN |
+| 9 | SN | GS | NX | QH |
+| 0 | XJ | XZ | — | — |
+
+Checked against your MacLoggerDX log: every district matches, apart from stations that moved.
 
 ## 10. Contest mode (N1MM style, with live scoring)
 
@@ -558,9 +592,10 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | Satellite names | Per-service name table, applied on upload and on download matching. ISS: `ARISS` for LoTW/TQSL, `ISS` for eQSL | §8.2 |
 | UI references | No reference screenshots. QHlogger gets its own modern design | §6 |
 | MacLoggerDX data | Migrated from the database file, with upload history; a bare `Y` in the sent column is ignored; both MLDX files are git-ignored | §8.1.1 |
+| Location data | Country, Province, Address, CQ zone, ITU zone are enough; MLDX `ext_val_3` is lookup province text, normalised into Province | §4.1, §6, §8.1.1, §9 |
 | WSJT-X / JTDX / N1MM UDP | Later milestone | M9 |
 | License | MIT | `LICENSE` |
 
 ### Open
 
-1. **MacLoggerDX `ext_val_3`.** It holds province codes (BJ, AH, SC…), matching State on most rows but not on 13 Chinese QSOs. What do you use it for?
+None right now. New questions will be added here as they come up during implementation.

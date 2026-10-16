@@ -9,7 +9,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [x] License: MIT
 - [x] `.gitignore` keeps personal log data out of git
 - [x] ISS satellite name per service; MLDX bare `Y` ignored
-- [ ] Remaining open question (PLAN §13 "Open"): MLDX `ext_val_3`
+- [x] MLDX `ext_val_3` = lookup province text → normalised Province
 
 ## M0 — Scaffold
 
@@ -47,7 +47,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [ ] Wildcard → SQLite GLOB conversion with escaping
 - [ ] ADIF import: every record imported, suspicious dupes marked `DUPE` / `SUSPECT`, preview counts, optional merge mode
 - [ ] OPERATOR → STATION_CALLSIGN fill when missing
-- [ ] MacLoggerDX database importer: upload-history text → per-service fields, paper `Mail Card` dates, bare `Y` ignored, epoch times, mode/submode, dry-run report, re-runnable via `APP_MLDX_PK`
+- [ ] MacLoggerDX database importer: upload-history text → per-service fields, paper `Mail Card` dates, bare `Y` ignored, Province from `state`/`ext_val_3` (normalised, conflicts reported), epoch times, mode/submode, dry-run report, re-runnable via `APP_MLDX_PK`
 - [ ] Ignore `QSL_SENT` as paper in MacLoggerDX ADIF files
 - [ ] Export all / selected / filtered
 - [ ] Status line: total, shown, DB path; DXCC worked/confirmed counter
@@ -56,6 +56,8 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 
 - [ ] Entry panel in grouped sections (Contact, Station, Location, References, QSL), no rig panel
 - [ ] First and Last name fields
+- [ ] Location section: Country, Province, Address (street, city), CQ zone, ITU zone
+- [ ] Summary line: last confirmation, bearing and distance from the two grids
 - [ ] TimeOn/TimeOff auto + buttons, UTC/local clock
 - [ ] Sticky fields (freq, mode, sat, power)
 - [ ] Satellite dropdown from `sats.json` (sets PROP_MODE=SAT, freqs, bands, mode); free-text names allowed
@@ -80,7 +82,8 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [ ] QRZ.com XML client (session key, re-login on expiry; fname/name → First/Last)
 - [ ] HamQTH client (v1 session; evaluate v2 API)
 - [ ] Lookup cache with TTL
-- [ ] Fill empty fields only; discard stale results
+- [ ] Fill empty fields only; discard stale results; tint lookup-filled fields
+- [ ] China province: normalise lookup text to ISO 3166-2:CN codes; guess from call district + suffix letter (marked as a guess)
 - [ ] Credentials via keyring
 
 ## M6 — Sync
