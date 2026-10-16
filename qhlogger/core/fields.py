@@ -35,7 +35,7 @@ FIELDS: list[Field] = [
     F("call", "CALL", "text", "Call", "Contact", 90),
     F("time_on", None, "time", "Time On", "Contact", 150),
     F("time_off", None, "time", "Time Off", "Contact", 150),
-    F("freq", "FREQ", "real", "MHz", "Contact", 85),
+    F("freq", "FREQ", "real", "TX MHz", "Contact", 85),
     F("band", "BAND", "text", "Band", "Contact", 55),
     F("freq_rx", "FREQ_RX", "real", "RX MHz", "Contact", 85),
     F("band_rx", "BAND_RX", "text", "Band RX", "Contact", 60),
@@ -156,7 +156,7 @@ SERVICE_KEY_FIELDS = {
 # Default visible log columns, in order.
 DEFAULT_LOG_COLUMNS = [
     "call", "time_on", "time_off", "freq_rx", "band_rx", "freq", "band", "mode", "sat_name", "tx_pwr",
-    "rst_sent", "rst_rcvd", "country", "state", "gridsquare", "cqz", "ituz", "lotw_qslsdate", "lotw_qslrdate",
+    "rst_sent", "rst_rcvd", "country", "state", "gridsquare", "cqz", "ituz", "operator", "lotw_qslsdate", "lotw_qslrdate",
     "eqsl_qslsdate", "eqsl_qslrdate", "qrzcom_qso_upload_date", "qrz_qslrdate", "hrdlog_qso_upload_date",
     "qslsdate", "qslrdate", "dupe_flag", "comment",
 ]

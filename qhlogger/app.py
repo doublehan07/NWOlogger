@@ -21,7 +21,7 @@ def run(argv: list[str], *, db_path: str | None = None, lang: str | None = None,
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
     app.setApplicationVersion(__version__)
-    icon = Path(__file__).resolve().parent / "resources" / "icons" / "radio.svg"
+    icon = Path(__file__).resolve().parent / "resources" / "brand" / "by1qh.png"
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))
 

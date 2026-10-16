@@ -69,7 +69,7 @@ class SyncController(QObject):
         self.busy: set[str] = set()
 
     def catalog(self) -> sats.SatCatalog:
-        return sats.load(overrides=self.prefs.get("sat_names"))
+        return sats.load(overrides=self.prefs.get("sat_names"), extra=self.prefs.get("user_sats"))
 
     # ------------------------------------------------------------------ helpers
     def _need(self, *pairs: tuple[str, str | None], quiet: bool = False) -> bool:

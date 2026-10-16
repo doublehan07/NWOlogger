@@ -29,6 +29,8 @@ DEFAULTS: dict[str, Any] = {
     "hrdlog_call": "",
     "upload_on_log": {"qrz": False, "eqsl": False, "hrdlog": False},
     "sat_names": {},
+    "user_sats": [],
+    "rx_sync": True,
     "mode_exact": False,
     "current_contest": None,
 }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .. import exporter, importer, timeutil
+from .. import exporter, importer, propagation, timeutil
 from .. import qso as qsomod
 
 SERVICES = {"lotw": "LoTW", "eqsl": "eQSL", "qrz": "QRZ.com", "hrdlog": "HRDLog"}
@@ -30,13 +30,18 @@ def pending(db, service: str, ids: list[int] | None = None) -> list[dict]:
     """QSOs to upload: the given ids (re-upload allowed), or every QSO not yet sent."""
     if ids:
         rows = db.get_many(ids)
-        return sorted(rows.values(), key=lambda q: (q.get("time_on") or "", q["id"]))
-    col = SENT_COL[service]
-    if service in ("qrz", "hrdlog"):
-        where = f"({col} IS NULL OR {col} IN ('N', 'M'))"
+        out = sorted(rows.values(), key=lambda q: (q.get("time_on") or "", q["id"]))
     else:
-        where = f"({col} IS NULL OR {col} NOT IN ('Y', 'I'))"
-    return list(db.iter_all(where))
+        col = SENT_COL[service]
+        if service in ("qrz", "hrdlog"):
+            where = f"({col} IS NULL OR {col} IN ('N', 'M'))"
+        else:
+            where = f"({col} IS NULL OR {col} NOT IN ('Y', 'I'))"
+        out = list(db.iter_all(where))
+    if service == "lotw":
+        # Repeater and internet-assisted QSOs are not valid for LoTW.
+        out = [q for q in out if (q.get("prop_mode") or "").upper() not in propagation.LOTW_SKIP]
+    return out
 
 
 def upload_record(q: dict, service: str, catalog, profile: dict | None = None) -> dict[str, str]:
@@ -45,6 +50,8 @@ def upload_record(q: dict, service: str, catalog, profile: dict | None = None) -
     for tag in ("QSL_SENT", "QSL_RCVD", "QSLSDATE", "QSLRDATE", "QSL_SENT_VIA", "QSL_RCVD_VIA", "DUPE"):
         rec.pop(tag, None)
     rec = {k: v for k, v in rec.items() if not k.startswith("APP_MLDX_")}
+    if service == "lotw" and "PROP_MODE" in rec and not propagation.lotw_value(rec["PROP_MODE"]):
+        rec.pop("PROP_MODE")
     if service == "eqsl" and profile and profile.get("eqsl_qth_nickname"):
         rec["APP_EQSL_QTH_NICKNAME"] = profile["eqsl_qth_nickname"]
     return rec

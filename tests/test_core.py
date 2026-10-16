@@ -259,3 +259,13 @@ def test_mldx_import(tmp_path, db):
     importer.run(db, qsos, key_tag=mldx.KEY_TAG)
     importer.run(db, qsos, key_tag=mldx.KEY_TAG)
     assert db.count() == 1
+
+
+def test_sample_fixture_imports(db):
+    from pathlib import Path
+
+    data = (Path(__file__).parent / "fixtures" / "sample.adi").read_bytes()
+    _h, qsos = importer.read_adif(data)
+    res = importer.run(db, qsos)
+    assert res.added == 17 and res.dupes == 1 and res.suspects >= 1
+    assert db.count("sat_name = 'ARISS'") == 1

@@ -52,9 +52,18 @@ class SatCatalog:
         return rev.get(name.upper(), name)
 
 
-def load(path: Path = RESOURCE, overrides: dict[str, dict[str, str]] | None = None) -> SatCatalog:
+def load(path: Path = RESOURCE, overrides: dict[str, dict[str, str]] | None = None,
+         extra: list[dict] | None = None) -> SatCatalog:
+    """Bundled list, plus satellites you added in Prefs (``extra``) and per-service name overrides."""
     data = json.loads(path.read_text(encoding="utf-8"))
     sats = [Satellite(**s) for s in data["satellites"]]
+    known = {s.name.upper() for s in sats}
+    for e in extra or []:
+        name = (e.get("name") or "").strip().upper()
+        if name and name not in known:
+            sats.append(Satellite(name=name, description=e.get("description") or "", uplink=e.get("uplink"),
+                                  downlink=e.get("downlink"), mode=e.get("mode"), sat_mode=e.get("sat_mode")))
+            known.add(name)
     names = {svc: {k.upper(): v for k, v in m.items()} for svc, m in data.get("service_names", {}).items()}
     for svc, m in (overrides or {}).items():
         names.setdefault(svc, {}).update({k.upper(): v for k, v in m.items()})

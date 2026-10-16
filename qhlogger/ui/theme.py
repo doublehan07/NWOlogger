@@ -87,7 +87,8 @@ QFrame#Section {{ background: {t.surface}; border: 1px solid {t.border}; border-
 QLabel#SectionTitle {{ color: {t.muted}; font-weight: 600; font-size: 11px; letter-spacing: 0.5px; }}
 QLabel[muted="true"] {{ color: {t.muted}; }}
 QLabel#Summary {{ color: {t.muted}; }}
-QLabel#Version {{ color: {t.muted}; padding: 0 6px; }}
+QLabel#Version, QToolButton#Version {{ color: {t.muted}; padding: 0 6px; }}
+QToolButton#Version:hover {{ color: {t.accent}; }}
 QLabel#Clock {{ font-family: "{mono}"; font-size: 13px; padding: 0 6px; }}
 QLabel#BandLabel {{ color: {t.accent}; font-weight: 600; font-family: "{mono}"; }}
 QLabel#Hint {{ color: {t.muted}; font-size: 11px; }}
@@ -99,6 +100,10 @@ QLineEdit:focus, QComboBox:focus, QDateTimeEdit:focus, QSpinBox:focus, QDoubleSp
 QPlainTextEdit:focus, QDateEdit:focus {{ border: 1px solid {t.accent}; }}
 QLineEdit:disabled, QComboBox:disabled {{ color: {t.muted}; background: {t.surface_alt}; }}
 QLineEdit[autofill="true"], QComboBox[autofill="true"] {{ background: {t.tint}; }}
+QDateTimeEdit[invalid="true"] {{ border: 1px solid {t.bad}; color: {t.bad}; }}
+QPushButton#SyncBtn {{ padding: 3px 8px; font-family: "{mono}"; }}
+QPushButton#SyncBtn:checked {{ background: {t.accent_soft}; color: {t.accent}; border: 1px solid {t.accent}; }}
+QPushButton#OpBtn {{ font-family: "{mono}"; font-weight: 600; text-align: left; }}
 QLineEdit[guess="true"] {{ background: {t.tint}; font-style: italic; color: {t.muted}; }}
 QLineEdit[mono="true"] {{ font-family: "{mono}"; }}
 QLineEdit#CallEdit {{ font-family: "{mono}"; font-size: 22px; font-weight: 600; padding: 5px 10px;

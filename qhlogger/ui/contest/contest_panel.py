@@ -42,7 +42,9 @@ from ...core.contest.engine import (
     validate_value,
 )
 from ...core.contest.scp import SCP_URL, Scp
+from ...core.operators import is_club
 from .. import theme
+from ..operator_dialog import ensure_operator
 from ..widgets import Chip, Section, primary, run_async
 
 tr = i18n.tr
@@ -160,7 +162,6 @@ class ContestPanel(QWidget):
         sec.add(self.entry_grid)
         self.band = QComboBox()
         self.mode = QComboBox()
-        self.mode.setEditable(True)
         self.freq = QLineEdit()
         self.freq.setObjectName("ContestField")
         self.freq.setPlaceholderText(tr("kHz"))
@@ -714,16 +715,23 @@ class ContestPanel(QWidget):
         q["time_on"] = now
         q["time_off"] = now
         prof = self.profile() or {}
-        for col in ("station_callsign", "operator", "my_gridsquare", "my_cq_zone", "my_itu_zone", "my_dxcc",
+        op = ensure_operator(self, self.win.ops, self.db, prof) if prof else None
+        if prof and op is None and is_club(prof):
+            self.message.emit(tr("Not logged: enter the operator first."))
+            return
+        for col in ("station_callsign", "my_gridsquare", "my_cq_zone", "my_itu_zone", "my_dxcc",
                     "my_state", "my_rig", "my_antenna"):
             if prof.get(col) not in (None, ""):
                 q[col] = prof[col]
+        if op:
+            q["operator"] = op
         if prof.get("id"):
             q["station_profile_id"] = prof["id"]
         if prof.get("tx_pwr"):
             q["tx_pwr"] = prof["tx_pwr"]
         with self.db.batch(tr("Log QSO") + f" {c}"):
             qid = self.db.insert(q)
+        self.win.ops.touch(prof)
         self.session["next_serial"] = serial + 1
         self.db.update_contest_session(self.session["id"], next_serial=serial + 1)
         row = self.db.get(qid)

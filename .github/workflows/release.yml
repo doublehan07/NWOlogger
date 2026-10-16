@@ -26,7 +26,7 @@ jobs:
           test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != v$v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
       - run: uv run pytest -q
-      - run: uv run --with pyinstaller pyinstaller packaging/qhlogger.spec --noconfirm
+      - run: uv run --with pyinstaller --with pillow pyinstaller packaging/qhlogger.spec --noconfirm
       - name: macOS disk image
         if: runner.os == 'macOS'
         run: hdiutil create -volname QHlogger -srcfolder dist/QHlogger.app -ov -format UDZO "dist/QHlogger-${VERSION}-macos.dmg"

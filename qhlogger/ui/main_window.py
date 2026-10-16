@@ -6,8 +6,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from PySide6 import __version__ as PYSIDE_VERSION
-from PySide6.QtCore import QSize, Qt, QTimer, qVersion
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -32,12 +31,14 @@ from PySide6.QtWidgets import (
 from .. import APP_NAME, __version__, i18n
 from ..core import db as dbm
 from ..core import dupes, dxcc, exporter, regions, timeutil
-from ..core.db import SCHEMA_VERSION
 from ..core.fields import DEFAULT_LOG_COLUMNS
 from ..core.lookup import clients as lookup_clients
+from ..core.operators import OperatorSession
 from . import theme
+from .about_dialog import AboutDialog
 from .bulk_edit import BulkEditDialog
 from .command_palette import CommandPalette
+from .dupe_dialog import DupeCompareDialog, show_review
 from .entry.dx_panel import DXPanel
 from .import_dialog import ImportDialog
 from .log.filter_bar import FilterBar
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.db, self.prefs, self.app = db, prefs, app
         self.actions_: list[QAction] = []
+        self.ops = OperatorSession()
         self.sync = SyncController(db, prefs, self)
         self.sync.message.connect(self.flash)
         self._lookup_clients: list | None = None
@@ -104,7 +106,9 @@ class MainWindow(QMainWindow):
         self.a_delete = A("Delete selected QSOs", self.delete_selected, "Ctrl+Backspace", "trash-2")
         self.a_dupes = A("Find duplicates in the whole log", self.find_dupes, None, "copy-check")
         self.a_not_dupe = A("Not a dupe", self.not_dupe)
-        self.a_show_dupe = A("Show the QSO it collides with", self.show_dupe_partner)
+        self.a_show_dupe = A("Compare with the original…", self.show_dupe_partner)
+        self.a_review = A("Review suspicious dupes…", self.review_dupes, "Ctrl+Shift+D", "copy-check")
+        self.a_operator = A("Change operator…", lambda: self.dx.change_operator(), "Ctrl+Shift+O", "user-round")
         self.a_paper_sent = A("Mark paper QSL sent…", lambda: mark_paper(self, self.db, self.view.selected_ids(),
                                                                         "sent"))
         self.a_paper_rcvd = A("Mark paper QSL received…", lambda: mark_paper(self, self.db,
@@ -160,7 +164,8 @@ class MainWindow(QMainWindow):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
         for a in (self.a_undo, None, self.a_edit, self.a_bulk, self.a_delete, self.a_select_all, None,
-                  self.a_dupes, self.a_not_dupe, self.a_show_dupe, None, self.a_recompute, self.a_lookup_fill,
+                  self.a_dupes, self.a_review, self.a_not_dupe, self.a_show_dupe, None, self.a_operator,
+                  self.a_recompute, self.a_lookup_fill,
                   None, self.a_prefs):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&View"))
@@ -233,9 +238,11 @@ class MainWindow(QMainWindow):
         self.clock = QLabel()
         self.clock.setObjectName("Clock")
         tb.addWidget(self.clock)
-        self.version_lab = QLabel(f"v{__version__}")
+        self.version_lab = QToolButton()
+        self.version_lab.setText(f"v{__version__}")
         self.version_lab.setObjectName("Version")
-        self.version_lab.setToolTip(f"{APP_NAME} {__version__}")
+        self.version_lab.setToolTip(tr("About QHlogger"))
+        self.version_lab.clicked.connect(self.about)
         tb.addWidget(self.version_lab)
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(self._tick)
@@ -250,7 +257,7 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         lay.addWidget(self.splitter)
         self.entry_stack = QStackedWidget()
-        self.dx = DXPanel(self.db, self.prefs)
+        self.dx = DXPanel(self.db, self.prefs, ops=self.ops)
         self.dx.message.connect(self.flash)
         self.dx.logged.connect(self._after_log)
         self.dx.saved.connect(lambda qid: self.view.select_ids([qid]))
@@ -447,8 +454,8 @@ class MainWindow(QMainWindow):
         m.addAction(self.a_lookup_fill)
         m.addAction(self.a_recompute)
         m.addSeparator()
-        m.addAction(self.a_not_dupe)
         m.addAction(self.a_show_dupe)
+        m.addAction(self.a_not_dupe)
         m.addSeparator()
         m.addAction(self.a_delete)
         m.exec(pos)
@@ -469,6 +476,7 @@ class MainWindow(QMainWindow):
 
     def _after_log(self, qid: int) -> None:
         self.filter.set_sats(self.db.distinct("sat_name"))
+        self.dx.reload_sats()
         self.sync.upload_on_log(qid)
 
     def undo(self) -> None:
@@ -503,24 +511,37 @@ class MainWindow(QMainWindow):
                                 warn_s=self.prefs.get("warn_hours") * 3600)
         finally:
             QApplication.restoreOverrideCursor()
-        QMessageBox.information(self, tr("Find duplicates"), f"{d} " + tr("dupes") + f", {s} " +
-                                tr("suspicious dupes marked.") + "\n" + tr("They are listed under the preset "
-                                                                           "“Suspicious dupes”."))
-        if d or s:
-            self.filter.set_preset("suspicious")
+        if not (d or s):
+            QMessageBox.information(self, tr("Find duplicates"), tr("No duplicates found."))
+            return
+        if QMessageBox.question(self, tr("Find duplicates"), f"{d} " + tr("dupes") + f", {s} " +
+                                tr("suspicious dupes marked.") + "\n\n" + tr("Review them side by side now?")
+                                ) == QMessageBox.StandardButton.Yes:
+            self.review_dupes()
+        self.filter.set_preset("suspicious")
 
     def not_dupe(self) -> None:
         ids = self.view.selected_ids()
         self.db.update_many(ids, {"dupe_flag": "OK", "dupe_of": None}, label=tr("Not a dupe"), track_service=False)
 
     def show_dupe_partner(self) -> None:
+        ids = self.view.selected_ids()
+        flagged = [i for i in ids if (self.db.get(i) or {}).get("dupe_flag") in ("DUPE", "SUSPECT")]
+        if flagged:
+            show_review(self, self.db, self.prefs, flagged, on_edit=self.edit_qso)
+            return
         qid = self.view.current_id()
         q = self.db.get(qid) if qid else None
-        if not q or not q.get("dupe_of"):
+        hit = dupes.check(self.db, q, block_s=self.prefs.get("block_seconds"),
+                          warn_s=self.prefs.get("warn_hours") * 3600, exclude_id=qid) if q else None
+        if not hit:
             self.flash(tr("This QSO is not marked as a dupe."))
             return
-        self.filter.clear()
-        QTimer.singleShot(400, lambda: self.view.select_ids([q["id"], q["dupe_of"]]))
+        dlg = DupeCompareDialog(self.db, self.prefs, draft=q, other_id=hit.other_id, parent=self)
+        dlg.exec()
+
+    def review_dupes(self) -> None:
+        show_review(self, self.db, self.prefs, on_edit=self.edit_qso)
 
     def recompute_dxcc(self) -> None:
         ids = self.view.selected_ids()
@@ -642,10 +663,12 @@ class MainWindow(QMainWindow):
             msg += f". {r.dupes} {tr('dupes')}, {r.suspects} {tr('suspicious')} {tr('marked')}."
             self.flash(msg)
             if r.dupes or r.suspects:
-                if QMessageBox.question(self, tr("Import"), msg + "\n\n" + tr("Show the marked QSOs now?")
+                if QMessageBox.question(self, tr("Import"), msg + "\n\n" + tr("Review them side by side now?")
                                         ) == QMessageBox.StandardButton.Yes:
-                    self.filter.set_preset("suspicious")
+                    self.review_dupes()
+                self.filter.set_preset("suspicious")
             self.dx.reload_profiles()
+            self.dx.reload_sats()
 
     def export(self, which: str) -> None:
         if which == "selected":
@@ -667,6 +690,11 @@ class MainWindow(QMainWindow):
 
     def shutdown(self) -> None:
         """Stop timers and listeners before the log file is closed."""
+        if getattr(self, "_shut", False):
+            return
+        self._shut = True
+        self.filter._timer.stop()
+        self.filter.blockSignals(True)
         self.model.detach()
         self.paper.model.detach()
         self.db.remove_listener(self._on_db_change)
@@ -708,6 +736,8 @@ class MainWindow(QMainWindow):
             theme.apply(self.app, self.prefs.get("theme"))
             self._lookup_clients = None
             self.dx.reload_profiles()
+            self.dx.reload_sats()
+            self.dx.clear_form()
             self.model.refresh()
         else:
             self.dx.reload_profiles()
@@ -716,12 +746,7 @@ class MainWindow(QMainWindow):
         CommandPalette(self.actions_, self).exec()
 
     def about(self) -> None:
-        QMessageBox.about(self, tr("About QHlogger"),
-                          f"<h3>{APP_NAME} v{__version__}</h3>"
-                          f"<p>{tr('A minimal, cross-platform amateur radio logger.')}</p>"
-                          f"<p>Qt {qVersion()} · PySide6 {PYSIDE_VERSION}<br>"
-                          f"{tr('Database schema')} v{SCHEMA_VERSION}<br>{self.db.path}</p>"
-                          "<p>MIT License · Country data: AD1C country-files.com · Icons: Lucide (ISC)</p>")
+        AboutDialog(self.db, self).exec()
 
     def update_cty(self, quiet: bool = True) -> None:
         def done(n):

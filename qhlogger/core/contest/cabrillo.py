@@ -78,7 +78,10 @@ def export(path: str, cdef: ContestDef, session: dict, qsos: list[dict], me: Me,
         if cats.get(k):
             lines.append(f"{k}: {cats[k]}")
     lines.append(f"CLAIMED-SCORE: {claimed_score}")
-    for key, tag in (("operators", "OPERATORS"), ("club", "CLUB"), ("name", "NAME"), ("email", "EMAIL")):
+    ops = data.get("operators") or " ".join(sorted({q.get("operator") for q in qsos if q.get("operator")}))
+    if ops:
+        lines.append(f"OPERATORS: {ops}")
+    for key, tag in (("club", "CLUB"), ("name", "NAME"), ("email", "EMAIL")):
         if data.get(key):
             lines.append(f"{tag}: {data[key]}")
     if me.grid:

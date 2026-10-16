@@ -38,7 +38,7 @@ from . import theme
 tr = i18n.tr
 
 PROFILE_FIELDS = [
-    ("name", "Profile name"), ("station_callsign", "Station callsign"), ("operator", "Operator"),
+    ("name", "Profile name"), ("station_callsign", "Station callsign"), ("operator", "Operator (personal station)"),
     ("my_gridsquare", "My grid"), ("my_vucc_grids", "My VUCC grids"), ("my_cq_zone", "My CQ zone"),
     ("my_itu_zone", "My ITU zone"), ("my_dxcc", "My DXCC"), ("my_state", "My province"), ("my_cnty", "My county"),
     ("my_rig", "Rig"), ("my_antenna", "Antenna"), ("tx_pwr", "Default power (W)"), ("my_pota_ref", "My POTA"),
@@ -77,10 +77,22 @@ class ProfilesPage(QWidget):
         right = QVBoxLayout()
         form = QFormLayout()
         self.edits: dict[str, QLineEdit] = {}
+        self.station_type = QComboBox()
+        self.station_type.addItem(tr("Personal station: I am the operator"), "personal")
+        self.station_type.addItem(tr("Club station: ask who is operating"), "club")
+        self.station_type.currentIndexChanged.connect(self._type_changed)
         for key, label in PROFILE_FIELDS:
             e = QLineEdit()
             self.edits[key] = e
             form.addRow(tr(label), e)
+            if key == "station_callsign":
+                form.addRow(tr("Station type"), self.station_type)
+                hint = QLabel(tr("Club stations ask for the operator at the first QSO, keep it while QHlogger "
+                                 "runs, and ask again on a new UTC day or after a 3-hour break."))
+                hint.setObjectName("Hint")
+                hint.setWordWrap(True)
+                hint.setMinimumHeight(34)
+                form.addRow("", hint)
         self.edits["station_callsign"].editingFinished.connect(self._auto_zones)
         self.default = QCheckBox(tr("Default profile"))
         form.addRow("", self.default)
@@ -122,11 +134,19 @@ class ProfilesPage(QWidget):
         for k, e in self.edits.items():
             v = p.get(k)
             e.setText("" if v is None else str(v))
+        self.station_type.setCurrentIndex(max(0, self.station_type.findData(p.get("station_type") or "personal")))
         self.default.setChecked(bool(p.get("is_default")))
+        self._type_changed()
+
+    def _type_changed(self) -> None:
+        club = self.station_type.currentData() == "club"
+        self.edits["operator"].setEnabled(not club)
+        self.edits["operator"].setPlaceholderText(tr("asked when logging") if club else tr("your callsign"))
 
     def _new(self) -> None:
         self.current_id = None
         self.list.clearSelection()
+        self.station_type.setCurrentIndex(0)
         for e in self.edits.values():
             e.clear()
         self.default.setChecked(not self.db.profiles())
@@ -137,7 +157,7 @@ class ProfilesPage(QWidget):
         self.edits["station_callsign"].setText(call)
         if not call:
             return
-        if not self.edits["operator"].text():
+        if not self.edits["operator"].text() and self.station_type.currentData() != "club":
             self.edits["operator"].setText(call)
         r = dxcc.default().resolve(call)
         if r:
@@ -164,6 +184,11 @@ class ProfilesPage(QWidget):
                 data["tx_pwr"] = float(data["tx_pwr"])
             except ValueError:
                 data["tx_pwr"] = None
+        data["station_type"] = self.station_type.currentData()
+        if data["station_type"] == "club":
+            data["operator"] = None
+        elif data.get("operator"):
+            data["operator"] = data["operator"].upper()
         data["id"] = self.current_id
         data["is_default"] = self.default.isChecked()
         pid = self.db.save_profile(data)
@@ -311,23 +336,29 @@ class PrefsDialog(QDialog):
         # Satellite names
         st = QWidget()
         sl = QVBoxLayout(st)
-        sl.addWidget(self._hint(tr("Name sent to each service. Your log keeps one name per satellite.")))
+        sl.addWidget(self._hint(tr("Satellites offered in the entry form, and the name sent to each service. Your "
+                                   "log keeps one name per satellite. Add satellites that are not on the list "
+                                   "yet.")))
+        self.user_sats = list(prefs.get("user_sats") or [])
+        sb = QHBoxLayout()
+        add_sat = QPushButton(tr("Add satellite…"))
+        add_sat.setIcon(theme.icon("plus"))
+        add_sat.clicked.connect(self._add_sat)
+        rm_sat = QPushButton(tr("Remove added satellite"))
+        rm_sat.setIcon(theme.icon("trash-2"))
+        rm_sat.clicked.connect(self._remove_sat)
+        sb.addWidget(add_sat)
+        sb.addWidget(rm_sat)
+        sb.addStretch(1)
+        sl.addLayout(sb)
         self.satmap = QTableWidget(0, 3)
         self.satmap.setHorizontalHeaderLabels([tr("Satellite (stored)"), "LoTW", "eQSL"])
         self.satmap.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.satmap.verticalHeader().setVisible(False)
         self.satmap.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        cat = sats.load(overrides=prefs.get("sat_names"))
-        for s in cat.sats:
-            r = self.satmap.rowCount()
-            self.satmap.insertRow(r)
-            it = QTableWidgetItem(s.name)
-            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.satmap.setItem(r, 0, it)
-            self.satmap.setItem(r, 1, QTableWidgetItem(cat.to_service("lotw", s.name)))
-            self.satmap.setItem(r, 2, QTableWidgetItem(cat.to_service("eqsl", s.name)))
+        self._fill_satmap()
         sl.addWidget(self.satmap, 1)
-        self.tabs.addTab(st, tr("Satellite names"))
+        self.tabs.addTab(st, tr("Satellites"))
 
         # Database
         dbw = QWidget()
@@ -359,6 +390,63 @@ class PrefsDialog(QDialog):
             for i in range(self.tabs.count()):
                 if self.tabs.tabText(i) == tr(page):
                     self.tabs.setCurrentIndex(i)
+
+    def _fill_satmap(self) -> None:
+        cat = sats.load(overrides=self.prefs.get("sat_names"), extra=self.user_sats)
+        added = {(s.get("name") or "").upper() for s in self.user_sats}
+        self.satmap.setRowCount(0)
+        for s in cat.sats:
+            r = self.satmap.rowCount()
+            self.satmap.insertRow(r)
+            it = QTableWidgetItem(s.name + ("   ★" if s.name.upper() in added else ""))
+            it.setData(Qt.ItemDataRole.UserRole, s.name)
+            it.setToolTip(s.description or "")
+            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.satmap.setItem(r, 0, it)
+            self.satmap.setItem(r, 1, QTableWidgetItem(cat.to_service("lotw", s.name)))
+            self.satmap.setItem(r, 2, QTableWidgetItem(cat.to_service("eqsl", s.name)))
+
+    def _add_sat(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("Add satellite"))
+        f = QFormLayout(dlg)
+        name, desc, up, down = QLineEdit(), QLineEdit(), QLineEdit(), QLineEdit()
+        name.setPlaceholderText(tr("Name as LoTW / TQSL will expect it, e.g. SO-125"))
+        up.setPlaceholderText(tr("MHz you transmit on"))
+        down.setPlaceholderText(tr("MHz you receive on"))
+        f.addRow(tr("Name"), name)
+        f.addRow(tr("Description"), desc)
+        f.addRow(tr("Uplink (TX MHz)"), up)
+        f.addRow(tr("Downlink (RX MHz)"), down)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        f.addRow(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted or not name.text().strip():
+            return
+
+        def num(e: QLineEdit) -> float | None:
+            try:
+                return float(e.text().strip().replace(",", "."))
+            except ValueError:
+                return None
+
+        self.user_sats = [s for s in self.user_sats if (s.get("name") or "").upper() != name.text().strip().upper()]
+        self.user_sats.append({"name": name.text().strip().upper(), "description": desc.text().strip(),
+                               "uplink": num(up), "downlink": num(down)})
+        self._fill_satmap()
+
+    def _remove_sat(self) -> None:
+        row = self.satmap.currentRow()
+        if row < 0:
+            return
+        name = self.satmap.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        before = len(self.user_sats)
+        self.user_sats = [s for s in self.user_sats if (s.get("name") or "").upper() != (name or "").upper()]
+        if len(self.user_sats) == before:
+            QMessageBox.information(self, tr("Satellites"), tr("Only satellites you added (★) can be removed."))
+            return
+        self._fill_satmap()
 
     def _hint(self, text: str) -> QLabel:
         lab = QLabel(text)
@@ -404,10 +492,11 @@ class PrefsDialog(QDialog):
                     failed.append(f"QRZ key {call}")
         p.set("upload_on_log", {"qrz": self.up_qrz.isChecked(), "eqsl": self.up_eqsl.isChecked(),
                                 "hrdlog": self.up_hrd.isChecked()})
-        base = sats.load()
+        p.set("user_sats", self.user_sats)
+        base = sats.load(extra=self.user_sats)
         over: dict[str, dict[str, str]] = {}
         for r in range(self.satmap.rowCount()):
-            name = self.satmap.item(r, 0).text()
+            name = self.satmap.item(r, 0).data(Qt.ItemDataRole.UserRole)
             for c, svc in ((1, "lotw"), (2, "eqsl")):
                 v = (self.satmap.item(r, c).text() if self.satmap.item(r, c) else "").strip().upper()
                 if v and v != base.to_service(svc, name).upper():

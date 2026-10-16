@@ -1,5 +1,5 @@
 {
- "_source": "LoTW satellite list (lotw.arrl.org FAQ), 2026-10-15",
+ "_source": "LoTW satellite list (lotw.arrl.org FAQ) merged with TQSL configuration v11.34, 2026-10-16",
  "service_names": {
   "eqsl": {
    "ARISS": "ISS"
@@ -505,6 +505,26 @@
   {
    "name": "XW-2F",
    "description": "Hope 2F"
+  },
+  {
+   "name": "Arsene",
+   "description": "Arsene-OSCAR 24"
+  },
+  {
+   "name": "CAS-2T",
+   "description": "CAS-2T"
+  },
+  {
+   "name": "FO-118",
+   "description": "Fuji-OSCAR 118"
+  },
+  {
+   "name": "HO-119",
+   "description": "Hope-OSCAR 119"
+  },
+  {
+   "name": "SO-67",
+   "description": "SumbandilaSat-OSCAR 67"
   }
  ]
 }

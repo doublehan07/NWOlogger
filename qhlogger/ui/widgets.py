@@ -260,3 +260,78 @@ def run_async(fn: Callable[..., Any], *args: Any, on_done: Callable[[Any], None]
     t.signals.failed.connect(_fail, Qt.ConnectionType.QueuedConnection)
     QThreadPool.globalInstance().start(t)
     return t
+
+
+# ------------------------------------------------------------------ dropdowns
+
+MODE_FIRST = ["SSB", "USB", "LSB", "CW", "FM", "AM", "FT8", "FT4", "RTTY", "PSK31", "JS8", "Q65", "MSK144",
+              "JT65", "SSTV", "C4FM", "DSTAR", "DMR", "FREEDV", "M17"]
+
+
+def mode_combo() -> QComboBox:
+    """A plain (non-editable) mode list: common modes first, then every ADIF mode and submode."""
+    c = QComboBox()
+    c.setMaxVisibleItems(24)
+    for m in MODE_FIRST:
+        c.addItem(m, m)
+    c.insertSeparator(c.count())
+    for m in ("DATA", "PHONE"):
+        c.addItem(f"{m} ({tr('generic')})", m)
+    c.insertSeparator(c.count())
+    rest = sorted(set(modes.all_mode_names()) - set(MODE_FIRST) - {"DATA", "PHONE", "IMAGE"})
+    for m in rest:
+        c.addItem(m, m)
+    return c
+
+
+def set_combo_data(c: QComboBox, value, label: str | None = None) -> None:
+    """Select the item with this data, adding it when missing (e.g. a value from an old log)."""
+    v = value if value not in (None, "") else ""
+    i = c.findData(v)
+    if i < 0 and v != "":
+        c.addItem(label or str(v), v)
+        i = c.count() - 1
+    if i < 0:
+        i = 0
+    c.setCurrentIndex(i)
+
+
+def combo_value(c: QComboBox) -> str | None:
+    v = c.currentData()
+    return v or None
+
+
+def prop_combo() -> QComboBox:
+    from ..core import propagation  # noqa: PLC0415
+
+    c = QComboBox()
+    c.setMaxVisibleItems(24)
+    c.addItem("—", "")
+    for code, desc in propagation.LOTW.items():
+        c.addItem(f"{code} · {tr(desc)}", code)
+    c.insertSeparator(c.count())
+    for code, desc in propagation.ADIF_ONLY.items():
+        c.addItem(f"{code} · {tr(desc)} ({tr('not for LoTW')})", code)
+    return c
+
+
+def fill_sat_combo(c: QComboBox, catalog, extra_names: list[str] | None = None) -> None:
+    """Satellites from the catalog, then names found only in your log."""
+    cur = c.currentData()
+    c.blockSignals(True)
+    c.clear()
+    c.setMaxVisibleItems(24)
+    c.addItem("—", "")
+    for s in catalog.sats:
+        c.addItem(s.name, s.name)
+        c.setItemData(c.count() - 1, s.description, Qt.ItemDataRole.ToolTipRole)
+    known = {s.name.upper() for s in catalog.sats}
+    others = sorted({n.upper() for n in (extra_names or []) if n and n.upper() not in known})
+    if others:
+        c.insertSeparator(c.count())
+        for n in others:
+            c.addItem(n, n)
+            c.setItemData(c.count() - 1, tr("From your log"), Qt.ItemDataRole.ToolTipRole)
+    i = c.findData(cur) if cur else 0
+    c.setCurrentIndex(max(0, i))
+    c.blockSignals(False)
