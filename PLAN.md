@@ -1,25 +1,38 @@
 # QHlogger — Design Plan
 
-Status: **draft for review** (2026-10-15). Nothing here is implemented yet.
+Status: **draft for review** (updated 2026-10-15). Nothing here is implemented yet.
 Open questions are collected at the end; answers will be folded back into this file.
 
-## 1. Scope
+## 1. Requirements
 
 A minimal, fast, cross-platform (macOS + Windows) amateur radio logger, modelled on
 **MacLoggerDX** for day-to-day logging and on **N1MM Logger+** for contesting.
 
-**In scope**
+The project owner's requirements, grouped by topic. The rest of this plan is the design that meets them.
 
-- One SQLite file holds every QSO. Columns are plain ADIF names, so you can query the file with any SQLite tool.
-- ADIF import; export of all, selected, or filtered QSOs.
-- Multi-criteria search, with `?` / `*` wildcards on callsigns.
-- Sort by any column (satellite name, time on, time off, …).
-- Bulk edit of multiple selected QSOs after logging (BBLogger style).
-- Separate tracking of electronic confirmations and paper QSL cards. The traditional generic "QSL S / QSL R" columns are dropped.
-- Two-way sync with LoTW, eQSL and QRZ.com Logbook; upload to HRDLog.net (see §8.5).
-- Callsign lookup: offline `cty.csv` → QRZ.com XML → HamQTH fallback.
-- Contest mode, N1MM style, with live dupe checking and live scoring. The contest is chosen from a dropdown.
-- English and Simplified Chinese UI.
+| Area | Requirement | Design |
+|---|---|---|
+| Goal | A minimal logger, closest to MacLoggerDX (the main reference). Club Log, Wavelog and N1MM were consulted for ideas | — |
+| Storage | All QSOs in one SQLite file, so the log is easy to search | §4 |
+| Platform | Qt UI, cross-platform, mainly Windows and macOS | §2 |
+| UI | Like the MacLoggerDX main window, without the rig panel. The logger never connects to a real rig | §6 |
+| UI | The app shows its version number | §2.1 |
+| UI | English and Simplified Chinese | §11 |
+| Logging | QSO entry is important | §6 |
+| Contest | Contest mode is crucial: N1MM style, contest picked from a dropdown, live scoring | §10 |
+| Editing | Edit several selected QSOs at once after logging (BBLogger style) | §6.1 |
+| ADIF | Import; export all, export selected, export filtered | §8.1 |
+| Migration | Bring over the existing MacLoggerDX log, including its upload and confirmation history | §8.1 |
+| Search | Several filters combined: call (with `?` and `*`), mode, time, satellite, … | §7 |
+| Search | Mode search is vague: `SSB` finds USB/LSB, `DIGI` finds FT8 | §7 |
+| Sorting | Sort by any column: satellite name, time on, time off, … | §6 |
+| Lookup | QRZ.com XML lookup with HamQTH fallback, plus offline `cty.csv` | §9 |
+| Services | Download from and upload to LoTW, eQSL, QRZ.com and HRDLog. No Club Log | §8 |
+| Paper QSL | A separate section records the dates paper cards were sent and received. No generic "QSL sent / received" columns: paper and electronic records stay apart | §4.1, §6 |
+| Dupes | While logging, block input only when the QSO is strictly the same, i.e. same mode **and** submode | §5 |
+| Dupes | USB ≠ LSB and FT8 ≠ FT4. Related modes (SSB vs USB, DIGI vs FT8) get a warning, never a block, and are never filtered out | §5 |
+| Dupes | ADIF import accepts everything and marks every suspicious dupe | §5, §8.1 |
+| Repo | README, TODO and PLAN in the repo. Commits are by the owner only, with no LLM co-author, and each message is one sentence | — |
 
 **Out of scope (non-goals)**
 
@@ -51,7 +64,7 @@ These may move to TODO later, but they are not part of the core.
   - the right end of the toolbar, as in MacLoggerDX
   - Help → About (version, Qt/PySide6 version, DB schema version, data-file path)
   - `qhlogger --version`
-- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`QHlogger/0.1.0 (BY1QH)`), and the Cabrillo `CREATED-BY` line.
+- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`QHlogger/0.1.0 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
 - **Releases:** a git tag `v0.1.0` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
 
 Architecture rule: `qhlogger/core/` never imports Qt. All logic lives there: DB, ADIF, search, dupes, DXCC, contest scoring and sync.
@@ -69,8 +82,9 @@ qhlogger/
     modes.py               # ADIF mode/submode table, mode groups, input aliases
     bands.py               # band edges, freq → band
     adif.py                # ADI reader/writer (ADX later)
+    mldx.py                # MacLoggerDX database importer
     search.py              # filter spec → SQL WHERE (wildcards)
-    dupes.py               # dupe keys and checks (mode-group aware)
+    dupes.py               # mode relations, dupe checks and suspicious-dupe marking
     callsign.py            # call normalisation, portable suffixes, WPX prefix
     dxcc.py                # cty.csv loader + call → entity resolver
     lookup/                # qrz_xml.py, hamqth.py, cache.py
@@ -95,7 +109,7 @@ Default file: `~/Documents/QHlogger/qhlog.sqlite`. It can be changed in Prefs, a
 
 Conventions:
 
-- Column names are lower-case ADIF field names.
+- Column names are lower-case ADIF field names. The few non-ADIF columns (`first_name`, `last_name`, `qrz_*`, `dupe_*`, `extra`) are converted on ADIF export.
 - Callsigns are stored upper-case.
 - Times are **UTC ISO-8601 text with seconds** (`2026-10-10T15:19:00Z`), so the file stays readable with plain SQL.
 - Frequencies are stored in MHz as `REAL`.
@@ -107,14 +121,15 @@ Conventions:
 | Identity | `id` INTEGER PK, `uuid` TEXT UNIQUE (stable id across sync), `created_at`, `updated_at` |
 | Core | `call`, `time_on`, `time_off`, `freq`, `band`, `freq_rx`, `band_rx`, `mode`, `submode`, `mode_group` (derived, indexed), `rst_sent`, `rst_rcvd`, `tx_pwr` |
 | Satellite / propagation | `prop_mode`, `sat_name`, `sat_mode` |
-| Worked station | `name`, `qth`, `address`, `state`, `cnty`, `country`, `dxcc`, `cqz`, `ituz`, `cont`, `gridsquare`, `vucc_grids`, `lat`, `lon`, `iota`, `sota_ref`, `pota_ref`, `wwff_ref`, `sig`, `sig_info`, `skcc`, `email`, `web`, `qsl_via` |
+| Worked station | `first_name`, `last_name` (ADIF `NAME` on export, §8.1), `qth`, `address`, `state`, `cnty`, `country`, `dxcc`, `cqz`, `ituz`, `cont`, `gridsquare`, `vucc_grids`, `lat`, `lon`, `iota`, `sota_ref`, `pota_ref`, `wwff_ref`, `sig`, `sig_info`, `skcc`, `email`, `web`, `qsl_via` |
 | My station (copied from the station profile at log time) | `station_callsign`, `operator`, `my_gridsquare`, `my_vucc_grids`, `my_dxcc`, `my_cq_zone`, `my_itu_zone`, `my_state`, `my_cnty`, `my_pota_ref`, `my_sota_ref`, `my_wwff_ref`, `my_rig`, `my_antenna`, `station_profile_id` |
 | Notes | `comment` (may be sent to services), `notes` (private) |
 | Contest | `contest_id`, `contest_session_id`, `stx`, `srx`, `stx_string`, `srx_string` |
+| Dupe marking | `dupe_flag` (empty, `DUPE` or `SUSPECT`), `dupe_of` (id of the earlier QSO it collides with) |
 | **Paper QSL** | `qsl_sent`, `qslsdate`, `qsl_sent_via`, `qsl_rcvd`, `qslrdate`, `qsl_rcvd_via`, `qslmsg` |
 | LoTW | `lotw_qsl_sent`, `lotw_qslsdate`, `lotw_qsl_rcvd`, `lotw_qslrdate` |
 | eQSL | `eqsl_qsl_sent`, `eqsl_qslsdate`, `eqsl_qsl_rcvd`, `eqsl_qslrdate`, `eqsl_ag` (Authenticity Guaranteed) |
-| QRZ.com | `qrzcom_qso_upload_status`, `qrzcom_qso_upload_date`, `qrzcom_qso_download_status`, `qrzcom_qso_download_date`, `qrz_logid`, `qrz_confirmed` |
+| QRZ.com | `qrzcom_qso_upload_status`, `qrzcom_qso_upload_date`, `qrzcom_qso_download_status`, `qrzcom_qso_download_date`, `qrz_logid`, `qrz_qsl_rcvd`, `qrz_qslrdate` (exported as QRZ's own `APP_QRZLOG_STATUS` / `APP_QRZLOG_QSLDATE`) |
 | HRDLog | `hrdlog_qso_upload_status`, `hrdlog_qso_upload_date` |
 | Everything else | `extra` TEXT (JSON object of every other ADIF field, `APP_*` and `USERDEF` included) |
 
@@ -123,7 +138,7 @@ Notes on the model:
 - **Lossless ADIF round-trip.** A field without its own column goes to `extra` and is written back out on export. The schema stays small without losing any data.
 - **Paper and electronic records never share a column.** ADIF `QSL_SENT`/`QSL_RCVD` and their dates are paper only. Every electronic service has its own fields.
 - **Edits after upload.** Editing an uploaded QSO sets its QRZ and HRDLog status to `M` (modified, an ADIF enum value), so the next sync re-sends it. LoTW and eQSL do not support in-place edits, so they are flagged in the UI instead.
-- **Indexes:** `call`, `time_on`, `band`, `mode_group`, `sat_name`, `dxcc`, `station_callsign`, `contest_session_id`, plus a composite dupe index `(call, band, time_on)`.
+- **Indexes:** `call`, `time_on`, `band`, `mode_group`, `sat_name`, `dxcc`, `station_callsign`, `contest_session_id`, `dupe_flag`, plus a composite dupe index `(call, band, time_on)`.
 
 ### 4.2 Other tables
 
@@ -166,34 +181,63 @@ Every QSO gets a derived **`mode_group`**, following the LoTW/ARRL groups:
 | `DATA` | FT8, FT4, RTTY, PSK, JT65, JS8, OLIVIA, … and the `DIGI`/`DATA` placeholders |
 | `IMAGE` | SSTV, FAX, ATV |
 
-**Dupe levels.** Two QSOs are compared when they share `call + band`, plus `sat_name` when `prop_mode = SAT`, and fall within the same scope (table below). The mode then sets the level. **Only a strictly identical mode blocks logging.**
+### 5.1 How two modes relate
 
-| Level | Mode comparison | Examples | While logging | Import / *Find duplicates* |
+| Relation | Meaning | Examples |
+|---|---|---|
+| Same | Identical `MODE` + `SUBMODE` | USB–USB, FT8–FT8 |
+| Could be the same | One is a more general name for the other | SSB–USB, SSB–LSB, DIGI–FT8, DATA–RTTY, MFSK–FT4 |
+| Siblings | Different specific modes in the same group | USB–LSB, FT8–FT4, FM–SSB |
+| Unrelated | Different groups | CW–SSB, FT8–CW |
+
+The same relation table drives dupe checks (§5.2), vague mode search (§7) and confirmation matching (§8.2).
+
+### 5.2 Dupe rules (DX mode and ADIF import)
+
+Two QSOs are compared when they have the same call and band, plus the same `sat_name` when `prop_mode = SAT`. Strict is the rule: **only the same mode within 30 seconds is a dupe**. Everything else is at most a warning.
+
+| Mode relation | Time on apart | Result | While logging | ADIF import |
 |---|---|---|---|---|
-| **Dupe** | Exactly the same `MODE` + `SUBMODE` | USB vs USB, FT8 vs FT8 | Call field red, "DUPE" badge, **Log disabled** | Skipped by default; listed as dupes |
-| **Possible dupe** | Same group, different mode or submode | SSB vs USB, **USB vs LSB**, DIGI vs FT8, **FT8 vs FT4** | Amber warning only, **logging allowed** | Imported and flagged; listed separately |
-| Not a dupe | Different group | CW vs SSB, FT8 vs CW | — | — |
+| Same | ≤ 30 s | **Dupe** | Call field red, "DUPE" badge, **Log disabled** | Imported, marked `DUPE` |
+| Same | > 30 s, within the warning window | **Suspect** | Amber warning, logging allowed | Imported, marked `SUSPECT` |
+| Could be the same, or siblings | Within the warning window | **Suspect** | Amber warning, logging allowed | Imported, marked `SUSPECT` |
+| Unrelated, or outside the window | — | — | — | — |
 
-USB ≠ LSB and FT8 ≠ FT4: neither pair is ever blocked or filtered out, only warned about.
+- **Windows:** the block window (30 s) and the warning window (default 24 h) are both set in Prefs.
+- **Nothing is filtered out:** USB ≠ LSB and FT8 ≠ FT4. Related modes are never blocked or dropped, only warned about and marked.
+- **Import never skips:** every record is imported and every suspicious dupe is marked (§8.1).
+- **Marks are stored** in `dupe_flag` / `dupe_of`.
+  - Marked rows are highlighted in the log, and a *Suspicious dupes* preset lists them.
+  - Actions: *Not a dupe* (clears the mark), *Merge into the other QSO*, *Delete*.
+  - *Find duplicates* re-scans the whole log with the same rules.
+- **Hard block:** "Log disabled" is absolute by default. A Prefs switch, "Allow logging dupes" (**off** by default), logs the QSO and marks it `DUPE`.
 
-| Context | Scope |
-|---|---|
-| DX mode | Within a time window (see Q2) |
-| Contest mode | The contest definition's rule: once per band, per band+mode, or once per contest |
-| ADIF import / *Find duplicates* | Time within a tolerance |
+### 5.3 Contest mode
 
-Contest exception: a contest's own rules decide what counts as the same mode, because the score depends on it. For example, a contest that allows each station once per band on any digital mode treats FT8 followed by FT4 as a real dupe. Built-in definitions follow the published rules. User-defined contests compare modes strictly by default.
+A contest's own rules decide what counts as a dupe, because the score depends on it. The rule is usually once per band, or per band + mode, for the whole contest, so there is no 30-second window. For example, a contest that allows each station once per band on any digital mode treats FT8 followed by FT4 as a real dupe. Built-in definitions follow the published rules. User-defined contests compare modes strictly by default. A dupe logged anyway scores 0 points.
 
-A Prefs switch, "Allow logging dupes", is **off by default**. When it is on, a strict dupe is logged and flagged; in a contest it scores 0 points.
+### 5.4 Confirmation matching
 
-Matching downloaded confirmations is a separate job from dupe checking (§8.2). It prefers an exact mode match and falls back to the same group, because the other station or the service may report SSB where you logged USB.
+Matching downloaded confirmations is a separate job (§8.2). It prefers an exact mode match and falls back to a related mode, because the other station or the service may report SSB where you logged USB.
 
-## 6. Main window (MacLoggerDX-like, no rig panel)
+## 6. Main window
+
+The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on top, log below. The look is QHlogger's own modern design, not a copy of MacLoggerDX, BBLogger or N1MM.
+
+**Visual style**
+
+- **Qt Widgets, not QML.** `QTableView` and dense forms handle 100k-row logs better. The modern look comes from the Fusion style plus an app stylesheet built on design tokens (colours, spacing, radii).
+- **Themes:** light and dark, following the OS by default.
+- **Colour:** one accent colour. Status colours appear only where they carry meaning: confirmed green, suspect amber, dupe red.
+- **Type:** tabular (monospaced) figures for callsigns, frequencies and times, so columns line up.
+- **Icons:** SVG line icons from a permissively licensed set (e.g. Lucide, ISC).
+- **Layout:** entry fields grouped into labelled sections (Contact, Station, Location, References, QSL) instead of one dense grid. Validation is inline, next to the field.
+- **Keyboard-first:** every action has a shortcut, plus a command palette (⌘K / Ctrl+K).
 
 ```
 ┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.0 ┐
 ├ Entry panel ── [ DX | Contest ] ─────────────────────────────────────────────────────────────────────────────┤
-│ Call [______]  Name           │ Time On  2026-10-16 04:19:35   Time Off                                      │
+│ Call [______]  First  Last    │ Time On  2026-10-16 04:19:35   Time Off                                      │
 │ Address / QTH / County        │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │
 │ State / Country               │ Sat [SO-50 ▾]  Sat mode [ ]  Prop [SAT]  Power [25]  RST S [59]  RST R [59]  │
 │ Email / Web                   │ Grid  ITU  CQ  DXCC  IOTA  SOTA  POTA  WWFF  SKCC  QSL Via                    │
@@ -206,10 +250,12 @@ Matching downloaded confirmations is a separate job from dupe checking (§8.2). 
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Entry panel (DX).** The field set follows the MacLoggerDX screenshot, without rig info.
+- **Entry panel (DX).** The field set follows MacLoggerDX, without rig info. Name is split into First and Last, as in MLDX.
   - Times stamp automatically. TimeOn/TimeOff buttons re-stamp "now".
   - *Sticky* fields carry over to the next QSO, which matters for satellite passes.
   - The **Sat dropdown** comes from a bundled `sats.json` of LoTW-accepted `SAT_NAME`s. Picking a satellite sets `prop_mode=SAT` and fills its default up/down frequencies and mode.
+    - Names not on the list (e.g. `RS95S`, `TEVEL5`) can still be typed.
+    - Per-service names are handled on upload (§8.2).
   - *Previous* recalls the last QSO's fields.
   - Enter logs the QSO, Esc clears the form.
   - Double-clicking a row loads that QSO into the panel for editing (Save / Cancel).
@@ -217,7 +263,7 @@ Matching downloaded confirmations is a separate job from dupe checking (§8.2). 
   - Clicking any header sorts with SQL `ORDER BY`. `time_on` breaks ties.
   - Columns can be shown, hidden and reordered from the header context menu.
   - Confirmation columns: LoTW ↑/↓, eQSL ↑/↓, QRZ ↑/↓, HRDLog ↑, Paper sent/rcvd. Each shows a date; an empty cell means not done.
-  - Row colour: confirmed (any service or paper), unconfirmed, dupe.
+  - Row colour: confirmed (any service or paper), unconfirmed, `SUSPECT` (amber), `DUPE` (red).
 - **Context menu on a selection:**
   - Edit
   - Bulk edit…
@@ -227,14 +273,15 @@ Matching downloaded confirmations is a separate job from dupe checking (§8.2). 
   - Mark paper QSL sent… / received…
   - Lookup & fill missing
   - Recompute DXCC
+  - Not a dupe / Show the QSO it collides with
 - **Paper QSL tab.**
   - A queue of QSOs marked "to send" (`qsl_sent = Q/R`).
   - Actions: set sent date, set received date, set via (Bureau / Direct / Manager).
   - Filters: "received, not yet answered", "sent, awaiting reply".
 
-### 6.1 Bulk edit (BBLogger style; refined once I see a screenshot, Q5)
+### 6.1 Bulk edit
 
-Bulk edit is a dialog that applies to the selected QSOs:
+Bulk edit follows the BBLogger idea of editing many selected QSOs at once, with QHlogger's own UI. It is a dialog that applies to the selected QSOs:
 
 - Each field row has a ☐ apply box and an operation:
   - set to value
@@ -247,7 +294,7 @@ Bulk edit is a dialog that applies to the selected QSOs:
 
 ## 7. Search
 
-- **Quick filter bar:** Call, Band, Mode, Sat, Country, and a Preset dropdown with entries such as All, Today, This contest, Not uploaded to LoTW, LoTW confirmed, Paper to send.
+- **Quick filter bar:** Call, Band, Mode, Sat, Country, and a Preset dropdown with entries such as All, Today, This contest, Not uploaded to LoTW, LoTW confirmed, Paper to send, Suspicious dupes.
 - **Advanced search dialog:** rows of *field · operator · value*, combined with AND. Searches can be saved as named filters.
 
 | Operator kind | Operators | Applies to |
@@ -255,7 +302,20 @@ Bulk edit is a dialog that applies to the selected QSOs:
 | Text | is, is not, contains, matches (wildcards), empty, not empty | Any text field |
 | Time | before, after, between | Any time field |
 | Status | yes / no / date range | Confirmation fields |
-| Mode | Exact by default: `USB` finds only USB, `FT8` only FT8. Choosing an ADIF parent mode (`SSB`, `MFSK`) includes its submodes. Group entries (*All phone*, *All data*, …) match a whole family | Mode |
+| Mode | Vague by default (below); tick *Exact* for a strict match | Mode |
+
+- **Vague mode search (default).** A search finds the mode itself, anything more specific under it, and anything logged with a more general name that could be it (§5.1). Group names match a whole group:
+
+| Search | Finds |
+|---|---|
+| `SSB` | SSB, USB, LSB |
+| `USB` | USB, and SSB logged without a submode |
+| `DIGI` or `DATA` | every data mode (FT8, FT4, RTTY, PSK, …) |
+| `FT8` | FT8, and QSOs logged only as DIGI/DATA |
+| `FT4` | FT4, MFSK without a submode, DIGI/DATA |
+| `PHONE` | every phone mode (SSB, AM, FM, digital voice) |
+
+With *Exact* ticked, a search finds only that mode and submode.
 
 - **Wildcards:**
   - `*` matches any run of characters and `?` matches exactly one character.
@@ -272,13 +332,51 @@ Bulk edit is a dialog that applies to the selected QSOs:
   - Tag names are case-insensitive, and the header is optional.
   - Accepts `APP_*` and `USERDEF` fields.
   - Handles UTF-8 and Latin-1. Field lengths are tried as bytes first, then as characters, because real-world files disagree.
-- **Import preview:** counts of new / possible duplicates / matches with new confirmation data.
-  - Policies: skip, merge (fill empty fields and update QSL status), or import anyway.
-  - A station profile is assigned when `STATION_CALLSIGN` is missing.
+- **Import:** every record is imported by default, and every suspicious dupe is marked `DUPE` or `SUSPECT` (§5.2). Nothing is skipped silently.
+  - The preview shows counts of new, `DUPE` and `SUSPECT` records before anything is written.
+  - Optional *merge* mode, off by default: when a record matches an existing QSO, its data goes into that QSO (fill empty fields, update confirmation status) instead of becoming a new row. This is for confirmation files downloaded by hand.
+  - A station profile is assigned when `STATION_CALLSIGN` is missing. If only `OPERATOR` is present, it is copied into `STATION_CALLSIGN`, because LoTW needs it.
+  - `NAME` is split into first and last at the last space, so exporting it again gives back exactly the same text.
+  - Files from MacLoggerDX (`PROGRAMID=MacLoggerDX`) never set the paper QSL from `QSL_SENT` (§8.1.1).
 - **Writer:** UTF-8 with header `ADIF_VER`, `PROGRAMID=QHlogger`, `PROGRAMVERSION`, `CREATED_TIMESTAMP`.
   - Exports all / selected / filtered.
+  - `NAME` is written as First + space + Last.
   - Optional profiles strip private fields (`notes`, `email`) for service uploads.
-- **MacLoggerDX migration:** the importer will special-case MLDX quirks once I have a sample export (Q6).
+
+### 8.1.1 MacLoggerDX migration
+
+Import straight from the MacLoggerDX database (`MacLoggerDX.sql`, table `qso_table_v008`), not from its ADIF export. The ADIF export sets `QSL_SENT=Y` on every QSO and leaves out all upload history. MLDX keeps that history as comma-separated text in two columns, which the importer splits into separate fields:
+
+| MLDX column | Text | QHlogger fields |
+|---|---|---|
+| `qsl_sent` | `Uploaded to LoTW <date>` | `lotw_qsl_sent=Y`, `lotw_qslsdate` |
+| | `Uploaded to eQSL <date>` | `eqsl_qsl_sent=Y`, `eqsl_qslsdate` |
+| | `Uploaded to QRZ Logbook <date>`, `Updated in QRZ Logbook <date>` | `qrzcom_qso_upload_status=Y`, latest date |
+| | `Uploaded to HRDLOG <date>` | `hrdlog_qso_upload_status=Y`, latest date |
+| | `Mail Card <date>` | **paper** `qsl_sent=Y`, `qslsdate` |
+| `qsl_received` | `LoTW:<yyyymmdd>` | `lotw_qsl_rcvd=Y`, `lotw_qslrdate` |
+| | `QRZLogbook:<yyyymmdd>` | `qrz_qsl_rcvd=Y`, `qrz_qslrdate` |
+| | `eQSL.cc DownloadInBox:Y` | `eqsl_qsl_rcvd=Y` (MLDX keeps no date) |
+| | `Mail Card <date>`, also the typo `Mai Card` | **paper** `qsl_rcvd=Y`, `qslrdate` |
+
+Other columns:
+
+| MLDX column | QHlogger |
+|---|---|
+| `qso_start`, `qso_done` (Unix time, UTC) | `time_on`, `time_off` |
+| `my_call` | `station_callsign` and `operator` |
+| `first_name`, `last_name` | same columns |
+| `mode` (`USB`, `FT4`, `C4FM`, …) | ADIF mode + submode (`SSB/USB`, `MFSK/FT4`, `DIGITALVOICE/C4FM`) |
+| `satellite` | `sat_name`, with `prop_mode=SAT` |
+| `tx_frequency`, `rx_frequency`, `band_tx`, `band_rx` | `freq`, `freq_rx`, `band`, `band_rx` |
+| `my_grid`, `my_rig` | `my_gridsquare`, `my_rig`. Each distinct (call, grid) pair is offered as a station profile |
+| `street`, `city`, `zip`, `postal_country` | `address`, `qth` |
+| `azimuth`, `elevation`, `distance` | `ANT_AZ`, `ANT_EL`, `DISTANCE` (in `extra`) |
+| `ext_val_1` … `ext_val_4` | `extra` (meaning of `ext_val_3` pending, §13) |
+
+The migration runs as a dry run first. It reports counts per mapping and lists any text it didn't recognise, and nothing is written until you confirm. The MLDX row id is kept (`APP_MLDX_PK`), so running it again updates QSOs instead of duplicating them.
+
+Both MacLoggerDX files contain other operators' personal data, so they are git-ignored and never committed.
 
 ### 8.2 Common sync design
 
@@ -289,6 +387,10 @@ Bulk edit is a dialog that applies to the selected QSOs:
   - Key: same call + band, with `sat_name` when the QSO was via satellite. An exact mode match is preferred; the same mode group is accepted.
   - Time within ±30 min (LoTW's own window). Among candidates, an exact mode match wins, then the nearest time.
   - Records that don't match go to an **Unmatched** list, where they can be added as new QSOs.
+- **Satellite names per service.** QHlogger stores one name per satellite and translates it on upload and when matching downloads.
+  - The table is editable in Prefs.
+  - LoTW defaults come from the TQSL satellite list.
+  - Example: the ISS is `ARISS` in LoTW's list, and in your log LoTW confirmed 232 QSOs uploaded as `ARISS`. Where another service uses `ISS`, the table maps it (§13).
 - **Credentials:** kept only in the OS keychain. Every request uses HTTPS and the User-Agent `QHlogger/<ver> (<call>)`.
 
 ### 8.3 LoTW
@@ -318,11 +420,14 @@ Bulk edit is a dialog that applies to the selected QSOs:
   - The returned `LOGID` is stored, and uploads are rate-limited.
   - Each QRZ logbook has its own API key, so the key is chosen per station callsign.
 - **QRZ download:** `ACTION=FETCH`, `OPTION=MODSINCE:<last>,MAX:250,AFTERLOGID:<n>`, paging until fewer than 250 records come back.
-  - Each record sets `qrzcom_qso_download_status=Y`, plus `qrz_confirmed` when `APP_QRZLOG_STATUS=C`.
+  - Each record sets `qrzcom_qso_download_status=Y`. When `APP_QRZLOG_STATUS=C`, it also sets `qrz_qsl_rcvd=Y` and `qrz_qslrdate`.
 - **HRDLog upload:** `POST https://robot.hrdlog.net/NewEntry.aspx` with `Callsign`, `Code` (upload code), `App`, `ADIFData`.
   - Edits use `Cmd=UPDATE` with an `ADIFKey`.
   - Success sets `hrdlog_qso_upload_status=Y` and its date.
-- **HRDLog download:** **HRDLog.net has no public API for downloading QSOs or confirmations.** Wavelog and other loggers treat it as upload-only. See Q1.
+- **HRDLog download:** HRDLog.net has no documented download API, and a 2015 report says the site has no ADIF export.
+  - With your HRDLog username and password, QHlogger could log in to the website and fetch an export, if the logged-in "ADIF utilities" page offers one. This will be checked with your account during M6.
+  - If it works, it is best-effort and can break whenever the site changes. Otherwise HRDLog stays upload-only.
+  - HRDLog returns no confirmations either way, so a download would only restore your own log.
 
 ## 9. Callsign lookup
 
@@ -348,6 +453,18 @@ The contest is **chosen from a dropdown**, which lists the built-in definitions 
 - sent exchange
 
 This creates a `contest_session`. Every QSO logged in it carries `contest_id` and the session id.
+
+Built-in definitions, first set:
+- CQ WW DX (CW/SSB/RTTY)
+- CQ WPX (CW/SSB/RTTY)
+- IARU HF
+- ARRL DX (CW/SSB)
+- ARRL 10 m
+- All Asian DX
+- CQ WW VHF
+- generic "DX serial" and "DX zone" templates
+
+User-defined contests appear in the same dropdown.
 
 ### Entry line
 
@@ -375,7 +492,7 @@ Panes are `QDockWidget`s, so each can be docked or floated N1MM-style:
 ### Rules
 
 - **Serial numbers** auto-increment per session. They are reserved when a QSO is logged; gaps are allowed.
-- **Dupe check** is live and uses the definition's rule (§5). A dupe disables Log; a possible dupe only warns.
+- **Dupe check** is live and uses the definition's rule (§5.3). A dupe disables Log; a suspect only warns.
 - **Exchange validation** uses a regex or list per field, for example zones 1–40, numeric serials, or a state/province list.
   - The expected exchange is pre-filled from `cty.csv` (CQ/ITU zone) and from earlier QSOs in your log.
 
@@ -403,9 +520,9 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 |---|---|
 | General | Language (English / 简体中文), date/time display, theme follows the OS |
 | Station profiles | One or more profiles |
-| Logging | Sticky fields, default RST by mode group, dupe window, allow-dupes switch, auto-lookup |
+| Logging | Sticky fields, default RST by mode group, dupe block window (30 s), dupe warning window (24 h), allow-dupes switch, auto-lookup |
 | Lookup | QRZ XML user/password, HamQTH user/password, cache TTL, `cty.csv` update |
-| Services | LoTW user/password + TQSL path + station location per profile; eQSL user/password/QTH nickname; QRZ API key per logbook; HRDLog call + upload code; upload-on-log switches |
+| Services | LoTW user/password + TQSL path + station location per profile; eQSL user/password/QTH nickname; QRZ API key per logbook; HRDLog call + upload code (+ website login if download works); upload-on-log switches; satellite name map per service |
 | Database | Path, backup count |
 
 ## 12. Milestones
@@ -414,34 +531,37 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 |---|---|---|
 | M0 | Scaffold | `uv run qhlogger` opens an empty window showing its version (title, toolbar, About, `--version`); CI runs ruff + pytest on macOS and Windows |
 | M1 | Core data | Schema + migrations, field registry, modes/bands, ADIF read/write, with round-trip tests |
-| M2 | Log view | Lazy table, sort by any column, column chooser, quick filter + advanced search with wildcards, import preview, export all/selected/filtered |
-| M3 | DX entry | Entry panel, `cty.csv` resolver, worked-before, mode-group dupe block, sticky fields, satellite list, edit/delete/undo |
+| M2 | Log view | Lazy table, sort by any column, column chooser, quick filter + advanced search (wildcards, vague mode), import with dupe marking, MacLoggerDX migration, export all/selected/filtered |
+| M3 | DX entry | Entry panel, `cty.csv` resolver, worked-before, dupe rules (30 s block, warning window), sticky fields, satellite list, edit/delete/undo |
 | M4 | Bulk edit + paper QSL | Bulk edit dialog with preview + undo; Paper QSL tab |
 | M5 | Lookup | QRZ XML + HamQTH + cache, fill-empty-only |
-| M6 | Sync | Framework + matcher, then QRZ → eQSL → LoTW (TQSL) → HRDLog upload; Unmatched list; sync history |
+| M6 | Sync | Framework + matcher + satellite name map, then QRZ → eQSL → LoTW (TQSL) → HRDLog upload (and download, if feasible); Unmatched list; sync history |
 | M7 | Contest | Setup dropdown, entry line, serials, dupes, Check Partial / N+1, scoring engine + built-ins, score/mults/rate panes, Cabrillo |
 | M8 | Release | zh_CN translation complete, PyInstaller builds (.dmg, Windows installer), GitHub Actions release workflow |
+| M9 | Integrations (later) | WSJT-X / JTDX UDP auto-logging (port 2237, "QSO Logged" / "Logged ADIF"); N1MM Logger+ UDP contact broadcasts (`contactinfo` / `contactreplace` / `contactdelete`, port 12060) |
 
 Every milestone ships tests for its core logic. UI milestones are checked by running the app.
 
-## 13. Open questions
+## 13. Decisions and open questions
 
-1. **HRDLog download.** HRDLog.net exposes no public download API, so HRDLog would be upload-only. Is that acceptable? Its operator has privately shared API docs with other developers, so we could ask.
-2. **Dupe window in DX mode.** Outside contests, what counts as a dupe for the same call + band + exact mode (+ satellite)? Options: within 10 min, within one satellite pass (~20 min), the same UTC day, or never. Should "Log disabled" be absolute, or overridable with a modifier key such as Ctrl+Enter?
-3. **Built-in contests for the dropdown.** Proposed first set:
-   - CQ WW DX (CW/SSB/RTTY)
-   - CQ WPX (CW/SSB/RTTY)
-   - IARU HF
-   - ARRL DX (CW/SSB)
-   - ARRL 10 m
-   - All Asian DX
-   - CQ WW VHF
-   - generic "DX serial" and "DX zone" templates
-   - user-defined
+### Decided
 
-   Which contests do you actually operate, Chinese domestic or satellite events included?
-4. **Name field.** MacLoggerDX splits First / Last, but ADIF has only `NAME`. Plan: a single Name field. OK?
-5. **Screenshots wanted:** BBLogger's multi-select edit dialog; MacLoggerDX's Contest tab, Search Log window and QSL tab; your preferred N1MM entry-window layout.
-6. **MacLoggerDX ADIF sample.** A short export (one satellite QSO, one LoTW-confirmed, one eQSL-uploaded) would let me map MLDX-specific fields for migrating your 1434 QSOs.
-7. **WSJT-X / JTDX auto-logging** over UDP (no rig needed): include it in a later milestone?
-8. **License** for the GitHub repo (e.g. GPL-3.0, MIT)?
+| Topic | Decision | Where |
+|---|---|---|
+| HRDLog download | Try a logged-in website download during M6; otherwise upload only | §8.5 |
+| Dupes in DX mode | Strict: the same mode within 30 s blocks logging; beyond 30 s, or a related mode, only warns | §5.2 |
+| Dupes on import | Import everything and mark every suspicious dupe | §5.2, §8.1 |
+| Mode search | Vague by default, *Exact* optional | §7 |
+| Built-in contests | The first set listed in §10 is enough for now | §10 |
+| Name | First and Last fields, as in MacLoggerDX; joined into ADIF `NAME` on export, split on import | §4.1, §8.1 |
+| Satellite names | Per-service name table, applied on upload and on download matching | §8.2 |
+| UI references | No reference screenshots. QHlogger gets its own modern design | §6 |
+| MacLoggerDX data | Migrated from the database file, with upload history; both MLDX files are git-ignored | §8.1.1 |
+| WSJT-X / JTDX / N1MM UDP | Later milestone | M9 |
+| License | MIT | `LICENSE` |
+
+### Open
+
+1. **ISS satellite name.** You said LoTW uses `ISS` and eQSL uses `ARISS`. But TQSL's list uses `ARISS`, and in your log LoTW confirmed 232 of 292 QSOs uploaded as `ARISS`. eQSL also accepted `ARISS` (14 confirmed). Where did you see `ISS`? The table will handle either way; this only sets the defaults.
+2. **MacLoggerDX bare `Y`.** Two QSOs have just `Y` in MLDX's sent column. Count them as paper cards sent, with no date?
+3. **MacLoggerDX `ext_val_3`.** It holds province codes (BJ, AH, SC…), matching State on most rows but not on 13 Chinese QSOs. What do you use it for?
