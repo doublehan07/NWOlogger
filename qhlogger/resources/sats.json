@@ -1,0 +1,510 @@
+{
+ "_source": "LoTW satellite list (lotw.arrl.org FAQ), 2026-10-15",
+ "service_names": {
+  "eqsl": {
+   "ARISS": "ISS"
+  }
+ },
+ "satellites": [
+  {
+   "name": "ARISS",
+   "description": "ARISS (International Space Station)",
+   "uplink": 145.99,
+   "downlink": 437.8,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "SO-50",
+   "description": "Saudi-OSCAR 50",
+   "uplink": 145.85,
+   "downlink": 436.795,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "PO-101",
+   "description": "Philippines-OSCAR-101 (Diwata-2)",
+   "uplink": 437.5,
+   "downlink": 145.9,
+   "mode": "FM",
+   "sat_mode": "UV"
+  },
+  {
+   "name": "AO-91",
+   "description": "AMSAT-OSCAR 91 (RadFxSat/Fox-1B)",
+   "uplink": 435.25,
+   "downlink": 145.96,
+   "mode": "FM",
+   "sat_mode": "UV"
+  },
+  {
+   "name": "RS-44",
+   "description": "Radio Sputnik 44"
+  },
+  {
+   "name": "QO-100",
+   "description": "Qatar-OSCAR 100 (Es'hail-2/P4A)",
+   "uplink": 2400.25,
+   "downlink": 10489.75,
+   "mode": null,
+   "sat_mode": "SX"
+  },
+  {
+   "name": "AO-123",
+   "description": "ASRTU-OSCAR 123"
+  },
+  {
+   "name": "SO-124",
+   "description": "HADES-R Spain-OSCAR 124"
+  },
+  {
+   "name": "SO-125",
+   "description": "HADES-ICM Spain-OSCAR 125"
+  },
+  {
+   "name": "RS95S",
+   "description": "QMR-KWT-2"
+  },
+  {
+   "name": "IO-117",
+   "description": "Italy-OSCAR 117 (Greencube)"
+  },
+  {
+   "name": "FO-29",
+   "description": "Fuji-OSCAR 29"
+  },
+  {
+   "name": "AO-7",
+   "description": "AMSAT-OSCAR 7"
+  },
+  {
+   "name": "TEVEL5",
+   "description": "Tevel-5 V/U FM",
+   "uplink": 145.97,
+   "downlink": 436.4,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "AISAT1",
+   "description": "AISAT-1 AMSAT India APRS Digipeater"
+  },
+  {
+   "name": "AO-10",
+   "description": "AMSAT-OSCAR 10"
+  },
+  {
+   "name": "AO-109",
+   "description": "AMSAT-OSCAR 109"
+  },
+  {
+   "name": "AO-13",
+   "description": "AMSAT-OSCAR 13"
+  },
+  {
+   "name": "AO-16",
+   "description": "AMSAT-OSCAR 16"
+  },
+  {
+   "name": "AO-21",
+   "description": "OSCAR 21/RS-14"
+  },
+  {
+   "name": "AO-24",
+   "description": "Arsene-OSCAR 24"
+  },
+  {
+   "name": "AO-27",
+   "description": "AMRAD-OSCAR 27",
+   "uplink": 145.85,
+   "downlink": 436.795,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "AO-3",
+   "description": "AMSAT-OSCAR 3"
+  },
+  {
+   "name": "AO-4",
+   "description": "AMSAT-OSCAR 4"
+  },
+  {
+   "name": "AO-40",
+   "description": "AMSAT-OSCAR 40"
+  },
+  {
+   "name": "AO-51",
+   "description": "AMSAT-OSCAR 51"
+  },
+  {
+   "name": "AO-6",
+   "description": "AMSAT-OSCAR 6"
+  },
+  {
+   "name": "AO-73",
+   "description": "AMSAT-OSCAR 73"
+  },
+  {
+   "name": "AO-8",
+   "description": "AMSAT-OSCAR 8"
+  },
+  {
+   "name": "AO-85",
+   "description": "AMSAT-OSCAR 85 (Fox-1A)"
+  },
+  {
+   "name": "AO-92",
+   "description": "AMSAT-OSCAR 92 (Fox-1D)"
+  },
+  {
+   "name": "BO-102",
+   "description": "Chinese FM Rptr (originally CAS-7B)"
+  },
+  {
+   "name": "BY70-1",
+   "description": "Bayi Kepu Weixing 1"
+  },
+  {
+   "name": "CAS-3H",
+   "description": "LilacSat 2"
+  },
+  {
+   "name": "CAS-4A",
+   "description": "CAMSAT 4A (CAS-4A)"
+  },
+  {
+   "name": "CAS-4B",
+   "description": "CAMSAT 4B (CAS-4B)"
+  },
+  {
+   "name": "DO-64",
+   "description": "Delfi OSCAR-64"
+  },
+  {
+   "name": "EO-79",
+   "description": "FUNcube-3"
+  },
+  {
+   "name": "EO-88",
+   "description": "Emirates-OSCAR 88 (Nayif-1)"
+  },
+  {
+   "name": "ESEO",
+   "description": "ESA/AMSAT-UK L/v Rptr"
+  },
+  {
+   "name": "FO-12",
+   "description": "Fuji-OSCAR 12"
+  },
+  {
+   "name": "FO-20",
+   "description": "Fuji-OSCAR 20"
+  },
+  {
+   "name": "FO-99",
+   "description": "Fuji-OSCAR 99 (NEXUS)"
+  },
+  {
+   "name": "FS-3",
+   "description": "FalconSAT 3"
+  },
+  {
+   "name": "HO-107",
+   "description": "HuskySat-OSCAR 107"
+  },
+  {
+   "name": "HO-113",
+   "description": "Hope-OSCAR 113"
+  },
+  {
+   "name": "HO-68",
+   "description": "Hope OSCAR 68"
+  },
+  {
+   "name": "INSPR7",
+   "description": "INSPIRE-Sat7"
+  },
+  {
+   "name": "IO-86",
+   "description": "Indonesian-OSCAR 86 (LAPAN-ORARI)",
+   "uplink": 435.88,
+   "downlink": 145.88,
+   "mode": "FM",
+   "sat_mode": "UV"
+  },
+  {
+   "name": "JO-97",
+   "description": "Jordan-OSCAR 97 (JY1Sat)"
+  },
+  {
+   "name": "KEDR",
+   "description": "ARISSat-1"
+  },
+  {
+   "name": "LEDSAT",
+   "description": "LEDSAT CubeSat"
+  },
+  {
+   "name": "LO-19",
+   "description": "Lusat-OSCAR 19"
+  },
+  {
+   "name": "LO-78",
+   "description": "LituanicaSAT-1"
+  },
+  {
+   "name": "LO-87",
+   "description": "LUSEX-OSCAR 87"
+  },
+  {
+   "name": "LO-90",
+   "description": "LilacSat-OSCAR 90 (LilacSat-1)"
+  },
+  {
+   "name": "MAYA-3",
+   "description": "BIRDS-Cubesat-Philippines"
+  },
+  {
+   "name": "MAYA-4",
+   "description": "BIRDS-Cubesat-Philippines"
+  },
+  {
+   "name": "MIREX",
+   "description": "Mir packet digipeater"
+  },
+  {
+   "name": "MO-112",
+   "description": "Mirsat-1"
+  },
+  {
+   "name": "MO-122",
+   "description": "MESAT1-OSCAR 122"
+  },
+  {
+   "name": "NO-103",
+   "description": "BRICSAT2"
+  },
+  {
+   "name": "NO-104",
+   "description": "PSAT2"
+  },
+  {
+   "name": "NO-44",
+   "description": "Navy-OSCAR 44"
+  },
+  {
+   "name": "NO-83",
+   "description": "BRICSat"
+  },
+  {
+   "name": "NO-84",
+   "description": "PSAT"
+  },
+  {
+   "name": "RS-1",
+   "description": "Radio Sputnik 1"
+  },
+  {
+   "name": "RS-10",
+   "description": "Radio Sputnik 10"
+  },
+  {
+   "name": "RS-11",
+   "description": "Radio Sputnik 11"
+  },
+  {
+   "name": "RS-12",
+   "description": "Radio Sputnik 12"
+  },
+  {
+   "name": "RS-13",
+   "description": "Radio Sputnik 13"
+  },
+  {
+   "name": "RS-15",
+   "description": "Radio Sputnik 15"
+  },
+  {
+   "name": "RS-2",
+   "description": "Radio Sputnik 2"
+  },
+  {
+   "name": "RS-5",
+   "description": "Radio Sputnik 5"
+  },
+  {
+   "name": "RS-6",
+   "description": "Radio Sputnik 6"
+  },
+  {
+   "name": "RS-7",
+   "description": "Radio Sputnik 7"
+  },
+  {
+   "name": "RS-8",
+   "description": "Radio Sputnik 8"
+  },
+  {
+   "name": "SAREX",
+   "description": "Shuttle Amateur Radio Experiment packet digipeater"
+  },
+  {
+   "name": "SO-121",
+   "description": "HADES-D Spain-OSCAR 121"
+  },
+  {
+   "name": "SO-35",
+   "description": "Sunsat-OSCAR 35"
+  },
+  {
+   "name": "SO-41",
+   "description": "Saudi-OSCAR 41"
+  },
+  {
+   "name": "SONATE",
+   "description": "SONATE-2"
+  },
+  {
+   "name": "TAURUS",
+   "description": "Chinese-FM to CODEC2 V/u Rptr"
+  },
+  {
+   "name": "TEV2-1",
+   "description": "Tevel2-1 V/U FM"
+  },
+  {
+   "name": "TEV2-2",
+   "description": "Tevel2-2 V/U FM"
+  },
+  {
+   "name": "TEV2-3",
+   "description": "Tevel2-3 V/U FM"
+  },
+  {
+   "name": "TEV2-4",
+   "description": "Tevel2-4 V/U FM"
+  },
+  {
+   "name": "TEV2-5",
+   "description": "Tevel2-5 V/U FM"
+  },
+  {
+   "name": "TEV2-6",
+   "description": "Tevel2-6 V/U FM"
+  },
+  {
+   "name": "TEV2-7",
+   "description": "Tevel2-7 V/U FM"
+  },
+  {
+   "name": "TEV2-8",
+   "description": "Tevel2-8 V/U FM"
+  },
+  {
+   "name": "TEV2-9",
+   "description": "Tevel2-9 V/U FM"
+  },
+  {
+   "name": "TEVEL1",
+   "description": "Tevel-1 V/U FM",
+   "uplink": 145.97,
+   "downlink": 436.4,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "TEVEL2",
+   "description": "Tevel-2 V/U FM",
+   "uplink": 145.97,
+   "downlink": 436.4,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "TEVEL3",
+   "description": "Tevel-3 V/U FM",
+   "uplink": 145.97,
+   "downlink": 436.4,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "TEVEL4",
+   "description": "Tevel-4 V/U FM",
+   "uplink": 145.97,
+   "downlink": 436.4,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "TEVEL6",
+   "description": "Tevel-6 V/U FM",
+   "uplink": 145.97,
+   "downlink": 436.4,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "TEVEL7",
+   "description": "Tevel-7 V/U FM",
+   "uplink": 145.97,
+   "downlink": 436.4,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "TEVEL8",
+   "description": "Tevel-8 V/U FM",
+   "uplink": 145.97,
+   "downlink": 436.4,
+   "mode": "FM",
+   "sat_mode": "VU"
+  },
+  {
+   "name": "TO-108",
+   "description": "TO-OSCAR 108"
+  },
+  {
+   "name": "UKUBE1",
+   "description": "UKube-1 (FUNcube-2)"
+  },
+  {
+   "name": "UO-14",
+   "description": "UOSAT-OSCAR 14"
+  },
+  {
+   "name": "UVSQ",
+   "description": "UVSQ-Sat CubeSat"
+  },
+  {
+   "name": "VO-52",
+   "description": "VUsat-OSCAR 52"
+  },
+  {
+   "name": "XW-2A",
+   "description": "Hope 2A"
+  },
+  {
+   "name": "XW-2B",
+   "description": "Hope 2B"
+  },
+  {
+   "name": "XW-2C",
+   "description": "Hope 2C"
+  },
+  {
+   "name": "XW-2D",
+   "description": "Hope 2D"
+  },
+  {
+   "name": "XW-2E",
+   "description": "Hope 2E"
+  },
+  {
+   "name": "XW-2F",
+   "description": "Hope 2F"
+  }
+ ]
+}
