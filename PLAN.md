@@ -354,6 +354,7 @@ Import straight from the MacLoggerDX database (`MacLoggerDX.sql`, table `qso_tab
 | | `Uploaded to QRZ Logbook <date>`, `Updated in QRZ Logbook <date>` | `qrzcom_qso_upload_status=Y`, latest date |
 | | `Uploaded to HRDLOG <date>` | `hrdlog_qso_upload_status=Y`, latest date |
 | | `Mail Card <date>` | **paper** `qsl_sent=Y`, `qslsdate` |
+| | bare `Y` | ignored |
 | `qsl_received` | `LoTW:<yyyymmdd>` | `lotw_qsl_rcvd=Y`, `lotw_qslrdate` |
 | | `QRZLogbook:<yyyymmdd>` | `qrz_qsl_rcvd=Y`, `qrz_qslrdate` |
 | | `eQSL.cc DownloadInBox:Y` | `eqsl_qsl_rcvd=Y` (MLDX keeps no date) |
@@ -390,7 +391,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 - **Satellite names per service.** QHlogger stores one name per satellite and translates it on upload and when matching downloads.
   - The table is editable in Prefs.
   - LoTW defaults come from the TQSL satellite list.
-  - Example: the ISS is `ARISS` in LoTW's list, and in your log LoTW confirmed 232 QSOs uploaded as `ARISS`. Where another service uses `ISS`, the table maps it (§13).
+  - Example: the ISS is `ARISS` for LoTW (TQSL accepts only that) but `ISS` for eQSL (eQSL accepts only that). A QSO stored as `ARISS` is uploaded to eQSL as `ISS`, and eQSL records that say `ISS` match it.
 - **Credentials:** kept only in the OS keychain. Every request uses HTTPS and the User-Agent `QHlogger/<ver> (<call>)`.
 
 ### 8.3 LoTW
@@ -554,14 +555,12 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | Mode search | Vague by default, *Exact* optional | §7 |
 | Built-in contests | The first set listed in §10 is enough for now | §10 |
 | Name | First and Last fields, as in MacLoggerDX; joined into ADIF `NAME` on export, split on import | §4.1, §8.1 |
-| Satellite names | Per-service name table, applied on upload and on download matching | §8.2 |
+| Satellite names | Per-service name table, applied on upload and on download matching. ISS: `ARISS` for LoTW/TQSL, `ISS` for eQSL | §8.2 |
 | UI references | No reference screenshots. QHlogger gets its own modern design | §6 |
-| MacLoggerDX data | Migrated from the database file, with upload history; both MLDX files are git-ignored | §8.1.1 |
+| MacLoggerDX data | Migrated from the database file, with upload history; a bare `Y` in the sent column is ignored; both MLDX files are git-ignored | §8.1.1 |
 | WSJT-X / JTDX / N1MM UDP | Later milestone | M9 |
 | License | MIT | `LICENSE` |
 
 ### Open
 
-1. **ISS satellite name.** You said LoTW uses `ISS` and eQSL uses `ARISS`. But TQSL's list uses `ARISS`, and in your log LoTW confirmed 232 of 292 QSOs uploaded as `ARISS`. eQSL also accepted `ARISS` (14 confirmed). Where did you see `ISS`? The table will handle either way; this only sets the defaults.
-2. **MacLoggerDX bare `Y`.** Two QSOs have just `Y` in MLDX's sent column. Count them as paper cards sent, with no date?
-3. **MacLoggerDX `ext_val_3`.** It holds province codes (BJ, AH, SC…), matching State on most rows but not on 13 Chinese QSOs. What do you use it for?
+1. **MacLoggerDX `ext_val_3`.** It holds province codes (BJ, AH, SC…), matching State on most rows but not on 13 Chinese QSOs. What do you use it for?

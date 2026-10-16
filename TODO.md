@@ -8,7 +8,8 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [x] MacLoggerDX database and ADIF export analysed (PLAN §8.1.1)
 - [x] License: MIT
 - [x] `.gitignore` keeps personal log data out of git
-- [ ] Remaining open questions (PLAN §13 "Open"): ISS satellite name, MLDX bare `Y`, MLDX `ext_val_3`
+- [x] ISS satellite name per service; MLDX bare `Y` ignored
+- [ ] Remaining open question (PLAN §13 "Open"): MLDX `ext_val_3`
 
 ## M0 — Scaffold
 
@@ -46,7 +47,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 - [ ] Wildcard → SQLite GLOB conversion with escaping
 - [ ] ADIF import: every record imported, suspicious dupes marked `DUPE` / `SUSPECT`, preview counts, optional merge mode
 - [ ] OPERATOR → STATION_CALLSIGN fill when missing
-- [ ] MacLoggerDX database importer: upload-history text → per-service fields, paper `Mail Card` dates, epoch times, mode/submode, dry-run report, re-runnable via `APP_MLDX_PK`
+- [ ] MacLoggerDX database importer: upload-history text → per-service fields, paper `Mail Card` dates, bare `Y` ignored, epoch times, mode/submode, dry-run report, re-runnable via `APP_MLDX_PK`
 - [ ] Ignore `QSL_SENT` as paper in MacLoggerDX ADIF files
 - [ ] Export all / selected / filtered
 - [ ] Status line: total, shown, DB path; DXCC worked/confirmed counter
@@ -86,7 +87,7 @@ Milestones and design details are in [PLAN.md](PLAN.md). Tick items off as they 
 
 - [ ] Adapter interface, background workers, progress UI, sync history
 - [ ] Confirmation matcher (call + band + sat, ±30 min; exact mode preferred, related mode accepted) + Unmatched list
-- [ ] Satellite name map per service (defaults from TQSL list; e.g. ISS ↔ ARISS), editable in Prefs
+- [ ] Satellite name map per service (defaults from TQSL list; ISS: `ARISS` for LoTW, `ISS` for eQSL), editable in Prefs
 - [ ] QRZ Logbook: INSERT / REPLACE upload, FETCH download with paging
 - [ ] eQSL: ImportADIF upload (chunked), DownloadInBox download
 - [ ] LoTW: lotwreport.adi download (QSL + QSO-rx passes), TQSL CLI upload, exit-code handling
