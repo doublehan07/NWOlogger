@@ -151,7 +151,7 @@ Notes on the model:
 | `contest_session` | Contest definition id, name, start/end, Cabrillo categories, sent-exchange template, next serial, station profile |
 | `saved_filter` | Named searches (JSON filter spec) |
 | `lookup_cache` | Callsign → JSON result, source, fetched_at (TTL in Prefs) |
-| `sync_state` | Per-service cursors (LoTW last QSL / last QSO-rx, eQSL RcvdSince, QRZ MODSINCE / AFTERLOGID) |
+| `sync_state` | Per-service cursors (LoTW last QSL / last QSO-rx, eQSL RcvdSince); QRZ.com is always fetched whole |
 | `sync_log` | Sync history: service, direction, time, counts, errors |
 | `undo_log` | Before-images for bulk edit, delete and import, so they can be undone |
 
@@ -291,7 +291,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
   - Clicking any header sorts with SQL `ORDER BY`. `time_on` breaks ties.
   - Columns can be shown, hidden and reordered from the header context menu.
   - Confirmation columns: LoTW ↑/↓, eQSL ↑/↓, QRZ ↑/↓, HRDLog ↑, Paper sent/rcvd. Each shows a date; an empty cell means not done.
-  - Row colour: confirmed (any service or paper), unconfirmed, `SUSPECT` (amber), `DUPE` (red).
+  - Row colour: confirmed (any service or paper), unconfirmed, `SUSPECT` (amber), `DUPE` (red). Text is grey while a QSO is not yet uploaded to all four services (`core/uploads.py`, the same rule as Upload pending); the tooltip names the missing ones.
 - **Context menu on a selection:**
   - Edit
   - Bulk edit…
@@ -450,7 +450,9 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 
 - **Adapter interface:** each service implements `test_credentials()`, `upload(qsos)` and `download(since)`.
   - Work runs in background workers, with a progress dialog and a row in `sync_log`.
-  - Nothing is uploaded automatically unless enabled per service. "Upload on log" is offered for QRZ, eQSL and HRDLog.
+  - Nothing is uploaded automatically unless enabled per service. "Upload on log" is offered for QRZ, eQSL and HRDLog (off by default).
+  - *Sync everything* only downloads (LoTW, eQSL, QRZ.com). Uploads are always started by you: Upload pending (asks first) or Upload selected, because a LoTW or eQSL upload can't be taken back and eQSL sends a card to the other station.
+  - **Upload state from downloads:** LoTW's report of accepted QSOs (`qso_qsl=no`) sets `lotw_qsl_sent`, and every QSO found in the QRZ.com logbook gets `qrzcom_qso_upload_status=Y` (unless edited since, `M`). eQSL offers only the inbox and HRDLog no download, so what was uploaded there before can't be learned.
 - **Matching downloaded confirmations:**
   - Key: same call + band, with `sat_name` when the QSO was via satellite. An exact mode match is preferred; the same mode group is accepted.
   - Time within ±30 min (LoTW's own window). Among candidates, an exact mode match wins, then the nearest time.
@@ -472,7 +474,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
     - Backups are only scanned (patterns and saved secrets) and listed for you to delete, with a reminder to change the passwords. A password you have changed since can't be recognised; the message says so.
   - **Uploads** send only the standard ADIF 3.1.5 fields (`fields.ADIF_STANDARD`) plus the service's own tags (`APP_EQSL_QTH_NICKNAME` for eQSL), and no field holding a saved secret. Other programs' `APP_*` and `USERDEF` fields stay in the log and in your ADIF exports.
   - **ADIF records** never carry credentials: tags that look like one (`PASSWORD`, `PSWD`, `PASSCODE`, `API_KEY`, `SECRET`, `TOKEN`, `SESSION`, `AUTH`, `EQSL_USER`, `APP_…_CODE`, `APP_…_KEY`) are dropped on import (the preview lists them) and never exported.
-  - LoTW / eQSL / QRZ XML still send the password as a GET query, as their APIs document; whether they accept POST is to be checked with real accounts.
+  - **Password in the URL:** QRZ.com XML takes the login and lookups by POST, so the password and session key travel in the encrypted body. LoTW (`lotwreport.adi` answers POST with HTTP 405) and eQSL (`DownloadInBox.cfm` rejects a POST login) need the GET query their APIs document: HTTPS encrypts it, but it reaches the services' own logs. Checked with real accounts on 2026-10-16. HamQTH is not checked yet (no account).
 
 ### 8.3 LoTW
 
@@ -491,7 +493,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 - **Upload:** `POST https://www.eqsl.cc/qslcard/ImportADIF.cfm` with `EQSL_USER`/`EQSL_PSWD`, in chunks of ≤ 250 records (eQSL advises ≤ 1000).
   - Success is parsed from `Result: x out of y records added` and the per-record warnings. Accepted QSOs get `eqsl_qsl_sent=Y`.
   - The QTH nickname comes from the station profile.
-- **Download:** `GET DownloadInBox.cfm` with `UserName`, `Password`, `RcvdSince`, `QTHNickname`.
+- **Download:** `GET DownloadInBox.cfm` with `UserName`, `Password`, `RcvdSince`, `QTHNickname`. `RcvdSince` is a date, so the next download starts a day before the last one; cards already applied just match again.
   - QHlogger finds the generated `.adi` link in the returned HTML and fetches it straight away, since the file expires after a few hours.
   - Matched cards get `eqsl_qsl_rcvd=Y`, `eqsl_qslrdate` and `eqsl_ag`.
 
@@ -501,7 +503,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - Modified QSOs (`M`) are re-sent with `OPTION=REPLACE`.
   - The returned `LOGID` is stored, and uploads are rate-limited.
   - Each QRZ logbook has its own API key, so the key is chosen per station callsign.
-- **QRZ download:** `ACTION=FETCH`, `OPTION=MODSINCE:<last>,MAX:250,AFTERLOGID:<n>`, paging until fewer than 250 records come back.
+- **QRZ download:** `ACTION=FETCH`, `OPTION=MAX:250,AFTERLOGID:<n>,TYPE:ADIF`, paging until fewer than 250 records come back. Always the whole logbook: QRZ.com answers every FETCH with `MODSINCE` with `RESULT=FAIL COUNT=0` (checked with a real logbook on 2026-10-16), which looked like "nothing new".
   - Each record sets `qrzcom_qso_download_status=Y`. When `APP_QRZLOG_STATUS=C`, it also sets `qrz_qsl_rcvd=Y` and `qrz_qslrdate`.
 - **HRDLog upload:** `POST https://robot.hrdlog.net/NewEntry.aspx` with `Callsign`, `Code` (upload code), `App`, `ADIFData`.
   - Edits use `Cmd=UPDATE` with an `ADIFKey`.
@@ -687,6 +689,7 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | Time On *Now* | Back to the default: both times now, Time Off follows the clock | §6 |
 | Value check timing | With the saved secrets: once after an update, after each Preferences save, and from the menu; not at every start | §8.2 |
 | What uploads send | Standard ADIF fields plus the service's own tags; no other program's `APP_*` / `USERDEF` fields; no field holding a saved secret | §8.2 |
+| Sync everything | Downloads only; uploads are always started by you. QSOs not yet on all four services are grey | §6, §8.2 |
 
 ### Open
 

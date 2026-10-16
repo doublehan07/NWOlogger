@@ -142,7 +142,9 @@ class MainWindow(QMainWindow):
                 sync_acts[f"{svc}_down"] = A(f"Download from {name}", lambda s=svc: self.sync.download(s), None,
                                              "download")
         self.sync_acts = sync_acts
-        self.a_sync_all = A("Sync everything", self.sync_all, "Ctrl+Shift+S", "refresh-cw")
+        self.a_sync_all = A("Sync everything", self.sync_all, "Ctrl+Shift+S", "refresh-cw",
+                            tr("Download confirmations from LoTW, eQSL and QRZ.com. Nothing is uploaded: grey "
+                               "QSOs are not yet on every service; select them and use Upload selected."))
         for a, short in ((self.a_import, "Import"), (self.a_search, "Search"), (self.a_bulk, "Bulk edit"),
                          (self.a_prefs, "Prefs"), (self.a_undo, "Undo")):
             a.setIconText(tr(short))
@@ -768,10 +770,10 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ misc
     def sync_all(self) -> None:
+        """Downloads only. Uploads are always your choice (Upload pending / Upload selected): a QSO sent to LoTW
+        or eQSL can't be taken back, and eQSL sends a card to the other station."""
         for svc in ("lotw", "eqsl", "qrz"):
             self.sync.download(svc)
-        for svc in ("lotw", "eqsl", "qrz", "hrdlog"):
-            self.sync.upload(svc, quiet=True)
 
     def open_prefs(self, page: str | None = None) -> None:
         dlg = PrefsDialog(self.db, self.prefs, self, page=page)

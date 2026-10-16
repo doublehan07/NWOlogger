@@ -43,7 +43,9 @@ class QrzXml:
         return [s for s in (self.password, self.key) if s]
 
     def _get(self, params: dict) -> ET.Element:
-        r = net.request("qrz_xml", "GET", self.URL, params=params, secrets=self.secrets(), timeout=TIMEOUT)
+        # POST, so the password and the session key travel in the encrypted body, not in a URL that servers
+        # and proxies log (QRZ.com accepts both; checked 2026-10-16).
+        r = net.request("qrz_xml", "POST", self.URL, data=params, secrets=self.secrets(), timeout=TIMEOUT)
         return _strip_ns(ET.fromstring(r.content))
 
     def login(self) -> None:

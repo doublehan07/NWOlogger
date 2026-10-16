@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 from collections import defaultdict
+from datetime import timedelta
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
@@ -411,7 +412,9 @@ class SyncController(QObject):
             dlg.close()
             self.busy.discard("eqsldown")
             a = apply.apply_eqsl(self.db, recs, self.catalog())
-            self.db.sync_set("eqsl", "rcvd_since", timeutil.now_utc().strftime("%Y%m%d"))
+            # RcvdSince is a date: start the next download a day early, so cards that arrive later today aren't
+            # missed (cards already applied just match again).
+            self.db.sync_set("eqsl", "rcvd_since", (timeutil.now_utc() - timedelta(days=1)).strftime("%Y%m%d"))
             self._log("eqsl", "download", started, received=a.total, matched=a.matched,
                       message=f"{a.changed} updated")
             QMessageBox.information(self.win, "eQSL", f"{a.total} " + tr("cards received") + f", {a.matched} " +
@@ -427,7 +430,6 @@ class SyncController(QObject):
         if not keys:
             QMessageBox.information(self.win, "QRZ.com", tr("Add a QRZ Logbook API key in Preferences → Services."))
             return
-        since = {c: self.db.sync_get("qrz", f"modsince:{c}") for c in keys}
         started = timeutil.now_iso()
         self.busy.add("qrzdown")
         dlg = self._progress(tr("Downloading from QRZ.com Logbook…"))
@@ -435,15 +437,13 @@ class SyncController(QObject):
         def work():
             out = []
             for c, k in keys.items():
-                out.extend(services.qrz_fetch(k, since=since[c], call=c))
+                out.extend(services.qrz_fetch(k, call=c))
             return out
 
         def done(recs):
             dlg.close()
             self.busy.discard("qrzdown")
             a = apply.apply_qrz(self.db, recs, self.catalog())
-            for c in keys:
-                self.db.sync_set("qrz", f"modsince:{c}", timeutil.today_iso())
             self._log("qrz", "download", started, received=a.total, matched=a.matched,
                       message=f"{a.changed} updated")
             QMessageBox.information(self.win, "QRZ.com", f"{a.total} " + tr("records received") + f", {a.matched} " +

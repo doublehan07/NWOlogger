@@ -8,7 +8,7 @@ modern UI, and built with Python and Qt (PySide6). Made for the BY1QH club stati
 
 > **Status: v0.1.0, first working version, ready for testers.**
 > - Logging, search, bulk edit, dupe review, paper QSL tracking, ADIF, MacLoggerDX migration and contest mode work and are tested.
-> - The LoTW, eQSL, QRZ.com and HRDLog clients follow the services' published interfaces, but have not yet been tried with real accounts.
+> - Uploads to LoTW, eQSL, QRZ.com and HRDLog, downloads from LoTW, eQSL and QRZ.com, and QRZ.com lookups have been tried with real accounts. HamQTH has not yet.
 >
 > - **Design:** [PLAN.md](PLAN.md)
 > - **Remaining work:** [TODO.md](TODO.md)
@@ -106,6 +106,8 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, or keep one QSO and merge the others into it, delete one, or mark them as not dupes.
 - **Bulk edit** of a selection, with a preview and undo.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
+  - **Uploads are always your choice.** *Sync everything* only downloads. QSOs not yet uploaded to all four services are shown in grey (the tooltip names the missing services); the preset *Not uploaded to every service* lists them, and *Upload selected* sends them.
+  - Downloads also record what is already uploaded: LoTW's report of accepted QSOs and the QRZ.com logbook mark those QSOs as uploaded. eQSL (it only offers your inbox) and HRDLog (no download) can't tell QHlogger what you uploaded there before.
 - **Paper QSL cards** tracked separately (sent and received dates, via bureau, direct or manager), with a "to send" queue.
 - **Callsign lookup:** offline country file (`cty.csv`, updated weekly), then QRZ.com XML with HamQTH as fallback. Chinese provinces are normalised to standard codes (BJ, SC, …).
 - **Contest mode (N1MM style):**
@@ -182,7 +184,7 @@ QHlogger/
 - Passwords, upload codes and API keys go to the system keychain only (macOS Keychain / Windows Credential Manager). Any other keyring backend, such as a plaintext file, is refused.
   - Saved secrets are never shown again. *Forget* in Preferences removes one; renaming an account removes the old account's entry.
   - Deleting the last station profile with a callsign removes that callsign's QRZ Logbook key.
-- Error messages, sync history and logs never contain a password, key, upload code or session token, even when a service echoes one back encoded. Requests go over HTTPS to each service's own hosts only, redirects included. HTTP request logging stays off even when the app logs at DEBUG.
+- Error messages, sync history and logs never contain a password, key, upload code or session token, even when a service echoes one back encoded. Requests go over HTTPS to each service's own hosts only, redirects included. QRZ.com XML gets the password and session key in the request body; LoTW and eQSL only accept them in the (encrypted) URL. HTTP request logging stays off even when the app logs at DEBUG.
 - **If you used v0.1.0:** a LoTW or eQSL download that failed with an HTTP error could save the password in sync history, and imported fields could hold one. After the update QHlogger cleans the log once, using your saved passwords and keys, then lists backups that still hold one (also File → Check backups for saved passwords…; the check runs again after each Preferences save). Delete those backups and change the passwords. A password you have changed since can't be recognised.
 - Uploads to LoTW, eQSL, QRZ.com and HRDLog send only standard ADIF fields, never another program's `APP_…` fields, and never a field holding one of your saved secrets. Imported fields that look like credentials (`EQSL_PSWD`, `…PASSWORD…`, `…TOKEN…`, `APP_…_KEY`) are left out, and never exported.
 - Never commit real log files. `*.sql`, `*.sqlite`, `*.adi` and similar are git-ignored because they contain other operators' personal data. Only synthetic files under `tests/fixtures/` are committed.

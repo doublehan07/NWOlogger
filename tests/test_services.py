@@ -18,10 +18,13 @@ def test_qrz_xml_lookup(mock_net):
              '<fname>Jian</fname><name>Wu</name><addr2>Beijing</addr2><country>China</country><dxcc>318</dxcc>'
              '<grid>ON80eb</grid><cqzone>24</cqzone><ituzone>44</ituzone></Callsign><Session><Key>abc</Key>'
              '</Session></QRZDatabase>')
-    seen = mock_net(lambda req: httpx.Response(200, text=login if "username" in req.url.params else found))
+    seen = mock_net(lambda req: httpx.Response(200, text=login if b"username=" in req.content else found))
     d = clients.QrzXml("u", "p").lookup("BA1AA")
     assert d["first_name"] == "Jian" and d["last_name"] == "Wu" and d["dxcc"] == 318 and d["gridsquare"] == "ON80eb"
-    assert [r.url.host for r in seen] == ["xmldata.qrz.com"] * 2 and seen[1].url.params["s"] == "abc"
+    assert [(r.method, r.url.host) for r in seen] == [("POST", "xmldata.qrz.com")] * 2
+    # Password and session key go in the body, never in the URL.
+    assert not seen[0].url.query and b"password=p" in seen[0].content
+    assert not seen[1].url.query and b"s=abc" in seen[1].content
 
 
 def test_hamqth_lookup(mock_net):
@@ -71,4 +74,69 @@ def test_apply_lotw_and_eqsl_sat_names(tmp_path):
     assert r.matched == 1 and d.get(1)["eqsl_qsl_rcvd"] == "Y" and d.get(1)["eqsl_ag"] == "Y"
     rec = apply.upload_record(d.get(1), "eqsl", cat)
     assert rec["SAT_NAME"] == "ISS"
+    d.close()
+
+
+# ------------------------------------------------------------------ found with real accounts (2026-10-16)
+
+def test_upload_rule_is_one_rule(tmp_path):
+    from qhlogger.core import search, uploads
+
+    d = dbm.LogDB(tmp_path / "l.sqlite", backup_on_open=False)
+    statuses = [None, "Y", "N", "M", "I", "R", "Q"]
+    for i, st in enumerate(statuses):
+        for prop in (None, "RPT"):
+            d.insert(qso.normalize({"call": f"BA{i}AA", "time_on": f"2026-10-1{i}T10:00:00Z", "mode": "FM",
+                                    "band": "2m", "prop_mode": prop, "lotw_qsl_sent": st, "eqsl_qsl_sent": st,
+                                    "qrzcom_qso_upload_status": st, "hrdlog_qso_upload_status": st}))
+    rows = list(d.iter_all())
+    for svc in uploads.SERVICES:
+        by_rule = {q["id"] for q in rows if uploads.needs_upload(q, svc)}
+        assert {q["id"] for q in apply.pending(d, svc)} == by_rule, svc
+        assert set(d.select_ids(*search.preset(f"not_{svc}"), [("id", False)])) == by_rule, svc
+    assert not any(uploads.needs_upload(q, "lotw") for q in rows if q["prop_mode"] == "RPT")
+    assert {q["id"] for q in rows if uploads.needs_upload(q, "lotw") and q["lotw_qsl_sent"] in ("Y", "I")} == set()
+    anywhere = {q["id"] for q in rows if uploads.missing(q)}
+    assert set(d.select_ids(*search.preset("not_all"), [("id", False)])) == anywhere
+    d.close()
+
+
+def test_qrz_fetch_is_always_a_full_fetch(mock_net):
+    logbook = [1, 2, 3, 4]  # log ids; AFTERLOGID:n returns ids from n on, MAX at a time
+
+    def h(req):
+        opts = dict(o.split(":", 1) for o in dict(httpx.QueryParams(req.content.decode()))["OPTION"].split(","))
+        ids = [i for i in logbook if i >= int(opts["AFTERLOGID"])][:int(opts["MAX"])]
+        if not ids:
+            return httpx.Response(200, text="RESULT=FAIL&COUNT=0")  # past the end, as QRZ.com answers
+        adi = "".join(f"<CALL:5>BA1AA<APP_QRZLOG_LOGID:{len(str(i))}>{i}<EOR>" for i in ids)
+        return httpx.Response(200, text=f"RESULT=OK&COUNT={len(ids)}&ADIF={adi}")
+
+    seen = mock_net(h)
+    recs = services.qrz_fetch("FAKE-KEY", page=2)
+    assert len(recs) == 4 and len(seen) == 3
+    assert all(b"MODSINCE" not in r.content for r in seen)
+
+
+def test_eqsl_cursor_starts_a_day_early(qtbot, tmp_path, mock_net, monkeypatch):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QMessageBox, QWidget
+
+    from qhlogger.core import timeutil
+    from qhlogger.ui.prefs import Prefs
+    from qhlogger.ui.sync_controller import SyncController
+
+    prefs = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
+    prefs.set("eqsl_user", "u")
+    prefs.set_secret("eqsl_password", "pw-eqsl-1")
+    d = dbm.LogDB(tmp_path / "l.sqlite", backup_on_open=False)
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    mock_net(lambda req: httpx.Response(200, text="<html>Your inbox has no new cards</html>"))
+    c = SyncController(d, prefs, parent)
+    c.download("eqsl")
+    qtbot.waitUntil(lambda: "eqsldown" not in c.busy)
+    yesterday = (timeutil.now_utc() - __import__("datetime").timedelta(days=1)).strftime("%Y%m%d")
+    assert d.sync_get("eqsl", "rcvd_since") == yesterday
     d.close()

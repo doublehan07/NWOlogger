@@ -134,20 +134,20 @@ def qrz_insert(key: str, record: dict[str, str], *, replace: bool = False, call:
     return ok, res.get("LOGID"), reason
 
 
-def qrz_fetch(key: str, *, since: str | None = None, call: str | None = None, page: int = 250
-              ) -> list[dict[str, str]]:
-    """Fetch the whole logbook (or records modified since a date), paging by log id."""
+def qrz_fetch(key: str, *, call: str | None = None, page: int = 250) -> list[dict[str, str]]:
+    """Fetch the whole logbook, paging by log id.
+
+    Always the whole logbook: QRZ.com answers every FETCH with MODSINCE with RESULT=FAIL COUNT=0 (checked with a
+    real logbook on 2026-10-16), which would look like "nothing new". Matching the same record again changes
+    nothing, so a full fetch is safe; it is about one request per 250 QSOs."""
     out: list[dict[str, str]] = []
     after = 0
     while True:
-        opt = [f"MAX:{page}", f"AFTERLOGID:{after}", "TYPE:ADIF"]
-        if since:
-            opt.append(f"MODSINCE:{since}")
-        res = qrz_call(key, "FETCH", call, OPTION=",".join(opt))
+        res = qrz_call(key, "FETCH", call, OPTION=",".join([f"MAX:{page}", f"AFTERLOGID:{after}", "TYPE:ADIF"]))
         if res.get("RESULT") != "OK":
             reason = res.get("REASON", "")
             if "no log entries" in reason.lower() or res.get("COUNT") == "0":
-                break
+                break  # past the last record (or an empty logbook)
             raise ServiceError("QRZ.com: " + (reason or "fetch failed"))
         _, recs = adif.parse(res.get("ADIF", ""))
         out.extend(recs)

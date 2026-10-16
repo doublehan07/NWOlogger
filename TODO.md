@@ -2,20 +2,29 @@
 
 Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; what is left is below.
 
-## Needs real accounts (written, tested against canned responses only)
+## Needs real accounts
 
-- [ ] LoTW: download confirmations and upload via TQSL with a real certificate and station location
-- [ ] eQSL: upload and inbox download (incl. the ISS name and QTH nicknames)
-- [ ] QRZ.com Logbook: INSERT / REPLACE upload and FETCH paging with a real API key
-- [ ] HRDLog: upload with a real upload code; check whether the logged-in website offers an ADIF export (PLAN §8.5)
-- [ ] QRZ.com XML and HamQTH lookups with real accounts; evaluate HamQTH API v2
-- [ ] Check whether LoTW, eQSL and QRZ.com XML accept the password by POST, so it leaves the URL (PLAN §8.2)
-- [ ] Check the eQSL inbox ADIF link is always on www.eqsl.cc (other hosts are now refused)
+Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and uploads of two fresh QSOs, each sent once to every service.
+
+- [x] LoTW download of confirmations and accepted uploads, all matched to the log; a first full download of a large log takes a few minutes
+- [x] LoTW upload via TQSL with a real certificate and station location (2 QSOs, "Success")
+- [x] eQSL inbox download with the QTH nickname, matched to the log; the ADIF link is on www.eqsl.cc
+- [x] eQSL upload with the QTH nickname (2 QSOs; "1 out of 1 records added" parsed)
+- [ ] eQSL upload of a satellite QSO (the ISS name)
+- [x] QRZ.com Logbook STATUS and FETCH paging, matched to the log
+- [x] QRZ.com Logbook INSERT (2 QSOs; each found once in the logbook afterwards, log id stored)
+- [ ] QRZ.com Logbook REPLACE (re-upload of a QSO edited after upload)
+- [x] HRDLog upload with a real upload code (2 QSOs)
+- [ ] HRDLog: re-upload of an edited QSO (`Cmd=UPDATE`); check whether the logged-in website offers an ADIF export (PLAN §8.5)
+- [x] QRZ.com XML lookups, including "not found"
+- [ ] HamQTH lookups (no account yet); evaluate HamQTH API v2; check whether it accepts the password by POST
+- [x] Password by POST: QRZ.com XML accepts it (login and lookups now use POST); LoTW (HTTP 405) and eQSL do not, so they keep the GET query their APIs document
 
 ## Next
 
 - [ ] **Gridmaster-style grid display:** a map of Maidenhead grid squares coloured by worked / confirmed (VUCC), per band, mode or satellite
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
+- [ ] Check the MacLoggerDX import of upload history: after a LoTW or QRZ.com download, most QSOs marked "pending" for those services turned out to be there already; eQSL and HRDLog pending can't be checked by download
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Bulk edit: refuse a Time Off earlier than Time On, as the entry form does
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
@@ -90,3 +99,12 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 - [x] The leftover check uses your saved secrets (once after an update, after each Preferences save, and from the menu), so `Wrong code …`-style messages are found; credential tags are removed from imported QSOs and undo history; the cleanup waits for other programs that have the file open, never blocks opening, and the "no backup" message no longer overclaims
 - [x] Uploads send only standard ADIF fields plus the service's own tags, and no field holding a saved secret; more credential-like tag names are dropped on import and export
 - [x] Status bar messages no longer fire after their window is closed
+
+## Done after the live tests (2026-10-16)
+
+- [x] Upload test with two fresh QSOs, each sent once to QRZ.com, HRDLog, eQSL and LoTW (TQSL): both accepted by all four and checked on the websites; QRZ.com holds each exactly once
+- [x] QRZ.com XML sends the password and session key in the request body (POST), not the URL
+- [x] QRZ.com downloads always fetch the whole logbook: `MODSINCE` made every download after the first return nothing
+- [x] eQSL downloads start a day before the last one, so cards that arrive later the same day aren't missed
+- [x] *Sync everything* only downloads; QSOs not yet uploaded to all four services are grey, with the missing services in the tooltip and a *Not uploaded to every service* preset
+- [x] Upload pending, the *Not uploaded to …* presets and the grey rows share one rule (`core/uploads.py`)

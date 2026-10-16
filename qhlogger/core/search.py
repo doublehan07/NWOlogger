@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from . import modes, timeutil
+from . import modes, timeutil, uploads
 from .fields import BY_COL
 
 PRESETS: dict[str, str] = {
@@ -31,6 +31,7 @@ PRESETS: dict[str, str] = {
     "not_eqsl": "Not uploaded to eQSL",
     "not_qrz": "Not uploaded to QRZ",
     "not_hrdlog": "Not uploaded to HRDLog",
+    "not_all": "Not uploaded to every service",
     "lotw_confirmed": "LoTW confirmed",
     "any_confirmed": "Confirmed (any)",
     "unconfirmed": "Not confirmed",
@@ -196,10 +197,11 @@ def preset(name: str | None, *, contest_session_id: int | None = None) -> tuple[
         return "contest_session_id = ?", [contest_session_id if contest_session_id is not None else -1]
     if name == "sat":
         return "prop_mode = 'SAT'", []
-    for svc, col in (("lotw", "lotw_qsl_sent"), ("eqsl", "eqsl_qsl_sent"), ("qrz", "qrzcom_qso_upload_status"),
-                     ("hrdlog", "hrdlog_qso_upload_status")):
+    for svc in uploads.SERVICES:
         if name == f"not_{svc}":
-            return f"({col} IS NULL OR {col} != 'Y')", []
+            return uploads.PENDING_SQL[svc], []  # the same rule as Upload pending
+    if name == "not_all":
+        return uploads.ANY_PENDING_SQL, []
     if name == "lotw_confirmed":
         return "lotw_qsl_rcvd = 'Y'", []
     confirmed = "(lotw_qsl_rcvd = 'Y' OR eqsl_qsl_rcvd = 'Y' OR qrz_qsl_rcvd = 'Y' OR qsl_rcvd = 'Y')"

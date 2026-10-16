@@ -8,7 +8,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelInd
 from PySide6.QtGui import QBrush, QColor
 
 from ... import i18n
-from ...core import search
+from ...core import search, uploads
 from ...core.fields import BY_COL
 from .. import theme
 from ..widgets import fmt, mode_text, province_text
@@ -148,6 +148,8 @@ class LogModel(QAbstractTableModel):
                 return QBrush(QColor(t.bad))
             if col == "call" and confirmed(q):
                 return QBrush(QColor(t.ok))
+            if uploads.missing(q):  # grey until it is uploaded to all four services; Upload selected sends it
+                return QBrush(QColor(t.muted))
             return None
         if role == Qt.ItemDataRole.BackgroundRole:
             flag = q.get("dupe_flag")
@@ -157,14 +159,18 @@ class LogModel(QAbstractTableModel):
                 return QBrush(QColor(t.warn_soft))
             return None
         if role == Qt.ItemDataRole.ToolTipRole:
-            if col == "state":
-                return province_text(q) or None
+            tips = []
+            if col == "state" and province_text(q):
+                tips.append(province_text(q))
             if q.get("dupe_flag") in ("DUPE", "SUSPECT"):
                 other = self.db.get(q["dupe_of"]) if q.get("dupe_of") else None
                 when = fmt("time_on", other.get("time_on")) if other else "?"
                 kind = tr("Dupe") if q["dupe_flag"] == "DUPE" else tr("Suspicious dupe")
-                return f"{kind}: {tr('collides with the QSO at')} {when} {mode_text(other) if other else ''}"
-            return None
+                tips.append(f"{kind}: {tr('collides with the QSO at')} {when} {mode_text(other) if other else ''}")
+            todo = uploads.missing(q)
+            if todo:
+                tips.append(tr("Not uploaded to:") + " " + ", ".join(uploads.SERVICES[s] for s in todo))
+            return "\n".join(tips) or None
         return None
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:

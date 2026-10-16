@@ -4,16 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .. import exporter, importer, net, propagation, timeutil
+from .. import exporter, importer, net, propagation, timeutil, uploads
 from .. import qso as qsomod
 from ..fields import ADIF_STANDARD
-
-SERVICES = {"lotw": "LoTW", "eqsl": "eQSL", "qrz": "QRZ.com", "hrdlog": "HRDLog"}
-
-SENT_COL = {"lotw": "lotw_qsl_sent", "eqsl": "eqsl_qsl_sent", "qrz": "qrzcom_qso_upload_status",
-            "hrdlog": "hrdlog_qso_upload_status"}
-SENT_DATE = {"lotw": "lotw_qslsdate", "eqsl": "eqsl_qslsdate", "qrz": "qrzcom_qso_upload_date",
-             "hrdlog": "hrdlog_qso_upload_date"}
+from ..uploads import SENT_COL, SENT_DATE, SERVICES  # noqa: F401 - re-exported for callers
 
 # Fields of the other station that a confirmation may fill in when empty.
 DETAIL_FILL = ["gridsquare", "cqz", "ituz", "state", "cnty", "dxcc", "country", "iota"]
@@ -33,15 +27,10 @@ def pending(db, service: str, ids: list[int] | None = None) -> list[dict]:
         rows = db.get_many(ids)
         out = sorted(rows.values(), key=lambda q: (q.get("time_on") or "", q["id"]))
     else:
-        col = SENT_COL[service]
-        if service in ("qrz", "hrdlog"):
-            where = f"({col} IS NULL OR {col} IN ('N', 'M'))"
-        else:
-            where = f"({col} IS NULL OR {col} NOT IN ('Y', 'I'))"
-        out = list(db.iter_all(where))
+        out = list(db.iter_all(uploads.PENDING_SQL[service]))
     if service == "lotw":
-        # Repeater and internet-assisted QSOs are not valid for LoTW.
-        out = [q for q in out if (q.get("prop_mode") or "").upper() not in propagation.LOTW_SKIP]
+        # Repeater and internet-assisted QSOs are not valid for LoTW, even when selected.
+        out = [q for q in out if not uploads.lotw_skipped(q)]
     return out
 
 

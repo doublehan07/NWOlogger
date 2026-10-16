@@ -402,3 +402,35 @@ def test_saved_password_check(win, qtbot, monkeypatch):
     # After that, a start does not read the keychain again.
     monkeypatch.setattr(win.prefs, "saved_secrets", lambda *_a: pytest.fail("keychain read at start"))
     win.check_secrets("start")
+
+
+def test_sync_everything_never_uploads(win, monkeypatch):
+    downloads = []
+    monkeypatch.setattr(win.sync, "upload", lambda *a, **k: pytest.fail("Sync everything uploaded"))
+    monkeypatch.setattr(win.sync, "download", lambda svc: downloads.append(svc))
+    win.sync_all()
+    assert downloads == ["lotw", "eqsl", "qrz"]
+
+
+def test_qsos_not_uploaded_everywhere_are_grey(win, qtbot):
+    from PySide6.QtCore import Qt
+
+    from qhlogger.core import qso as qsomod
+    from qhlogger.ui import theme
+
+    done = {"lotw_qsl_sent": "Y", "eqsl_qsl_sent": "Y", "qrzcom_qso_upload_status": "Y",
+            "hrdlog_qso_upload_status": "Y"}
+    a = win.db.insert(qsomod.normalize({"call": "BA1AA", "time_on": "2026-10-10T10:00:00Z", "mode": "FM",
+                                        "band": "2m", **done}))
+    b = win.db.insert(qsomod.normalize({"call": "BA1BB", "time_on": "2026-10-10T11:00:00Z", "mode": "FM",
+                                        "band": "2m", **done, "eqsl_qsl_sent": None, "hrdlog_qso_upload_status": "M"}))
+    win.model.refresh()
+    col = win.model.columns.index("band")
+    fg = {qid: win.model.data(win.model.index(win.model.row_of[qid], col), Qt.ItemDataRole.ForegroundRole)
+          for qid in (a, b)}
+    assert fg[a] is None
+    assert fg[b] is not None and fg[b].color().name().lower() == theme.tokens().muted.lower()
+    tip = win.model.data(win.model.index(win.model.row_of[b], col), Qt.ItemDataRole.ToolTipRole)
+    assert tip == "Not uploaded to: eQSL, HRDLog"
+    win.filter.set_preset("not_all")
+    assert win.model.ids == [b]
