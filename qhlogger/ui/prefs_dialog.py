@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -32,8 +33,10 @@ from PySide6.QtWidgets import (
 
 from .. import i18n
 from ..core import dxcc, sats
+from ..core import secrets as keychain
 from ..core.sync import tqsl
 from . import theme
+from .prefs import SECRET_KEYS
 from .widgets import MODE_FIRST, all_modes, mode_list, sat_list
 
 tr = i18n.tr
@@ -48,17 +51,76 @@ PROFILE_FIELDS = [
 ]
 
 
-def _password() -> QLineEdit:
-    e = QLineEdit()
-    e.setEchoMode(QLineEdit.EchoMode.Password)
-    e.setPlaceholderText(tr("stored in the system keychain"))
-    return e
+class SecretField(QWidget):
+    """A password field that never shows the saved value: type to replace it, Forget to remove it on Save."""
+
+    def __init__(self, stored: bool, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.stored, self.forget = stored, False
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        self.edit = QLineEdit()
+        self.edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.edit.textEdited.connect(lambda _t: self._update())
+        self.forget_btn = QPushButton(tr("Forget"))
+        self.forget_btn.setToolTip(tr("Remove the saved secret from the system keychain when you save"))
+        self.forget_btn.clicked.connect(self._forget)
+        lay.addWidget(self.edit, 1)
+        lay.addWidget(self.forget_btn)
+        self._update()
+
+    def _forget(self) -> None:
+        self.forget = True
+        self.edit.clear()
+        self._update()
+
+    def _update(self) -> None:
+        if self.forget:
+            ph = tr("removed from the keychain when you save")
+        elif self.stored:
+            ph = tr("saved in the keychain; leave blank to keep it")
+        else:
+            ph = tr("not set")
+        self.edit.setPlaceholderText(ph)
+        self.forget_btn.setEnabled(self.stored and not self.forget)
+
+    def action(self) -> tuple[str, str | None]:
+        """("set", value), ("forget", None) or ("keep", None)."""
+        if self.edit.text():
+            return "set", self.edit.text()
+        return ("forget", None) if self.forget else ("keep", None)
+
+
+KEY_ROLE = Qt.ItemDataRole.UserRole  # a newly typed QRZ Logbook API key (never the saved one)
+STATE_ROLE = Qt.ItemDataRole.UserRole + 1  # "stored", "new", "forget" or ""
+MASKED = "••••••••"
+
+
+class ApiKeyDelegate(QStyledItemDelegate):
+    """QRZ Logbook API keys are typed in a password field and always shown as dots."""
+
+    def createEditor(self, parent, _option, _index):  # noqa: N802 - Qt API
+        e = QLineEdit(parent)
+        e.setEchoMode(QLineEdit.EchoMode.Password)
+        e.setPlaceholderText(tr("paste the API key"))
+        return e
+
+    def setEditorData(self, editor, _index):  # noqa: N802 - Qt API
+        editor.clear()
+
+    def setModelData(self, editor, model, index):  # noqa: N802 - Qt API
+        v = editor.text().strip()
+        if v:
+            model.setData(index, v, KEY_ROLE)
+            model.setData(index, "new", STATE_ROLE)
+            model.setData(index, MASKED, Qt.ItemDataRole.DisplayRole)
 
 
 class ProfilesPage(QWidget):
-    def __init__(self, db):
+    def __init__(self, db, prefs=None):
         super().__init__()
-        self.db = db
+        self.db, self.prefs = db, prefs
         lay = QHBoxLayout(self)
         left = QVBoxLayout()
         self.list = QListWidget()
@@ -208,7 +270,12 @@ class ProfilesPage(QWidget):
     def _delete(self) -> None:
         if self.current_id is None:
             return
+        call = ((self.db.profile(self.current_id) or {}).get("station_callsign") or "").upper()
         self.db.delete_profile(self.current_id)
+        # The QRZ Logbook key belongs to the callsign: remove it once no profile uses that callsign.
+        if self.prefs is not None and call and not any(
+                (p.get("station_callsign") or "").upper() == call for p in self.db.profiles()):
+            self.prefs.set_qrz_api_key(call, None)
         self._reload()
 
 
@@ -241,7 +308,7 @@ class PrefsDialog(QDialog):
         self.tabs.addTab(g, tr("General"))
 
         # Station profiles
-        self.profiles_page = ProfilesPage(db)
+        self.profiles_page = ProfilesPage(db, prefs)
         self.tabs.addTab(self.profiles_page, tr("Station profiles"))
 
         # Logging
@@ -273,13 +340,15 @@ class PrefsDialog(QDialog):
         lk = QWidget()
         f = QFormLayout(lk)
         self.qrz_user = QLineEdit(prefs.get("qrz_user"))
-        self.qrz_pass = _password()
+        self.qrz_pass = SecretField(prefs.has_secret("qrz_password"))
         self.ham_user = QLineEdit(prefs.get("hamqth_user"))
-        self.ham_pass = _password()
+        self.ham_pass = SecretField(prefs.has_secret("hamqth_password"))
         self.ttl = QSpinBox()
         self.ttl.setRange(0, 365)
         self.ttl.setSuffix(tr(" days"))
         self.ttl.setValue(prefs.get("lookup_ttl_days"))
+        if not keychain.available():
+            f.addRow(self._keychain_warning())
         f.addRow(QLabel("<b>QRZ.com XML</b>"))
         f.addRow(tr("User"), self.qrz_user)
         f.addRow(tr("Password"), self.qrz_pass)
@@ -293,7 +362,7 @@ class PrefsDialog(QDialog):
         sv = QWidget()
         f = QFormLayout(sv)
         self.lotw_user = QLineEdit(prefs.get("lotw_user"))
-        self.lotw_pass = _password()
+        self.lotw_pass = SecretField(prefs.has_secret("lotw_password"))
         self.tqsl_path = QLineEdit(prefs.get("tqsl_path") or "")
         self.tqsl_path.setPlaceholderText(tqsl.find_tqsl() or tr("not found: install TQSL from arrl.org"))
         browse = QPushButton(tr("Browse…"))
@@ -302,14 +371,17 @@ class PrefsDialog(QDialog):
         tq.addWidget(self.tqsl_path, 1)
         tq.addWidget(browse)
         self.eqsl_user = QLineEdit(prefs.get("eqsl_user"))
-        self.eqsl_pass = _password()
+        self.eqsl_pass = SecretField(prefs.has_secret("eqsl_password"))
         self.hrd_call = QLineEdit(prefs.get("hrdlog_call"))
-        self.hrd_code = _password()
-        self.qrz_keys = QTableWidget(0, 2)
-        self.qrz_keys.setHorizontalHeaderLabels([tr("Station callsign"), tr("QRZ Logbook API key")])
+        self.hrd_code = SecretField(prefs.has_secret("hrdlog_code"))
+        self.qrz_keys = QTableWidget(0, 3)
+        self.qrz_keys.setHorizontalHeaderLabels([tr("Station callsign"), tr("QRZ Logbook API key"), ""])
         self.qrz_keys.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.qrz_keys.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.qrz_keys.verticalHeader().setVisible(False)
         self.qrz_keys.setMaximumHeight(110)
+        self.qrz_keys.setItemDelegateForColumn(1, ApiKeyDelegate(self.qrz_keys))
+        self.qrz_keys.setToolTip(tr("Double-click a key cell to type a new key. Saved keys are never shown."))
         calls = sorted({p.get("station_callsign") for p in db.profiles() if p.get("station_callsign")})
         for c in calls:
             r = self.qrz_keys.rowCount()
@@ -317,7 +389,14 @@ class PrefsDialog(QDialog):
             it = QTableWidgetItem(c)
             it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.qrz_keys.setItem(r, 0, it)
-            self.qrz_keys.setItem(r, 1, QTableWidgetItem("••••••••" if prefs.qrz_api_key(c) else ""))
+            stored = bool(prefs.qrz_api_key(c))
+            key = QTableWidgetItem(MASKED if stored else "")
+            key.setData(STATE_ROLE, "stored" if stored else "")
+            self.qrz_keys.setItem(r, 1, key)
+            btn = QPushButton(tr("Forget"))
+            btn.setToolTip(tr("Remove this key from the system keychain when you save"))
+            btn.clicked.connect(lambda _=False, item=key: self._forget_key(item))
+            self.qrz_keys.setCellWidget(r, 2, btn)
         upl = prefs.get("upload_on_log")
         self.up_qrz = QCheckBox("QRZ.com")
         self.up_qrz.setChecked(upl.get("qrz", False))
@@ -329,6 +408,8 @@ class PrefsDialog(QDialog):
         for cb in (self.up_qrz, self.up_eqsl, self.up_hrd):
             up.addWidget(cb)
         up.addStretch(1)
+        if not keychain.available():
+            f.addRow(self._keychain_warning())
         f.addRow(QLabel("<b>LoTW</b>"))
         f.addRow(tr("User"), self.lotw_user)
         f.addRow(tr("Password"), self.lotw_pass)
@@ -516,6 +597,18 @@ class PrefsDialog(QDialog):
             return
         self._fill_satmap()
 
+    def _keychain_warning(self) -> QLabel:
+        lab = QLabel(tr("No secure system keychain is available, so passwords and keys cannot be saved.") +
+                     (f" ({keychain.backend_name()})" if keychain.backend_name() else ""))
+        lab.setWordWrap(True)
+        lab.setProperty("muted", True)
+        return lab
+
+    def _forget_key(self, item: QTableWidgetItem) -> None:
+        item.setData(KEY_ROLE, None)
+        item.setData(STATE_ROLE, "forget")
+        item.setText(tr("removed when you save"))
+
     def _hint(self, text: str) -> QLabel:
         lab = QLabel(text)
         lab.setObjectName("Hint")
@@ -541,23 +634,31 @@ class PrefsDialog(QDialog):
         p.set("auto_lookup", self.auto_lookup.isChecked())
         p.set("lookup_ttl_days", self.ttl.value())
         p.set("backup_keep", self.keep.value())
+        old_users = {key: p.get(key) or "" for key in ("qrz_user", "hamqth_user", "lotw_user", "eqsl_user",
+                                                         "hrdlog_call")}
         for key, edit in (("qrz_user", self.qrz_user), ("hamqth_user", self.ham_user), ("lotw_user", self.lotw_user),
                           ("eqsl_user", self.eqsl_user), ("hrdlog_call", self.hrd_call)):
             p.set(key, edit.text().strip().upper() if key == "hrdlog_call" else edit.text().strip())
         p.set("tqsl_path", self.tqsl_path.text().strip())
         failed = []
-        for key, edit in (("qrz_password", self.qrz_pass), ("hamqth_password", self.ham_pass),
-                          ("lotw_password", self.lotw_pass), ("eqsl_password", self.eqsl_pass),
-                          ("hrdlog_code", self.hrd_code)):
-            if edit.text():
-                if not p.set_secret(key, edit.text()):
-                    failed.append(key)
+        fields = {"qrz_password": self.qrz_pass, "hamqth_password": self.ham_pass, "lotw_password": self.lotw_pass,
+                  "eqsl_password": self.eqsl_pass, "hrdlog_code": self.hrd_code}
+        for key, field in fields.items():
+            user_key = SECRET_KEYS[key][1]
+            if not p.account_renamed(key, old_users[user_key], p.get(user_key) or ""):
+                failed.append(key)
+            what, value = field.action()
+            if what == "forget" and not p.get(user_key):
+                continue  # the account name was cleared: its entry went with the rename above
+            if what != "keep" and not p.set_secret(key, value):
+                failed.append(key)
         for r in range(self.qrz_keys.rowCount()):
             call = self.qrz_keys.item(r, 0).text()
-            val = (self.qrz_keys.item(r, 1).text() if self.qrz_keys.item(r, 1) else "").strip()
-            if val and not val.startswith("•"):
-                if not p.set_qrz_api_key(call, val):
-                    failed.append(f"QRZ key {call}")
+            item = self.qrz_keys.item(r, 1)
+            state = item.data(STATE_ROLE) if item else ""
+            if state in ("new", "forget") and not p.set_qrz_api_key(call, item.data(KEY_ROLE) if state == "new"
+                                                                    else None):
+                failed.append(f"QRZ key {call}")
         p.set("upload_on_log", {"qrz": self.up_qrz.isChecked(), "eqsl": self.up_eqsl.isChecked(),
                                 "hrdlog": self.up_hrd.isChecked()})
         p.set("user_sats", self.user_sats)

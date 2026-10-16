@@ -1,7 +1,8 @@
 """Network clients for LoTW, eQSL, QRZ.com Logbook and HRDLog.
 
 These functions only talk to the network and parse responses; they never touch the log database, so they can
-run on a worker thread. Applying results to the log is done by :mod:`apply` on the GUI thread.
+run on a worker thread. Applying results to the log is done by :mod:`apply` on the GUI thread. Requests go through
+:mod:`..net`, so errors never carry a password, and any text from a service is passed through ``net.redact``.
 """
 
 from __future__ import annotations
@@ -13,17 +14,13 @@ from urllib.parse import parse_qsl, urljoin
 import httpx
 
 from ... import __version__
-from .. import adif
+from .. import adif, net
 
 TIMEOUT = 60.0
 
 
-class ServiceError(Exception):
+class ServiceError(net.NetError):
     pass
-
-
-def _ua(call: str | None = None) -> dict[str, str]:
-    return {"User-Agent": f"QHlogger/{__version__}" + (f" ({call})" if call else "")}
 
 
 # ------------------------------------------------------------------ LoTW
@@ -42,12 +39,11 @@ def lotw_download(user: str, password: str, *, qsl: bool = True, since: str | No
         params["qso_qsorxsince"] = since or "1900-01-01"
     if own_call:
         params["qso_owncall"] = own_call
-    r = httpx.get(LOTW_REPORT, params=params, timeout=300.0, headers=_ua())
-    r.raise_for_status()
+    r = net.request("lotw", "GET", LOTW_REPORT, params=params, timeout=300.0)
     text = r.text
     if not re.search(r"<eoh>", text, re.I):
         msg = re.sub(r"<[^>]+>", " ", text)
-        msg = " ".join(msg.split())[:200]
+        msg = net.redact(" ".join(msg.split()), [password])[:200]
         raise ServiceError("LoTW: query failed (check user and password). " + msg)
     return adif.parse(text)
 
@@ -64,11 +60,11 @@ def eqsl_upload(user: str, password: str, records: list[dict[str, str]]) -> tupl
     body = "\n".join(" ".join(f"<{k}:{len(v)}>{v}" for k, v in rec.items()) + " <EOR>" for rec in records)
     files = {"Filename": ("qhlogger.adi", (head + body).encode("utf-8"), "text/plain")}
     data = {"EQSLUSER": user, "EQSLPSWD": password}
-    r = httpx.post(EQSL_UPLOAD, data=data, files=files, timeout=TIMEOUT, headers=_ua())
-    r.raise_for_status()
+    r = net.request("eqsl", "POST", EQSL_UPLOAD, data=data, files=files, timeout=TIMEOUT)
     text = html.unescape(re.sub(r"<[^>]+>", "\n", r.text))
     m = re.search(r"Result:\s*(\d+)\s+out of\s+(\d+)\s+records added", text, re.I)
-    lines = [ln.strip() for ln in text.splitlines() if re.match(r"\s*(Warning|Error)", ln, re.I)]
+    lines = [net.redact(ln.strip(), [password]) for ln in text.splitlines()
+             if re.match(r"\s*(Warning|Error)", ln, re.I)]
     if not m:
         err = next((ln for ln in lines if ln.lower().startswith("error")), None)
         raise ServiceError("eQSL: " + (err or "unexpected response"))
@@ -83,17 +79,17 @@ def eqsl_download(user: str, password: str, *, since: str | None = None,
         params["RcvdSince"] = since
     if qth_nickname:
         params["QTHNickname"] = qth_nickname
-    r = httpx.get(EQSL_INBOX, params=params, timeout=TIMEOUT, headers=_ua(), follow_redirects=True)
-    r.raise_for_status()
+    r = net.request("eqsl", "GET", EQSL_INBOX, params=params, timeout=TIMEOUT, redirects=True)
     m = re.search(r'href="([^"]+\.adi)"', r.text, re.I)
     if not m:
-        msg = " ".join(re.sub(r"<[^>]+>", " ", r.text).split())
+        msg = net.redact(" ".join(re.sub(r"<[^>]+>", " ", r.text).split()), [password])
         if "no such" in msg.lower() or "error" in msg.lower():
             raise ServiceError("eQSL: " + msg[:200])
         return {}, []
-    url = urljoin(str(r.url), m.group(1))
-    f = httpx.get(url, timeout=TIMEOUT, headers=_ua(), follow_redirects=True)
-    f.raise_for_status()
+    url = httpx.URL(urljoin(str(r.url), m.group(1)))
+    if url.scheme == "http" and url.host in net.HOSTS["eqsl"]:
+        url = url.copy_with(scheme="https")  # same host; other hosts are refused by net.request
+    f = net.request("eqsl", "GET", str(url), timeout=TIMEOUT, redirects=True)
     return adif.parse(f.content)
 
 
@@ -116,9 +112,11 @@ def _qrz_parse(text: str) -> dict[str, str]:
 
 def qrz_call(key: str, action: str, call: str | None = None, **params: str) -> dict[str, str]:
     data = {"KEY": key, "ACTION": action, **params}
-    r = httpx.post(QRZ_API, data=data, timeout=TIMEOUT, headers=_ua(call))
-    r.raise_for_status()
-    return _qrz_parse(r.text)
+    r = net.request("qrz", "POST", QRZ_API, data=data, timeout=TIMEOUT, call=call)
+    res = _qrz_parse(r.text)
+    if "REASON" in res:
+        res["REASON"] = net.redact(res["REASON"], [key])
+    return res
 
 
 def qrz_insert(key: str, record: dict[str, str], *, replace: bool = False, call: str | None = None
@@ -181,12 +179,11 @@ def hrdlog_upload(call: str, code: str, record: dict[str, str], *, update_key: s
     if update_key:
         data["Cmd"] = "UPDATE"
         data["ADIFKey"] = update_key
-    r = httpx.post(HRDLOG_URL, data=data, timeout=TIMEOUT, headers=_ua(call))
-    r.raise_for_status()
+    r = net.request("hrdlog", "POST", HRDLOG_URL, data=data, timeout=TIMEOUT, call=call)
     body = r.text
     err = re.search(r"<error>(.*?)</error>", body, re.I | re.S)
     if err:
-        return False, html.unescape(err.group(1)).strip()
+        return False, net.redact(html.unescape(err.group(1)).strip(), [code])
     if re.search(r"<(insert|update)>\s*[1-9]", body, re.I) or "ok" in body.lower():
         return True, ""
-    return False, " ".join(re.sub(r"<[^>]+>", " ", body).split())[:200] or "unexpected response"
+    return False, net.redact(" ".join(re.sub(r"<[^>]+>", " ", body).split()), [code])[:200] or "unexpected response"

@@ -40,6 +40,7 @@ class ImportDialog(QDialog):
         kind = tr("MacLoggerDX database") if self.is_mldx else tr("ADIF file")
         title = QLabel(f"<b>{Path(path).name}</b>  ·  {kind}")
         lay.addWidget(title)
+        self.dropped: list[str] = []
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             if self.is_mldx:
@@ -47,7 +48,7 @@ class ImportDialog(QDialog):
                 self.header = {}
             else:
                 with open(path, "rb") as fh:
-                    self.header, self.qsos = importer.read_adif(fh.read())
+                    self.header, self.qsos = importer.read_adif(fh.read(), dropped=self.dropped)
                 self.report = None
         finally:
             QApplication.restoreOverrideCursor()
@@ -160,8 +161,12 @@ class ImportDialog(QDialog):
             lab.setProperty("muted", True)
             self.counts.addWidget(big, 0, i)
             self.counts.addWidget(lab, 1, i)
-        note = QLabel(tr("Nothing is skipped: every record is imported and suspicious dupes are marked so you "
-                         "can review them (preset “Suspicious dupes”)."))
+        text = tr("Nothing is skipped: every record is imported and suspicious dupes are marked so you "
+                  "can review them (preset “Suspicious dupes”).")
+        if self.dropped:
+            text += " " + tr("Fields that look like passwords are left out:") + f" {len(self.dropped)} (" + \
+                ", ".join(sorted(set(self.dropped))) + ")."
+        note = QLabel(text)
         note.setObjectName("Hint")
         note.setWordWrap(True)
         self.counts.addWidget(note, 2, 0, 1, max(1, len(items)))

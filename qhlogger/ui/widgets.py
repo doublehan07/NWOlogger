@@ -295,10 +295,11 @@ def sat_list(prefs, catalog, worked: list[str]) -> list[str]:
     return out
 
 
-def mode_combo(prefs=None) -> QComboBox:
-    """Your mode list (Preferences → Modes), then "Other mode…" for the rest."""
+def mode_combo(prefs=None, *, blank: bool = False) -> QComboBox:
+    """Your mode list (Preferences → Modes), then "Other mode…" for the rest. ``blank`` adds "—" (no mode)."""
     c = QComboBox()
     c.setMaxVisibleItems(24)
+    c.setProperty("blank", blank)
     fill_mode_combo(c, prefs)
     return c
 
@@ -307,6 +308,8 @@ def fill_mode_combo(c: QComboBox, prefs=None) -> None:
     cur = c.currentData()
     c.blockSignals(True)
     c.clear()
+    if c.property("blank"):
+        c.addItem("—", "")
     for m in mode_list(prefs):
         c.addItem(f"{m} ({tr('generic')})" if m in ("DATA", "PHONE") else m, m)
     c.insertSeparator(c.count())

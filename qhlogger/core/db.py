@@ -15,6 +15,7 @@ from typing import Any
 from . import fields, timeutil
 from . import qso as qsomod
 from .fields import BY_COL, FIELDS, SERVICE_KEY_FIELDS
+from .net import redact
 
 SCHEMA_VERSION = 1
 
@@ -81,8 +82,6 @@ class LogDB:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         existed = self.path.exists() and self.path.stat().st_size > 0
         self.backup_keep = backup_keep
-        if existed and backup_on_open:
-            self.backup("open")
         self.conn = sqlite3.connect(str(self.path), isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -90,6 +89,9 @@ class LogDB:
         self._listeners: list[ChangeListener] = []
         self._batch_id: int | None = None
         self._pending: list[tuple[str, list[int]]] = []
+        self._scrub_sync_log()  # before the backup, so a new backup never holds an old password
+        if existed and backup_on_open:
+            self.backup("open")
         self._migrate()
 
     # ------------------------------------------------------------------ setup
@@ -106,6 +108,43 @@ class LogDB:
         if self.meta("schema_version") is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
             self.set_meta("created_at", timeutil.now_iso())
+
+    def _scrub_sync_log(self) -> None:
+        """Remove passwords that QHlogger 0.1.0 stored in sync history error messages. Runs once per log file."""
+        c = self.conn
+        try:
+            if c.execute("SELECT 1 FROM meta WHERE key='sync_log_scrubbed'").fetchone():
+                return
+            rows = c.execute("SELECT id, message FROM sync_log WHERE message IS NOT NULL AND message != ''").fetchall()
+        except sqlite3.OperationalError:
+            return  # a new file: _migrate creates the tables, and the next open records the check
+        changes = [(new, r["id"]) for r in rows if (new := redact(r["message"])) != r["message"]]
+        if changes:
+            c.execute("PRAGMA secure_delete=ON")  # zero the old text instead of leaving it in free space
+            c.execute("BEGIN")
+            c.executemany("UPDATE sync_log SET message=? WHERE id=?", changes)
+            c.execute("COMMIT")
+            c.execute("VACUUM")
+            c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            c.execute("PRAGMA secure_delete=OFF")
+        c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('sync_log_scrubbed', ?)", (str(len(changes)),))
+
+    def backups_with_secrets(self) -> list[tuple[Path, int]]:
+        """Backups whose sync history still holds a password from an old error message, with the count."""
+        out = []
+        for p in sorted(self.backup_dir.glob("*.sqlite")):
+            try:
+                con = sqlite3.connect(p.as_uri() + "?mode=ro&immutable=1", uri=True)
+                try:
+                    msgs = [m for (m,) in con.execute("SELECT message FROM sync_log WHERE message IS NOT NULL")]
+                finally:
+                    con.close()
+            except sqlite3.Error:
+                continue
+            n = sum(1 for m in msgs if redact(m) != m)
+            if n:
+                out.append((p, n))
+        return out
 
     def close(self) -> None:
         try:
@@ -467,6 +506,36 @@ class LogDB:
         d["_source"] = r["source"]
         return d
 
+    def calls_last_worked(self) -> dict[str, str]:
+        """Every call in the log with the time of its last QSO."""
+        return {r[0]: r[1] or "" for r in self.conn.execute(
+            "SELECT call, MAX(time_on) FROM qso WHERE call IS NOT NULL AND call != '' GROUP BY call")}
+
+    def cached_calls(self) -> dict[str, str]:
+        """Every call QRZ.com / HamQTH has returned, with the source name (any age)."""
+        return {r["call"]: r["source"] or "" for r in self.conn.execute("SELECT call, source FROM lookup_cache")}
+
+    def call_summaries(self, calls: Iterable[str]) -> dict[str, dict]:
+        """For each call in the log: QSO count, the last QSO (time, band, mode) and which confirmations exist."""
+        calls = [c.upper() for c in calls]
+        if not calls:
+            return {}
+        marks = ",".join("?" * len(calls))
+        sql = (
+            "SELECT * FROM (SELECT call, time_on, band, mode, submode, sat_name, "
+            "ROW_NUMBER() OVER (PARTITION BY call ORDER BY time_on DESC, id DESC) rn, "
+            "COUNT(*) OVER (PARTITION BY call) n, "
+            "MAX(lotw_qsl_rcvd = 'Y') OVER (PARTITION BY call) cl, MAX(eqsl_qsl_rcvd = 'Y') OVER (PARTITION BY call) ce, "
+            "MAX(qrz_qsl_rcvd = 'Y') OVER (PARTITION BY call) cq, MAX(qsl_rcvd = 'Y') OVER (PARTITION BY call) cp "
+            f"FROM qso WHERE call IN ({marks})) WHERE rn = 1")
+        out = {}
+        for r in self.conn.execute(sql, calls):
+            d = dict(r)
+            d["confirmed"] = "".join(letter for col, letter in (("cl", "L"), ("ce", "E"), ("cq", "Q"), ("cp", "P"))
+                                     if d.get(col))
+            out[d["call"]] = d
+        return out
+
     def cache_put(self, call: str, source: str, data: dict) -> None:
         self.conn.execute("INSERT OR REPLACE INTO lookup_cache(call, source, fetched_at, data) VALUES(?, ?, ?, ?)",
                           (call.upper(), source, timeutil.now_iso(), json.dumps(data, ensure_ascii=False)))
@@ -485,7 +554,7 @@ class LogDB:
         cur = self.conn.execute(
             "INSERT INTO sync_log(service, direction, started_at, finished_at, sent, received, matched, errors, "
             "message) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (service, direction, started_at, timeutil.now_iso(), sent, received, matched, errors, message))
+            (service, direction, started_at, timeutil.now_iso(), sent, received, matched, errors, redact(message)))
         self._notify("sync_log", [])
         return int(cur.lastrowid or 0)
 

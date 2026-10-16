@@ -1,4 +1,4 @@
-"""Service clients against canned responses (no network)."""
+"""Service clients against canned responses (no network: real httpx requests over a mock transport)."""
 
 from __future__ import annotations
 
@@ -11,41 +11,25 @@ from qhlogger.core.lookup import clients
 from qhlogger.core.sync import apply, services
 
 
-class Resp:
-    def __init__(self, text: str, url: str = "https://example.org/x"):
-        self.text = text
-        self.content = text.encode()
-        self.url = url
-        self.status_code = 200
-
-    def raise_for_status(self):
-        return None
-
-
-def test_qrz_xml_lookup(monkeypatch):
+def test_qrz_xml_lookup(mock_net):
     login = ('<?xml version="1.0"?><QRZDatabase xmlns="http://xmldata.qrz.com"><Session><Key>abc</Key>'
              '</Session></QRZDatabase>')
     found = ('<?xml version="1.0"?><QRZDatabase xmlns="http://xmldata.qrz.com"><Callsign><call>BA1AA</call>'
              '<fname>Jian</fname><name>Wu</name><addr2>Beijing</addr2><country>China</country><dxcc>318</dxcc>'
              '<grid>ON80eb</grid><cqzone>24</cqzone><ituzone>44</ituzone></Callsign><Session><Key>abc</Key>'
              '</Session></QRZDatabase>')
-    calls = []
-
-    def fake_get(url, params=None, **kw):
-        calls.append(params)
-        return Resp(login if "username" in params else found)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
+    seen = mock_net(lambda req: httpx.Response(200, text=login if "username" in req.url.params else found))
     d = clients.QrzXml("u", "p").lookup("BA1AA")
     assert d["first_name"] == "Jian" and d["last_name"] == "Wu" and d["dxcc"] == 318 and d["gridsquare"] == "ON80eb"
+    assert [r.url.host for r in seen] == ["xmldata.qrz.com"] * 2 and seen[1].url.params["s"] == "abc"
 
 
-def test_hamqth_lookup(monkeypatch):
+def test_hamqth_lookup(mock_net):
     login = '<HamQTH><session><session_id>s1</session_id></session></HamQTH>'
     found = ('<HamQTH version="2.8" xmlns="https://www.hamqth.com"><search><callsign>BA1AA</callsign>'
              '<adr_name>Jian Wu</adr_name><qth>Beijing</qth><adif>318</adif><grid>ON80eb</grid><cq>24</cq>'
              '<itu>44</itu></search></HamQTH>')
-    monkeypatch.setattr(httpx, "get", lambda url, params=None, **kw: Resp(login if "u" in params else found))
+    mock_net(lambda req: httpx.Response(200, text=login if "u" in req.url.params else found))
     d = clients.HamQth("u", "p").lookup("BA1AA")
     assert d["first_name"] == "Jian" and d["last_name"] == "Wu" and d["cqz"] == 24
 
@@ -56,15 +40,15 @@ def test_qrz_logbook_parse():
     assert res["RESULT"] == "OK" and "<call:5>BA1AA" in res["ADIF"]
 
 
-def test_eqsl_upload_result(monkeypatch):
+def test_eqsl_upload_result(mock_net):
     body = "<html>Result: 2 out of 3 records added<br>Warning: Y=2026 M=10 D=10 BA1AA 20M FM Bad record: Duplicate</html>"
-    monkeypatch.setattr(httpx, "post", lambda *a, **kw: Resp(body))
+    mock_net(lambda req: httpx.Response(200, text=body))
     added, total, lines = services.eqsl_upload("u", "p", [{"CALL": "BA1AA"}])
     assert (added, total) == (2, 3) and any("Duplicate" in ln for ln in lines)
 
 
-def test_lotw_failed_login(monkeypatch):
-    monkeypatch.setattr(httpx, "get", lambda *a, **kw: Resp("<html>Username/password incorrect</html>"))
+def test_lotw_failed_login(mock_net):
+    mock_net(lambda req: httpx.Response(200, text="<html>Username/password incorrect</html>"))
     with pytest.raises(services.ServiceError):
         services.lotw_download("u", "p")
 

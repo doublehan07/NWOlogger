@@ -9,15 +9,19 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 - [ ] QRZ.com Logbook: INSERT / REPLACE upload and FETCH paging with a real API key
 - [ ] HRDLog: upload with a real upload code; check whether the logged-in website offers an ADIF export (PLAN §8.5)
 - [ ] QRZ.com XML and HamQTH lookups with real accounts; evaluate HamQTH API v2
+- [ ] Check whether LoTW, eQSL and QRZ.com XML accept the password by POST, so it leaves the URL (PLAN §8.2)
+- [ ] Check the eQSL inbox ADIF link is always on www.eqsl.cc (other hosts are now refused)
 
 ## Next
 
-- [ ] macOS code signing + notarization (the BY1QH icon is in place)
+- [ ] **Gridmaster-style grid display:** a map of Maidenhead grid squares coloured by worked / confirmed (VUCC), per band, mode or satellite
+- [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Bulk edit: refuse a Time Off earlier than Time On, as the entry form does
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
 - [ ] Bulk "Look up and fill" progress dialog with cancel
 - [ ] Find duplicates: merge two QSOs field by field
+- [ ] Check the release build (PyInstaller) uses the macOS Keychain / Windows Credential Manager backend
 
 ## M9 — Integrations (later)
 
@@ -26,9 +30,9 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 
 ## Later / maybe
 
+- [ ] macOS code signing + notarization (the BY1QH icon is in place)
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
-- [ ] Paper QSL label printing
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
 
 ## Done in v0.1.0
@@ -63,3 +67,18 @@ Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; 
 - [x] Double-click a station profile to make it the default
 - [x] Dupe compare shows a whole group (3+ QSOs), with editable cells, Save edits, Keep #n + merge others, Delete, Not dupes
 - [x] README screenshots from made-up data (`tools/screenshots.py`); test runs no longer touch real preferences
+
+## Done after the credential review (2026-10-16)
+
+- [x] Errors from LoTW, eQSL, QRZ.com, HamQTH and HRDLog carry the HTTP status, never the URL with its password or session key; every message is redacted before a dialog, the status bar, sync history or a log
+- [x] Requests only go over HTTPS to each service's own hosts, checked before every redirect; the eQSL ADIF link must be on www.eqsl.cc
+- [x] Passwords saved in sync history by v0.1.0 are cleaned once when the log opens (before the open backup); backups that still hold one are listed (File → Check backups for saved passwords…)
+- [x] HTTPX request logs are filtered, so turning on INFO logging shows no password
+- [x] Preferences: saved secrets are never shown, *Forget* removes one, QRZ API keys are typed in a password field and shown as dots; renaming an account deletes the old keychain entry; deleting the last profile with a callsign removes its QRZ key
+- [x] Only the system keychain is used: plaintext or `fail` keyring backends are refused; a failed delete is reported
+- [x] ADIF record tags that look like passwords are dropped on import and never exported or uploaded; LoTW upload removes its temporary files
+- [x] A failed download or upload no longer leaves the service "busy" until restart
+- [x] Tests run with an in-memory keychain and fail on any real network request
+- [x] Time On *Now* goes back to the default: both times now, Time Off follows the clock
+- [x] *Clear* (Esc) empties the whole Contact section (TX / RX MHz, mode, RST, power, propagation, satellite) whatever *Keep* says; logging needs a mode; an empty Power logs the profile's default
+- [x] Similar calls in Worked before: your log first, then calls QRZ.com / HamQTH know, then MASTER.SCP; a call not found online checks up to three one-letter-away MASTER.SCP calls; File → Update MASTER.SCP

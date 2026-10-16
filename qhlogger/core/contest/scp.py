@@ -43,21 +43,38 @@ class Scp:
         if len(t) < 3:
             return []
         out = []
-        n = len(t)
         for c in self.calls:
-            m = len(c)
-            if c == t or abs(m - n) > 1:
-                continue
-            if m == n:
-                if sum(1 for a, b in zip(c, t, strict=True) if a != b) == 1:
-                    out.append(c)
-            else:
-                short, long_ = (c, t) if m < n else (t, c)
-                i = 0
-                while i < len(short) and short[i] == long_[i]:
-                    i += 1
-                if short[i:] == long_[i + 1:]:
-                    out.append(c)
-            if len(out) >= limit:
-                break
+            if one_edit(t, c):
+                out.append(c)
+                if len(out) >= limit:
+                    break
         return sorted(out)
+
+
+def one_edit(a: str, b: str) -> bool:
+    """True when ``b`` is ``a`` with one character changed, added or removed."""
+    n, m = len(a), len(b)
+    if a == b or abs(m - n) > 1:
+        return False
+    if m == n:
+        return sum(1 for x, y in zip(a, b, strict=True) if x != y) == 1
+    short, long_ = (a, b) if n < m else (b, a)
+    i = 0
+    while i < len(short) and short[i] == long_[i]:
+        i += 1
+    return short[i:] == long_[i + 1:]
+
+
+def path_for(db_path: str | Path) -> Path:
+    """MASTER.SCP lives next to the log file; the DX and contest panels share it."""
+    return Path(db_path).parent / "MASTER.SCP"
+
+
+def download(dest: str | Path) -> int:
+    """Fetch MASTER.SCP from supercheckpartial.com. Returns the number of calls."""
+    import httpx  # noqa: PLC0415
+
+    r = httpx.get(SCP_URL, timeout=60, follow_redirects=True)
+    r.raise_for_status()
+    Path(dest).write_bytes(r.content)
+    return len(Scp.from_file(dest).calls)

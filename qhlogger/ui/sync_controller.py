@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from collections import defaultdict
 
@@ -22,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__, i18n
-from ..core import adif, importer, sats, timeutil
+from ..core import adif, importer, net, sats, timeutil
 from ..core.sync import apply, services, tqsl
 from .widgets import fmt, mode_text, run_async
 
@@ -91,12 +92,20 @@ class SyncController(QObject):
         dlg.show()
         return dlg
 
-    def _log(self, service: str, direction: str, started: str, **kw) -> None:
+    @staticmethod
+    def _safe(msg: str, secrets=()) -> str:
+        """Every message shown or stored goes through here: no URL query, password, key or upload code."""
+        return net.redact(msg, secrets)
+
+    def _log(self, service: str, direction: str, started: str, secrets=(), **kw) -> None:
+        if "message" in kw:
+            kw["message"] = self._safe(kw["message"], secrets)
         self.db.sync_log_add(apply.SERVICES[service], direction, started, **kw)
 
-    def _fail(self, service: str, direction: str, started: str, dlg, msg: str) -> None:
+    def _fail(self, service: str, direction: str, started: str, dlg, msg: str, secrets=()) -> None:
         dlg.close()
-        self.busy.discard(service + direction)
+        self.busy.discard(service + ("down" if direction == "download" else "up"))  # the keys upload()/download() use
+        msg = self._safe(msg, secrets)
         self._log(service, direction, started, errors=1, message=msg)
         QMessageBox.warning(self.win, apply.SERVICES[service], msg)
 
@@ -171,9 +180,12 @@ class SyncController(QObject):
 
         def work():
             out = []
-            for loc, fn, ids in jobs:
-                code, text = tqsl.sign_and_upload(path, fn, loc)
-                out.append((loc, ids, code, text))
+            try:
+                for loc, fn, ids in jobs:
+                    code, text = tqsl.sign_and_upload(path, fn, loc)
+                    out.append((loc, ids, code, self._safe(text)))
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
             return out
 
         def done(results):
@@ -233,7 +245,7 @@ class SyncController(QObject):
                                         (f", {len(bad)} " + tr("rejected") if bad else ""))
             self.message.emit(f"eQSL: {len(ok_ids)} " + tr("QSOs uploaded"))
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "upload", started, dlg, m))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "upload", started, dlg, m, [pw]))
 
     def _upload_qrz(self, qsos: list[dict], quiet: bool) -> None:
         by_call: dict[str, list[dict]] = defaultdict(list)
@@ -263,7 +275,7 @@ class SyncController(QObject):
                     ok, logid, reason = services.qrz_insert(key, rec, replace=replace, call=call)
                 except Exception as e:  # noqa: BLE001
                     ok, logid, reason = False, None, str(e)
-                out.append((qid, ok, logid, reason))
+                out.append((qid, ok, logid, self._safe(reason, [key])))
             return out
 
         def done(results):
@@ -280,7 +292,8 @@ class SyncController(QObject):
                                          if bad else ""))
             self.message.emit(f"QRZ.com: {len(ok)} " + tr("QSOs uploaded"))
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "upload", started, dlg, m))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "upload", started, dlg, m,
+                                                                     list(keys.values())))
 
     def _upload_hrdlog(self, qsos: list[dict], quiet: bool) -> None:
         call, code = self.prefs.get("hrdlog_call"), self.prefs.secret("hrdlog_code")
@@ -306,7 +319,7 @@ class SyncController(QObject):
                     ok, msg = services.hrdlog_upload(call, code, rec, update_key=key)
                 except Exception as e:  # noqa: BLE001
                     ok, msg = False, str(e)
-                out.append((qid, ok, msg))
+                out.append((qid, ok, self._safe(msg, [code])))
             return out
 
         def done(results):
@@ -323,7 +336,7 @@ class SyncController(QObject):
                                          if bad else ""))
             self.message.emit(f"HRDLog: {len(ok)} " + tr("QSOs uploaded"))
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("hrdlog", "upload", started, dlg, m))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("hrdlog", "upload", started, dlg, m, [code]))
 
     # ------------------------------------------------------------------ download
     def download(self, service: str) -> None:
@@ -369,7 +382,7 @@ class SyncController(QObject):
                                     tr("QSOs marked as uploaded."))
             self._show_unmatched("lotw", a)
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("lotw", "download", started, dlg, m))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("lotw", "download", started, dlg, m, [pw]))
 
     def _download_eqsl(self) -> None:
         user, pw = self.prefs.get("eqsl_user"), self.prefs.secret("eqsl_password")
@@ -399,7 +412,7 @@ class SyncController(QObject):
                                     tr("matched") + f", {a.changed} " + tr("updated") + ".")
             self._show_unmatched("eqsl", a)
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "download", started, dlg, m))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "download", started, dlg, m, [pw]))
 
     def _download_qrz(self) -> None:
         calls = sorted({p.get("station_callsign") for p in self.db.profiles() if p.get("station_callsign")})
@@ -431,7 +444,8 @@ class SyncController(QObject):
                                     tr("matched") + f", {a.changed} " + tr("updated") + ".")
             self._show_unmatched("qrz", a)
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "download", started, dlg, m))
+        run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "download", started, dlg, m,
+                                                                     list(keys.values())))
 
     def upload_on_log(self, qid: int) -> None:
         on = self.prefs.get("upload_on_log") or {}

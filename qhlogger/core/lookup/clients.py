@@ -5,15 +5,14 @@ from __future__ import annotations
 import threading
 import xml.etree.ElementTree as ET
 
-import httpx
-
 from ... import __version__
+from .. import net
 from .. import qso as qsomod
 
 TIMEOUT = 12.0
 
 
-class LookupError_(Exception):
+class LookupError_(net.NetError):
     pass
 
 
@@ -40,10 +39,11 @@ class QrzXml:
         self.key: str | None = None
         self.lock = threading.Lock()
 
+    def secrets(self) -> list[str]:
+        return [s for s in (self.password, self.key) if s]
+
     def _get(self, params: dict) -> ET.Element:
-        r = httpx.get(self.URL, params=params, timeout=TIMEOUT,
-                      headers={"User-Agent": f"QHlogger/{__version__}"})
-        r.raise_for_status()
+        r = net.request("qrz_xml", "GET", self.URL, params=params, timeout=TIMEOUT)
         return _strip_ns(ET.fromstring(r.content))
 
     def login(self) -> None:
@@ -112,9 +112,11 @@ class HamQth:
         self.sid: str | None = None
         self.lock = threading.Lock()
 
+    def secrets(self) -> list[str]:
+        return [s for s in (self.password, self.sid) if s]
+
     def _get(self, params: dict) -> ET.Element:
-        r = httpx.get(self.URL, params=params, timeout=TIMEOUT, headers={"User-Agent": f"QHlogger/{__version__}"})
-        r.raise_for_status()
+        r = net.request("hamqth", "GET", self.URL, params=params, timeout=TIMEOUT)
         return _strip_ns(ET.fromstring(r.content))
 
     def login(self) -> None:
@@ -182,8 +184,8 @@ def lookup_chain(call: str, clients: list) -> tuple[dict | None, str | None, lis
     for c in clients:
         try:
             d = c.lookup(call)
-        except (LookupError_, httpx.HTTPError, ET.ParseError) as e:
-            errors.append(str(e))
+        except (net.NetError, ET.ParseError) as e:
+            errors.append(net.redact(str(e), c.secrets()))
             continue
         if d:
             return {k: v for k, v in d.items() if v not in (None, "")}, c.name, errors

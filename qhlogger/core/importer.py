@@ -191,8 +191,11 @@ def run(db, qsos: Iterable[dict], *, merge: bool = False, dry_run: bool = False,
     return res
 
 
-def read_adif(data: bytes | str) -> tuple[dict, list[dict]]:
+def read_adif(data: bytes | str, dropped: list[str] | None = None) -> tuple[dict, list[dict]]:
+    """Parse an ADIF file. Credential-looking record tags are left out; their names go to ``dropped``."""
     header, records = adif.parse(data)
+    if dropped is not None:
+        dropped.extend(t for r in records for t in r if qsomod.is_credential_tag(t))
     pid = header.get("PROGRAMID")
     qsos = [qsomod.from_adif(r, program_id=pid) for r in records]
     return header, qsos

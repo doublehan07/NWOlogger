@@ -23,8 +23,9 @@ from PySide6.QtWidgets import (
 )
 
 from ... import i18n
-from ...core import bands, callsign, dupes, dxcc, geo, modes, regions, sats, timeutil
+from ...core import bands, callsign, dupes, dxcc, geo, modes, regions, sats, similar, timeutil
 from ...core import qso as qsomod
+from ...core.contest import scp as scpmod
 from ...core.operators import OperatorSession, is_club
 from .. import theme
 from ..list_picker import ListPicker
@@ -86,6 +87,10 @@ class DXPanel(QWidget):
         self._hidden: dict[str, Any] = {}  # cont etc. from cty, not shown
         self._last_lookup_call = ""
         self.w: dict[str, Any] = {}
+        self._index = similar.CallIndex(db.calls_last_worked(), db.cached_calls(),
+                                        scpmod.Scp.from_file(scpmod.path_for(db.path)).calls)
+        self._asked_online: set[str] = set()
+        self._similar_key: tuple | None = None
         self._build()
         self._clock = QTimer(self)
         self._clock.timeout.connect(self._tick)
@@ -98,6 +103,11 @@ class DXPanel(QWidget):
         self._lookup_timer.setSingleShot(True)
         self._lookup_timer.setInterval(900)
         self._lookup_timer.timeout.connect(self._auto_lookup)
+        self._index_timer = QTimer(self)
+        self._index_timer.setSingleShot(True)
+        self._index_timer.setInterval(300)
+        self._index_timer.timeout.connect(lambda: self._index.set_worked(self.db.calls_last_worked()))
+        self.db.add_listener(self._on_db_change)
         self.reload_profiles()
         self.clear_form(keep_sticky=False)
 
@@ -201,7 +211,7 @@ class DXPanel(QWidget):
         rxl.addWidget(self.rx_sync)
         c.row(3, tr("RX MHz"), rxw)
         c.grid.addWidget(self.band_rx_lab, 3, 2)
-        self.mode = mode_combo(self.prefs)
+        self.mode = mode_combo(self.prefs, blank=True)
         self.mode.setToolTip(tr("Choose which modes are listed in Preferences → Modes"))
         self._mode_prev = "SSB"
         set_combo_data(self.mode, "SSB")
@@ -291,6 +301,20 @@ class DXPanel(QWidget):
         grid.addWidget(m, 0, 2)
 
         wb = Section(tr("Worked before"))
+        self.similar = QTableWidget(0, 2)
+        self.similar.setHorizontalHeaderLabels([tr("Similar calls"), tr("Last QSO or where it is known")])
+        self.similar.setToolTip(tr("Your log first (most recent first), then calls QRZ.com / HamQTH know, then "
+                                   "MASTER.SCP. Click a call to use it."))
+        self.similar.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.similar.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.similar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.similar.verticalHeader().setVisible(False)
+        self.similar.verticalHeader().setDefaultSectionSize(20)
+        self.similar.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.similar.horizontalHeader().setStretchLastSection(True)
+        self.similar.hide()
+        self.similar.cellClicked.connect(self._pick_similar)
+        wb.add(self.similar)
         self.matrix = QTableWidget(0, 0)
         self.matrix.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.matrix.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -326,8 +350,9 @@ class DXPanel(QWidget):
         prev.setToolTip(tr("Copy the fields of your last QSO"))
         prev.clicked.connect(self.recall_previous)
         clear = QPushButton(tr("Clear"))
-        clear.setToolTip(tr("Clear the form (Esc)"))
-        clear.clicked.connect(lambda: self.clear_form())
+        clear.setToolTip(tr("Clear the whole form, including frequency, mode, reports, power, propagation and "
+                            "satellite (Esc). Keep only applies after Log QSO."))
+        clear.clicked.connect(lambda: self.clear_form(full=True))
         bar.addWidget(self.lookup_btn)
         bar.addWidget(prev)
         bar.addWidget(clear)
@@ -348,7 +373,7 @@ class DXPanel(QWidget):
         self.delete_btn.setProperty("danger", True)
         self.delete_btn.clicked.connect(self._delete_editing)
         self.cancel_btn = QPushButton(tr("Cancel"))
-        self.cancel_btn.clicked.connect(lambda: self.clear_form())
+        self.cancel_btn.clicked.connect(lambda: self.clear_form(full=True))
         self.log_btn = primary(tr("Log QSO"))
         self.log_btn.setMinimumWidth(140)
         self.log_btn.setToolTip(tr("Log the QSO (Enter)"))
@@ -368,7 +393,7 @@ class DXPanel(QWidget):
                 wdg.returnPressed.connect(self.commit)
         self.call.returnPressed.connect(self.commit)
         self._rx_sync_toggled(self.rx_sync.isChecked())
-        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=lambda: self.clear_form())
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=lambda: self.clear_form(full=True))
 
     # ------------------------------------------------------------------ profile
     def reload_profiles(self) -> None:
@@ -393,6 +418,7 @@ class DXPanel(QWidget):
             return
         self.prefs.set_value("current_profile", pid)
         self._update_operator()
+        self._power_hint()
         self._check_timer.start()
 
     def current_profile(self) -> dict | None:
@@ -430,8 +456,16 @@ class DXPanel(QWidget):
     def stamp(self, which: str) -> None:
         now = timeutil.now_iso()
         if which == "on":
+            # Back to the default: Time On is now (held once a call is typed) and Time Off follows the clock.
             self.w["time_on"].set_iso(now)
-            self._time_on_changed()
+            self.w["time_off"].set_iso(now)
+            if self.edit_id is None:
+                self.time_on_locked = bool(callsign.clean(self.call.text()))
+                self.time_off_mode = "live"
+            else:
+                self.time_off_mode = "follow"  # no live clock while editing a saved QSO
+            self._check_times()
+            self._check_timer.start()
         else:
             self.w["time_off"].set_iso(now)
             self.time_off_mode = "manual"
@@ -671,6 +705,12 @@ class DXPanel(QWidget):
 
     def _mode_changed(self, text: str) -> None:
         m, s = modes.normalize(text)
+        if not m:  # no mode chosen yet: no default report either
+            for col in ("rst_sent", "rst_rcvd"):
+                if self.w[col].is_auto():
+                    self.w[col].clear_all()
+            self._check_timer.start()
+            return
         rst = modes.default_rst(m, s)
         for col in ("rst_sent", "rst_rcvd"):
             w = self.w[col]
@@ -801,6 +841,76 @@ class DXPanel(QWidget):
         self.compare_btn.setVisible(hit is not None)
         self.summary.setText("   —   ".join(summary_parts))
         self._refresh_history(c, q.get("band"))
+        self._refresh_similar(c)
+
+    # ------------------------------------------------------------------ similar calls
+    def _on_db_change(self, kind: str, _ids: list[int]) -> None:
+        if kind in ("insert", "delete", "reset", "update"):
+            self._index_timer.start()
+
+    def _refresh_similar(self, text: str) -> None:
+        key = (text, self._index.version, self.edit_id)
+        if key == self._similar_key:
+            return
+        self._similar_key = key
+        matches = self._index.find(text) if len(text) >= 2 else []
+        info = self.db.call_summaries([m.call for m in matches if m.tier == similar.WORKED])
+        t = theme.tokens()
+        self.similar.setRowCount(len(matches))
+        for i, m in enumerate(matches):
+            if m.tier == similar.WORKED:
+                d = info.get(m.call, {})
+                parts = [f"{d.get('n', 0)}×", fmt("time_on", d.get("time_on"))[:10],
+                         f"{bands.display_band(d.get('band'))} {mode_text(d)}".strip()]
+                if d.get("sat_name"):
+                    parts.append(d["sat_name"])
+                if d.get("confirmed"):
+                    parts.append(d["confirmed"])
+                detail = " · ".join(x for x in parts if x)
+            elif m.tier == similar.KNOWN:
+                detail = tr("not worked") + " · " + (m.source or "QRZ.com / HamQTH")
+            else:
+                detail = tr("not worked") + " · MASTER.SCP"
+            call_it = QTableWidgetItem(m.call)
+            font = theme.mono_font()
+            font.setBold(m.kind == similar.EXACT)
+            call_it.setFont(font)
+            det_it = QTableWidgetItem(detail)
+            if m.tier == similar.WORKED:
+                call_it.setForeground(QColor(t.accent))
+            else:
+                for it in (call_it, det_it):
+                    it.setForeground(QColor(t.muted))
+            self.similar.setItem(i, 0, call_it)
+            self.similar.setItem(i, 1, det_it)
+        # Only as tall as its rows (up to 4, the rest scroll), so the matrix and history keep their room.
+        self.similar.setVisible(bool(matches))
+        if matches:
+            head = self.similar.horizontalHeader().sizeHint().height()
+            self.similar.setFixedHeight(head + min(len(matches), 4) * 20 + 2)
+
+    def _pick_similar(self, row: int, _col: int) -> None:
+        it = self.similar.item(row, 0)
+        if not it:
+            return
+        self.call.setText(it.text())
+        self._call_edited(it.text())
+        self.call.setFocus()
+
+    def note_known(self, call: str, source: str) -> None:
+        """A QRZ.com / HamQTH lookup found this call: list it as known from now on."""
+        self._index.add_known({call: source})
+        self._check_timer.start()
+
+    def online_candidates(self, call: str) -> list[str]:
+        """Up to 3 MASTER.SCP calls one character away to check online; each is only asked once per run."""
+        out = self._index.online_candidates(call, skip=self._asked_online)
+        self._asked_online.update(out)
+        return out
+
+    def reload_scp(self) -> None:
+        self._index.set_scp(scpmod.Scp.from_file(scpmod.path_for(self.db.path)).calls)
+        self._check_timer.start()
 
     def _refresh_history(self, call: str, band: str | None) -> None:
         rows = self.db.worked_before(call, 60) if call else []
@@ -842,8 +952,10 @@ class DXPanel(QWidget):
                 self.matrix.setItem(gi, bi, it)
 
     # ------------------------------------------------------------------ actions
-    def clear_form(self, keep_sticky: bool = True) -> None:
-        keep = {k for k, cb in self.sticky.items() if cb.isChecked()} if keep_sticky else set()
+    def clear_form(self, keep_sticky: bool = True, *, full: bool = False) -> None:
+        """Reset the form for the next QSO. ``full`` (Clear, Esc, Cancel) also empties frequency, mode, reports,
+        power, propagation and satellite, whatever Keep says."""
+        keep = {k for k, cb in self.sticky.items() if cb.isChecked()} if keep_sticky and not full else set()
         freq, freq_rx = self._get("freq"), self._get("freq_rx")
         mode, power = combo_value(self.mode), self._get("tx_pwr")
         sat, prop = combo_value(self.sat), combo_value(self.prop)
@@ -869,10 +981,16 @@ class DXPanel(QWidget):
                 self._set("freq_rx", freq_rx)
         if "mode" in keep or ("sat" in keep and sat):
             set_combo_data(self.mode, mode or "SSB")
+        if full:
+            self.mode.blockSignals(True)
+            set_combo_data(self.mode, "")
+            self.mode.blockSignals(False)
+            self.rx_sync.setChecked(bool(self.prefs.get("rx_sync")))
         if "power" in keep:
             self._set("tx_pwr", power)
-        elif (self.current_profile() or {}).get("tx_pwr"):
+        elif not full and (self.current_profile() or {}).get("tx_pwr"):
             self._set("tx_pwr", self.current_profile()["tx_pwr"])
+        self._power_hint()
         self._mode_changed(combo_value(self.mode) or "")
         self.time_on_locked = False
         self.time_off_mode = "live"
@@ -887,6 +1005,11 @@ class DXPanel(QWidget):
         self._freq_changed()
         self._refresh_checks()
         self.call.setFocus()
+
+    def _power_hint(self) -> None:
+        """An empty Power shows the profile's default power, which is used when you log without typing one."""
+        d = (self.current_profile() or {}).get("tx_pwr")
+        self.w["tx_pwr"].setPlaceholderText(f"{fmt('tx_pwr', d)} W" if d else tr("W"))
 
     def recall_previous(self) -> None:
         last = self.db.last_qso()
@@ -962,6 +1085,10 @@ class DXPanel(QWidget):
             QMessageBox.warning(self, tr("Missing frequency"), tr("Enter the frequency (MHz) so the band is known."))
             self.w["freq"].setFocus()
             return
+        if self.edit_id is None and not nq.get("mode"):
+            QMessageBox.warning(self, tr("Missing mode"), tr("Choose the mode."))
+            self.mode.setFocus()
+            return
         if nq.get("time_off") and nq.get("time_on") and nq["time_off"] < nq["time_on"]:
             QMessageBox.warning(self, tr("Check the times"), tr("Time Off is earlier than Time On. Fix the times; "
                                                                 "the QSO was not logged."))
@@ -1002,6 +1129,8 @@ class DXPanel(QWidget):
         for col in PROFILE_COLS:
             if prof.get(col) not in (None, ""):
                 nq[col] = prof[col]
+        if nq.get("tx_pwr") in (None, "") and prof.get("tx_pwr"):
+            nq["tx_pwr"] = prof["tx_pwr"]
         if op:
             nq["operator"] = op
         if prof.get("id"):
@@ -1010,6 +1139,7 @@ class DXPanel(QWidget):
             nq["dupe_flag"], nq["dupe_of"] = hit.level, hit.other_id
         with self.db.batch(tr("Log QSO")):
             qid = self.db.insert(nq)
+        self._index.add_worked({nq["call"]: nq.get("time_on") or ""})
         self.ops.touch(prof)
         self.message.emit(tr("Logged") + f" {qsomod.summary(nq)}")
         self.logged.emit(qid)

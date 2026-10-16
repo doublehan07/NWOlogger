@@ -269,3 +269,21 @@ def test_sample_fixture_imports(db):
     res = importer.run(db, qsos)
     assert res.added == 17 and res.dupes == 1 and res.suspects >= 1
     assert db.count("sat_name = 'ARISS'") == 1
+
+
+def test_similar_calls_ranking():
+    from qhlogger.core import similar
+
+    idx = similar.CallIndex({"BA1PK": "2026-10-10T15:19:00Z", "BA1PKA": "2026-10-01T00:00:00Z",
+                             "BA1PK/P": "2026-10-12T00:00:00Z"}, {"BA1PX": "QRZ.com"}, ["BA1PQ", "BA1PK", "XBA1P"])
+    # Worked (most recent first), then known on QRZ.com / HamQTH, then MASTER.SCP; better matches first.
+    assert [m.call for m in idx.find("BA1P")] == ["BA1PK/P", "BA1PK", "BA1PKA", "BA1PX", "BA1PQ", "XBA1P"]
+    # A typo: one character changed.
+    assert [m.call for m in idx.find("BA1PJ")] == ["BA1PK/P", "BA1PK", "BA1PX", "BA1PQ"]
+    # A portable call matches its base call exactly.
+    top = idx.find("BA1PK/P")[:2]
+    assert {m.call for m in top} == {"BA1PK/P", "BA1PK"} and all(m.kind == similar.EXACT for m in top)
+    assert idx.find("B") == []
+    idx.set_scp(["BA1PQ", "BA1PX", "BA1PWX", "BA1PZ"])
+    assert idx.online_candidates("BA1PW") == ["BA1PQ", "BA1PZ", "BA1PWX"]  # not BA1PX: already known
+    assert idx.online_candidates("BA1PW", skip={"BA1PQ"}, limit=1) == ["BA1PZ"]

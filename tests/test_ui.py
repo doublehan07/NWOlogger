@@ -253,3 +253,130 @@ def test_custom_mode_list(win, qtbot):
     assert items == ["CW", "FT8", OTHER]
 
 
+
+
+def test_time_on_now_returns_to_the_default(win, qtbot, monkeypatch):
+    from qhlogger.core import timeutil
+
+    p = win.dx
+    p.call.setText("BA1AA")
+    p._call_edited("BA1AA")
+    p.w["time_on"].set_iso("2026-10-10T15:19:00Z")
+    p._time_edited("on")
+    assert p.time_off_mode == "follow" and p.w["time_off"].iso() == "2026-10-10T15:20:00Z"
+    monkeypatch.setattr(timeutil, "now_iso", lambda: "2026-10-16T08:00:00Z")
+    p.stamp("on")
+    assert p.w["time_on"].iso() == p.w["time_off"].iso() == "2026-10-16T08:00:00Z"
+    assert p.time_off_mode == "live" and p.time_on_locked  # a call is entered: Time On is held
+    monkeypatch.setattr(timeutil, "now_iso", lambda: "2026-10-16T08:00:30Z")
+    p._tick()
+    assert p.w["time_on"].iso() == "2026-10-16T08:00:00Z" and p.w["time_off"].iso() == "2026-10-16T08:00:30Z"
+    # Without a call, Time On keeps ticking too, like a fresh form.
+    p.clear_form(full=True)
+    p.w["time_on"].set_iso("2026-10-10T15:19:00Z")
+    p._time_edited("on")
+    p.stamp("on")
+    monkeypatch.setattr(timeutil, "now_iso", lambda: "2026-10-16T08:01:00Z")
+    p._tick()
+    assert p.w["time_on"].iso() == p.w["time_off"].iso() == "2026-10-16T08:01:00Z"
+
+
+def test_clear_empties_the_contact_section_whatever_keep_says(win, qtbot):
+    from qhlogger.ui.widgets import combo_value, set_combo_data
+
+    p = win.dx
+    for cb in p.sticky.values():
+        cb.setChecked(True)
+    p.call.setText("BA1AA")
+    p._call_edited("BA1AA")
+    set_combo_data(p.sat, "SO-50")
+    p.rx_sync.setChecked(False)
+    p.w["freq"].setText("145.85")
+    p.w["freq_rx"].setText("436.795")
+    p.mode.setCurrentText("FM")
+    for col, v in (("rst_sent", "59"), ("rst_rcvd", "57"), ("tx_pwr", "25")):
+        p.w[col].setText(v)
+    set_combo_data(p.prop, "SAT")
+    p.clear_form(full=True)
+    for col in ("freq", "freq_rx", "rst_sent", "rst_rcvd", "tx_pwr"):
+        assert p.w[col].text() == "", col
+    assert combo_value(p.mode) is None and combo_value(p.prop) is None and combo_value(p.sat) is None
+    assert p.call.text() == ""
+    # Keep still applies after Log QSO.
+    p.call.setText("BA1BB")
+    p._call_edited("BA1BB")
+    p.w["freq"].setText("14.2")
+    p.mode.setCurrentText("USB")
+    p.w["tx_pwr"].setText("100")
+    p.commit()
+    assert win.db.count() == 1
+    assert p.w["freq"].text() == "14.2" and combo_value(p.mode) == "USB" and p.w["tx_pwr"].text() == "100"
+
+
+def test_log_needs_a_mode_and_uses_the_profile_power(win, qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    p = win.dx
+    prof = win.db.default_profile()
+    prof["tx_pwr"] = 25.0
+    win.db.save_profile(prof)
+    p.clear_form(full=True)
+    assert p.w["tx_pwr"].text() == "" and p.w["tx_pwr"].placeholderText() == "25 W"
+    assert p.w["rst_sent"].text() == ""  # no mode, no default report
+    p.call.setText("BA1AA")
+    p._call_edited("BA1AA")
+    p.w["freq"].setText("14.2")
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: shown.append(a[1])))
+    p.commit()
+    assert shown == ["Missing mode"] and win.db.count() == 0
+    p.mode.setCurrentText("CW")
+    assert p.w["rst_sent"].text() == "599"
+    p.commit()
+    assert win.db.count() == 1 and win.db.get(1)["tx_pwr"] == 25
+
+
+def test_similar_calls_in_worked_before(win, qtbot):
+    log_one(win, qtbot, "BA1PK")
+    p = win.dx
+    win.db.cache_put("BA1PX", "QRZ.com", {"call": "BA1PX"})
+    p.note_known("BA1PX", "QRZ.com")
+    p._index.set_scp({"BA1PQ", "BA1PK"})
+    p.call.setText("BA1P")
+    p._call_edited("BA1P")
+    p._refresh_checks()
+    rows = [(p.similar.item(r, 0).text(), p.similar.item(r, 1).text()) for r in range(p.similar.rowCount())]
+    assert [c for c, _ in rows] == ["BA1PK", "BA1PX", "BA1PQ"]
+    assert rows[0][1].startswith("1×") and "QRZ.com" in rows[1][1] and "MASTER.SCP" in rows[2][1]
+    p._pick_similar(1, 0)
+    assert p.call.text() == "BA1PX"
+
+
+def test_unknown_call_checks_one_edit_candidates_online(win, qtbot, monkeypatch):
+    from qhlogger.core.lookup import clients as lookup_clients
+
+    class FakeClient:
+        name = "QRZ.com"
+
+        def secrets(self):
+            return []
+
+    win._lookup_clients = [FakeClient()]
+    asked = []
+
+    def chain(call, _clients):
+        asked.append(call)
+        return ({"call": call, "first_name": "Li"}, "QRZ.com", []) if call == "BA1PZ" else (None, None, [])
+
+    monkeypatch.setattr(lookup_clients, "lookup_chain", chain)
+    win.dx._index.set_scp({"BA1PQ", "BA1PZ", "BA1PWX", "BA1PY", "BA1AA"})
+    win.dx.call.setText("BA1PW")
+    win.dx._call_edited("BA1PW")
+    win.lookup("BA1PW")
+    qtbot.waitUntil(lambda: "BA1PZ" in win.dx._index.known)
+    assert asked[0] == "BA1PW" and sorted(asked[1:]) == ["BA1PQ", "BA1PY", "BA1PZ"]
+    assert win.db.cache_get("BA1PZ", 30)
+    # Each candidate is asked once per run: the next "not found" checks the one left.
+    win.lookup("BA1PW")
+    qtbot.waitUntil(lambda: "BA1PWX" in asked)
+    assert asked.count("BA1PQ") == 1

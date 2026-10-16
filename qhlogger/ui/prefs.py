@@ -90,6 +90,23 @@ class Prefs:
         service, user_key = SECRET_KEYS[key]
         return secrets.set(service, self.get(user_key) or "", value)
 
+    def has_secret(self, key: str) -> bool:
+        return bool(self.secret(key))
+
+    def account_renamed(self, key: str, old_user: str, new_user: str) -> bool:
+        """The account name changed, so the keychain entry under the old name can never be read again: delete it.
+        When only the case or spacing changed (the same account), the secret moves to the new name."""
+        service, _ = SECRET_KEYS[key]
+        if not old_user or old_user == new_user:
+            return True
+        old = secrets.get(service, old_user)
+        if old is None:
+            return True
+        ok = True
+        if new_user and old_user.strip().lower() == new_user.strip().lower() and not secrets.get(service, new_user):
+            ok = secrets.set(service, new_user, old)
+        return secrets.delete(service, old_user) and ok
+
     def qrz_api_key(self, station_call: str) -> str | None:
         return secrets.get("qrz_logbook", station_call.upper()) if station_call else None
 

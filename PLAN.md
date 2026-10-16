@@ -158,6 +158,7 @@ Notes on the model:
 ### 4.3 Safety
 
 - Automatic backup on open (rotating, keeps N copies), plus a backup before every import and bulk edit.
+  - The one-time sync history cleanup (§8.2) runs before the open backup, so a new backup never holds an old password.
 - All writes happen in transactions.
 - Schema migrations are versioned.
 - Undo is available for bulk edit, delete and import.
@@ -243,7 +244,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 │ Address / City                │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │
 │ Province / Country            │ Sat [SO-50 ▾]  Sat mode [ ]  Prop [SAT]  Power [25]  RST S [59]  RST R [59]  │
 │ Email / Web                   │ Grid  ITU  CQ  DXCC  IOTA  SOTA  POTA  WWFF  SKCC  QSL Via                    │
-│ Comment / Notes               │ ┌ Worked before: band × mode-group matrix, last QSOs, NEW DXCC/BAND/MODE ┐    │
+│ Comment / Notes               │ ┌ Worked before: similar calls, band × mode matrix, last QSOs, NEW … ┐        │
 │ [LookUp] [Previous] [TimeOn] [TimeOff] [Log QSO ⏎] [Clear ⎋]  sticky: ☑Freq ☑Mode ☑Sat ☑Pwr                  │
 ├ Tabs: [ Log | Paper QSL | Sync history ] ────────────────────────────────────────────────────────────────────┤
 │ 1434 QSOs · 37 shown · /Users/.../qhlog.sqlite        DXCC 75 wkd / 68 cfm                                   │
@@ -257,7 +258,8 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
   - A summary line under the call shows the last confirmation (e.g. "Confirmed 2025-08-18 on 70CM FM"), plus bearing and distance computed from the two grids.
   - **Times:**
     - Time On stamps itself when you start typing a call, and Time Off follows the clock until you log.
-    - If you change Time On (by hand or with *Now*), Time Off becomes Time On + 1 min, and keeps following Time On.
+    - If you change Time On by hand, Time Off becomes Time On + 1 min, and keeps following Time On.
+    - *Now* next to Time On goes back to the default: Time On is now (held once a call is typed) and Time Off follows the clock again. When editing a saved QSO there is no live clock, so both become now.
     - When you edit an existing QSO, changing Time On keeps its original duration.
     - Changing only Time Off never touches Time On.
     - A Time Off earlier than Time On turns red, and logging is refused with a warning.
@@ -274,9 +276,16 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
     - Picking one sets propagation SAT and fills the frequencies and mode from your last QSO on it (else its defaults).
     - Per-service names are handled on upload (§8.2).
   - **Operator** is a field in the Contact section (and in the contest bar). See §6.3.
-  - *Sticky* fields carry over to the next QSO, which matters for satellite passes.
+  - *Sticky* fields (*Keep*: Freq, Mode, Sat, Power) carry over to the next QSO after Log QSO, which matters for satellite passes.
+  - *Clear* (and Esc, and Cancel while editing) empties the whole form, Contact section included: TX / RX MHz, Mode (a blank "—" entry), RST, Power, Propagation and Satellite, whatever *Keep* says. RST stays blank until a mode is chosen; logging without a mode is refused.
+  - An empty Power shows the station profile's default power in grey, and that power is logged.
   - *Previous* recalls the last QSO's fields.
-  - Enter logs the QSO, Esc clears the form.
+  - Enter logs the QSO.
+  - **Similar calls** sit at the top of Worked before, updated while you type (from two characters):
+    - A call matches when it is the typed text, starts with it, contains it, or is one character away (changed, added or dropped). Portable calls match through their base call.
+    - Order: calls in your log (count, last QSO, confirmations; most recent first), then calls not worked that QRZ.com / HamQTH have returned (the lookup cache), then MASTER.SCP. Within each group, better matches first.
+    - Click a call to use it. The matrix and last QSOs below still show the typed call.
+    - The lists are kept in memory and updated when you log, so typing never queries the log file.
   - Double-clicking a row loads that QSO into the panel for editing (Save / Cancel).
 - **Log table.** A `QAbstractTableModel` over SQL with lazy loading (`fetchMore`), so 100k+ QSOs stay fast.
   - Clicking any header sorts with SQL `ORDER BY`. `time_on` breaks ties.
@@ -451,6 +460,13 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - LoTW defaults come from the TQSL satellite list.
   - Example: the ISS is `ARISS` for LoTW (TQSL accepts only that) but `ISS` for eQSL (eQSL accepts only that). A QSO stored as `ARISS` is uploaded to eQSL as `ISS`, and eQSL records that say `ISS` match it.
 - **Credentials:** kept only in the OS keychain. Every request uses HTTPS and the User-Agent `QHlogger/<ver> (<call>)`.
+  - **Keychain:** only the platform stores are used (macOS Keychain, Windows Credential Manager, SecretService / KWallet). A plaintext, `fail` or `null` keyring backend is refused, and Preferences says so.
+  - **Requests** go through `core/net.py`: HTTPS only, to that service's own hosts (lotw.arrl.org, www.eqsl.cc, logbook.qrz.com, xmldata.qrz.com, www.hamqth.com, robot.hrdlog.net), checked before every redirect hop; no URL user info, at most 5 redirects. The eQSL ADIF link must be on www.eqsl.cc (an `http://` link there is upgraded).
+  - **Errors** name the service and HTTP status (e.g. "LoTW: HTTP 503 Service Unavailable (the service is down or busy; try again later)"), never the URL. Service reasons (QRZ `REASON`, HRDLog `<error>`, eQSL `Error` lines) are kept, because they say why a QSO was refused.
+  - **Redaction** (`net.redact`) runs on every message before a dialog, the status bar, `sync_log` or a log record: URL queries are removed, the secrets of that request (raw, URL- and HTML-encoded) become `•••`, and `password=…`-style pairs are masked. `sync_log_add` applies it again. HTTPX's request log is filtered the same way.
+  - **v0.1.0 leak:** an HTTP error during a LoTW / eQSL download stored the full URL, password included, in `sync_log`. On the first open after the update, those messages are rewritten (`secure_delete`, `VACUUM`, WAL truncated); QSO data is not touched. Backups are only scanned and listed for you to delete (File → Check backups for saved passwords…), with a reminder to change the passwords.
+  - **ADIF records** never carry credentials: record tags such as `EQSL_PSWD` or anything with `PASSWORD` are dropped on import (the preview says how many) and never exported or uploaded.
+  - LoTW / eQSL / QRZ XML still send the password as a GET query, as their APIs document; whether they accept POST is to be checked with real accounts.
 
 ### 8.3 LoTW
 
@@ -499,6 +515,8 @@ The lookup runs when the call field loses focus, after a short pause while typin
 2. **Cache** (`lookup_cache`, TTL 30 days by default).
 3. **QRZ.com XML** (`xmldata.qrz.com/xml/current/`, session key) gives name, address, QTH, state, county, grid, email, QSL via and LoTW/eQSL flags. Full data needs an XML subscription.
 4. **HamQTH** fallback: `xml.php` session, valid 1 h. Its API v2 (bearer token) will be checked during implementation.
+
+**Similar calls** (§6) use your log, the lookup cache and MASTER.SCP. The XML APIs only look up exact calls, so when a call comes back "not found", up to three MASTER.SCP calls one character away (a changed character first) are looked up on QRZ.com / HamQTH. Those found are cached and listed as known; each candidate is asked once per run. This uses lookup quota, and needs MASTER.SCP (File → Update MASTER.SCP).
 
 Lookups fill **empty fields only** and never overwrite what you typed. They run in a background thread, and a result that arrives after the call has changed is thrown away. Fields filled by lookup are tinted until you edit them, so you can tell them from typed ones.
 
@@ -609,6 +627,7 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 | Logging | Sticky fields, RX = TX default, default RST by mode group, dupe block window (30 s), dupe warning window (24 h), allow-dupes switch, auto-lookup |
 | Lookup | QRZ XML user/password, HamQTH user/password, cache TTL, `cty.csv` update |
 | Services | LoTW user/password + TQSL path + station location per profile; eQSL user/password/QTH nickname; QRZ API key per logbook; HRDLog call + upload code (+ website login if download works); upload-on-log switches; satellite name map per service |
+| Secrets (Lookup, Services) | Saved passwords, codes and keys are never loaded into the form: a blank field keeps the saved one, *Forget* removes it on Save. QRZ API keys are typed in a password field and shown as dots. Renaming an account deletes the old account's entry (moved instead when only the case changed) |
 | Database | Path, backup count |
 
 ## 12. Milestones
@@ -654,6 +673,12 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | Dupe groups | The compare window shows every QSO of a dupe group, is editable, and can keep one and merge the others | §6.2 |
 | Logo and About | The BY1QH logo is the app icon; About lists authors Han Zhang (BI1NWO) and Claude, copyright Han Zhang, credit BY1QH | §14 |
 | License | MIT | `LICENSE` |
+| Secrets in errors | Errors carry the HTTP status, never the URL; every message is redacted before it is shown, stored or logged; provider reasons are kept | §8.2 |
+| Account renamed | Its old keychain entry is deleted (moved when only the case changed) | §11 |
+| v0.1.0 leaked passwords | Cleaned once in the open log; backups are listed for you to delete; change the LoTW / eQSL passwords | §8.2 |
+| Similar calls | Log, then QRZ.com / HamQTH cache, then MASTER.SCP; a "not found" call checks up to three one-character-away MASTER.SCP calls online | §6, §9 |
+| Clear | Empties the whole form and ignores *Keep*; Power shows the profile default and logs it when left empty | §6 |
+| Time On *Now* | Back to the default: both times now, Time Off follows the clock | §6 |
 
 ### Open
 
@@ -679,6 +704,7 @@ Where the code differs from, or adds to, the plan above:
 - **The country file** is checked weekly and downloaded to `Documents/QHlogger/cty.csv`. The bundled copy is the fallback.
 - **The MacLoggerDX importer** also maps the remaining MLDX columns: `azimuth`, `elevation`, `distance`, latitude/longitude and the `ext_val_*` fields go to `extra`. MLDX grid-line pairs (`OM32,OM33`) go to `*_VUCC_GRIDS`.
 - **Screenshots:** `tools/screenshots.py` renders `docs/screenshots/` off-screen from made-up QSOs. Test and screenshot runs set `QHLOGGER_SETTINGS=<file.ini>`, so they never touch your real preferences.
+- **Tests and the outside world:** `tests/conftest.py` gives every test an in-memory keychain and a network transport that fails the test on any request. Service tests answer real `httpx` requests through `mock_net`; `tests/test_security.py` checks that fake secrets never appear in errors, dialogs, `sync_log`, the WAL, backups or HTTPX logs.
 - **Branding:** the BY1QH logo (`resources/brand/by1qh.png`) is the window and app icon; PyInstaller converts it to `.icns` / `.ico` with Pillow at build time. Help → About (or the version button in the toolbar) shows the authors (Han Zhang BI1NWO, Claude Opus 5.5 Extra High), copyright (Han Zhang), the BY1QH credit, data and software credits, and system info that can be copied into bug reports.
 - **Tester sample:** `tests/fixtures/sample.adi` is a synthetic 17-QSO log (satellite pass, HF, one strict and one suspicious dupe) for trying the app; a test keeps it importable.
 - **TQSL data:** the propagation list and five extra satellites come from TQSL's current configuration (`config.tq6` v11.34, lotw.arrl.org). RS95S is on LoTW's FAQ list but not yet in that configuration; both sources are kept.

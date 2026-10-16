@@ -31,6 +31,7 @@ from ... import i18n
 from ...core import bands, callsign, dxcc, modes, regions, timeutil
 from ...core import qso as qsomod
 from ...core.contest import cabrillo
+from ...core.contest import scp as scpmod
 from ...core.contest.engine import (
     ContestDef,
     Engine,
@@ -41,7 +42,7 @@ from ...core.contest.engine import (
     store_exchange,
     validate_value,
 )
-from ...core.contest.scp import SCP_URL, Scp
+from ...core.contest.scp import Scp
 from ...core.operators import is_club
 from .. import theme
 from ..operator_field import OperatorField
@@ -83,6 +84,7 @@ class _Keys(QObject):
 class ContestPanel(QWidget):
     message = Signal(str)
     session_changed = Signal(object)
+    scp_updated = Signal()
 
     def __init__(self, db, prefs, win):
         super().__init__(win)
@@ -856,7 +858,7 @@ class ContestPanel(QWidget):
 
     # ------------------------------------------------------------------ SCP
     def _scp_path(self) -> Path:
-        return Path(self.db.path).parent / "MASTER.SCP"
+        return scpmod.path_for(self.db.path)
 
     def _load_scp(self) -> None:
         self.scp = Scp.from_file(self._scp_path())
@@ -865,21 +867,14 @@ class ContestPanel(QWidget):
         self.scp_lab.setText(f"MASTER.SCP: {n_master:,} · " + tr("with your log") + f": {len(self.scp.calls):,}")
 
     def _download_scp(self) -> None:
-        import httpx  # noqa: PLC0415
-
         path = self._scp_path()
-
-        def work():
-            r = httpx.get(SCP_URL, timeout=60, follow_redirects=True)
-            r.raise_for_status()
-            path.write_bytes(r.content)
-            return len(r.content)
 
         def done(_n):
             self._load_scp()
             self.message.emit(tr("MASTER.SCP updated"))
+            self.scp_updated.emit()
 
-        run_async(work, on_done=done, on_error=lambda m: QMessageBox.warning(self, "MASTER.SCP", m))
+        run_async(scpmod.download, path, on_done=done, on_error=lambda m: QMessageBox.warning(self, "MASTER.SCP", m))
 
     # ------------------------------------------------------------------ sessions
     def new_session(self) -> None:

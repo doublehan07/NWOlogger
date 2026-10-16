@@ -16,7 +16,7 @@ modern UI, and built with Python and Qt (PySide6). Made for the BY1QH club stati
 ## Screenshots
 
 ![Main window: entry form above the log. A possible dupe is flagged while typing.](docs/screenshots/main.png)
-*Main window: the entry form above the log. The call is flagged as a possible dupe while you type, and **Compare…** opens the dupe window.*
+*Main window: the entry form above the log. The call is flagged as a possible dupe while you type, and **Compare…** opens the dupe window. Worked before lists similar calls: here three calls one letter away from JA1TSQ.*
 
 | | |
 |---|---|
@@ -54,13 +54,15 @@ Without `--db`, QHlogger uses `~/Documents/QHlogger/qhlog.sqlite`. Other options
 3. **Log a QSO.**
    - Type a call. Country, zones and Chinese provinces fill in by themselves (tinted).
    - Try TX/RX MHz with the **= TX** toggle, the Mode, Propagation and Satellite dropdowns (choose what they list in Preferences → Modes / Satellites), and Enter to log.
-   - Change Time On and see Time Off move to Time On + 1 min.
+   - Change Time On and see Time Off move to Time On + 1 min. **Now** next to Time On puts both back on the clock.
+   - Type part of a call: **Worked before** lists similar calls, your log first, then calls QRZ.com / HamQTH know, then [MASTER.SCP](https://www.supercheckpartial.com/) (File → Update MASTER.SCP). Click one to use it.
+   - **Clear** (Esc) empties the whole form, frequency, mode and power included. The *Keep* boxes only apply after Log QSO.
 4. **Search:** `BA*` or `B?1*` in the call box; mode `SSB` (finds USB/LSB) with and without *Exact*; presets such as *Suspicious dupes* and *Paper to send*.
 5. **Edit many QSOs:** select several rows → right-click → Bulk edit. Undo with ⌘Z / Ctrl+Z.
 6. **Contest mode:** toolbar → Contest → New contest. Pick CQ WW, log with Space / Enter, watch the score and the Check Partial pane, then Export Cabrillo.
 7. **Your own data:** File → Import accepts ADIF files and MacLoggerDX databases (`MacLoggerDX.sql`).
 8. **Services (optional):** Preferences → Lookup / Services for QRZ.com, HamQTH, LoTW (needs [TQSL](https://www.arrl.org/tqsl-download)), eQSL and HRDLog.
-   - Passwords are kept in the system keychain.
+   - Passwords are kept in the system keychain and never shown again; *Forget* removes one.
    - Reports from real accounts are especially welcome.
 
 **Reporting a problem:** open an issue on GitHub. Include what you did, and the text from Help → About → System → *Copy system info*.
@@ -68,7 +70,7 @@ Without `--db`, QHlogger uses `~/Documents/QHlogger/qhlog.sqlite`. Other options
 **For developers:**
 
 ```sh
-uv run pytest      # tests (Qt runs off-screen)
+uv run pytest      # tests (Qt runs off-screen; they never reach the network or your keychain)
 uv run ruff check  # lint
 uv run --with pyinstaller --with pillow pyinstaller packaging/qhlogger.spec --noconfirm   # stand-alone app in dist/
 ```
@@ -90,8 +92,10 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
     - You choose which modes and satellites are listed; *Other…* reaches the rest.
     - You can add your own satellites.
     - A satellite with a non-SAT propagation is kept, with a warning.
-  - Time Off follows Time On + 1 min. A Time Off earlier than Time On is refused.
-  - Fields stay set for a whole satellite pass.
+  - Time Off follows Time On + 1 min. A Time Off earlier than Time On is refused. *Now* next to Time On goes back to the live clock.
+  - Fields stay set for a whole satellite pass (*Keep*). *Clear* empties everything.
+  - An empty Power uses the station profile's default, shown in grey.
+- **Similar calls** in Worked before, while you type: the same call, calls that start with or contain what you typed, and calls one letter away (typos). Your log comes first (most recent first), then calls QRZ.com / HamQTH know, then MASTER.SCP. When a call is not found on QRZ.com / HamQTH, up to three MASTER.SCP calls one letter away are looked up there.
 - **Operators:** an Operator field in the entry form.
   - Personal stations fill in your call.
   - Club stations must enter the operator, which then stays for the session.
@@ -117,7 +121,7 @@ No rig control, by design: QHlogger never talks to a radio.
 | Keys | Action |
 |---|---|
 | Enter | Log the QSO (DX); in contest mode, go to the next empty field and then log |
-| Esc | Clear the form / wipe the contest entry line |
+| Esc | Clear the whole form / wipe the contest entry line |
 | Space (contest) | Next field |
 | `14025` + Enter, `CW` + Enter (contest call field) | Set the frequency or mode |
 | ⌘K / Ctrl+K | Command palette |
@@ -146,6 +150,8 @@ QHlogger/
 │   │   ├── search.py          filters → SQL (wildcards, vague / exact mode)
 │   │   ├── dupes.py, modes.py, bands.py           dupe rules, mode relations, band plan
 │   │   ├── callsign.py, dxcc.py, regions.py, geo.py   calls, country file, China provinces, grids
+│   │   ├── similar.py         similar calls for Worked before (log, QRZ.com / HamQTH cache, MASTER.SCP)
+│   │   ├── net.py, secrets.py HTTPS to the services only, no secrets in messages; keychain access
 │   │   ├── sats.py, propagation.py                satellites and per-service names; TQSL propagation modes
 │   │   ├── operators.py       personal / club station operator
 │   │   ├── lookup/            QRZ.com XML, HamQTH
@@ -173,7 +179,12 @@ QHlogger/
 
 ## Privacy
 
-- Passwords, upload codes and API keys go to the system keychain only (macOS Keychain / Windows Credential Manager).
+- Passwords, upload codes and API keys go to the system keychain only (macOS Keychain / Windows Credential Manager). Any other keyring backend, such as a plaintext file, is refused.
+  - Saved secrets are never shown again. *Forget* in Preferences removes one; renaming an account removes the old account's entry.
+  - Deleting the last station profile with a callsign removes that callsign's QRZ Logbook key.
+- Error messages, sync history and logs never contain a password, key, upload code or session token. Requests go over HTTPS to each service's own hosts only, redirects included.
+- **If you used v0.1.0:** a LoTW or eQSL download that failed with an HTTP error could save the password in sync history. QHlogger cleans the open log at start, then lists backups that still hold one (also File → Check backups for saved passwords…). Delete those backups and change the LoTW / eQSL password.
+- Imported ADIF fields that look like passwords (`EQSL_PSWD`, `…PASSWORD…`) are left out, and never exported or uploaded.
 - Never commit real log files. `*.sql`, `*.sqlite`, `*.adi` and similar are git-ignored because they contain other operators' personal data. Only synthetic files under `tests/fixtures/` are committed.
 
 ## Credits

@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, __version__, i18n
 from ..core import db as dbm
-from ..core import dupes, dxcc, exporter, regions, timeutil
+from ..core import dupes, dxcc, exporter, net, regions, timeutil
+from ..core.contest import scp as scpmod
 from ..core.fields import DEFAULT_LOG_COLUMNS
 from ..core.lookup import clients as lookup_clients
 from ..core.operators import OperatorSession
@@ -117,6 +118,8 @@ class MainWindow(QMainWindow):
                                                                             self.view.selected_ids(), "queue"))
         self.a_recompute = A("Recompute country, DXCC and zones", self.recompute_dxcc)
         self.a_cty = A("Update country file (cty.csv)", lambda: self.update_cty(quiet=False))
+        self.a_scp = A("Update MASTER.SCP (similar calls)", self.update_scp)
+        self.a_check_backups = A("Check backups for saved passwords…", lambda: self.check_secrets(always=True))
         self.a_lookup_fill = A("Look up and fill missing fields", self.lookup_fill_selected)
         self.a_select_all = A("Select all shown", lambda: self.view.selectAll(), QKeySequence.StandardKey.SelectAll)
         self.a_prefs = A("Preferences…", self.open_prefs, QKeySequence.StandardKey.Preferences, "settings")
@@ -160,7 +163,8 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
         for a in (self.a_new_log, self.a_open_log, None, self.a_import, self.a_export_all, self.a_export_sel,
-                  self.a_export_flt, None, self.a_backup, self.a_cty, None, self.a_quit):
+                  self.a_export_flt, None, self.a_backup, self.a_check_backups, self.a_cty, self.a_scp, None,
+                  self.a_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
         for a in (self.a_undo, None, self.a_edit, self.a_bulk, self.a_delete, self.a_select_all, None,
@@ -270,6 +274,7 @@ class MainWindow(QMainWindow):
 
             self.contest = ContestPanel(self.db, self.prefs, self)
             self.contest.message.connect(self.flash)
+            self.contest.scp_updated.connect(self.dx.reload_scp)
             self.contest.session_changed.connect(self._contest_session_changed)
             self.entry_stack.addWidget(self.contest)
         except ImportError:
@@ -594,13 +599,39 @@ class MainWindow(QMainWindow):
             data, source, errors = res
             if data:
                 self.db.cache_put(call, source or "", data)
+                self.dx.note_known(call, source or "")
                 self.dx.apply_lookup(call, data, source or "")
                 if self.contest is not None:
                     self.contest.apply_lookup(call, data)
             elif errors:
                 self.flash(errors[0])
+            else:
+                self._check_similar_online(call)
 
-        run_async(lookup_clients.lookup_chain, call, clients, on_done=done, on_error=self.flash)
+        run_async(lookup_clients.lookup_chain, call, clients, on_done=done,
+                  on_error=lambda m: self.flash(self._safe_lookup_error(m)))
+
+    def _safe_lookup_error(self, msg: str) -> str:
+        return net.redact(msg, [s for c in self.lookup_clients() for s in c.secrets()])
+
+    def _check_similar_online(self, call: str) -> None:
+        """The call is not on QRZ.com / HamQTH: check up to 3 MASTER.SCP calls one character away there, so the
+        ones that exist show in Similar calls (and stay cached)."""
+        clients = self.lookup_clients()
+        cands = self.dx.online_candidates(call) if clients and len(call) >= 4 else []
+        if not cands:
+            return
+
+        def work():
+            return [(c, *lookup_clients.lookup_chain(c, clients)[:2]) for c in cands]
+
+        def done(rows):
+            for c, data, source in rows:
+                if data:
+                    self.db.cache_put(c, source or "", data)
+                    self.dx.note_known(c, source or "")
+
+        run_async(work, on_done=done, on_error=lambda m: self.flash(self._safe_lookup_error(m)))
 
     def lookup_fill_selected(self) -> None:
         ids = self.view.selected_ids()
@@ -629,6 +660,7 @@ class MainWindow(QMainWindow):
         def done(found):
             for c, (data, source) in found.items():
                 self.db.cache_put(c, source or "", data)
+                self.dx.note_known(c, source or "")
                 cached[c] = data
             cols = ["first_name", "last_name", "qth", "address", "state", "cnty", "gridsquare", "email", "web",
                     "qsl_via", "iota"]
@@ -643,7 +675,7 @@ class MainWindow(QMainWindow):
             n = self.db.update_many(ids, ch, label=tr("Look up and fill"))
             self.flash(tr("Filled") + f" {n} " + tr("QSOs"))
 
-        run_async(work, on_done=done, on_error=self.flash)
+        run_async(work, on_done=done, on_error=lambda m: self.flash(self._safe_lookup_error(m)))
 
     # ------------------------------------------------------------------ files
     def import_file(self) -> None:
@@ -709,6 +741,8 @@ class MainWindow(QMainWindow):
         self.dx._clock.stop()
         self.dx._check_timer.stop()
         self.dx._lookup_timer.stop()
+        self.dx._index_timer.stop()
+        self.db.remove_listener(self.dx._on_db_change)
         if self.contest is not None and hasattr(self.contest, "shutdown"):
             self.contest.shutdown()
 
@@ -767,7 +801,48 @@ class MainWindow(QMainWindow):
 
         run_async(dxcc.download, on_done=done, on_error=fail)
 
+    def update_scp(self) -> None:
+        def done(n):
+            self.dx.reload_scp()
+            if self.contest is not None:
+                self.contest._load_scp()
+            self.flash(tr("MASTER.SCP updated") + f" ({n:,} " + tr("calls") + ")")
+
+        run_async(scpmod.download, scpmod.path_for(self.db.path), on_done=done,
+                  on_error=lambda m: QMessageBox.warning(self, "MASTER.SCP", m))
+
+    def check_secrets(self, always: bool = False) -> None:
+        """QHlogger 0.1.0 could save a LoTW / eQSL password in sync history after an HTTP error. The open log is
+        cleaned when it is opened; backups are only listed, for you to delete."""
+        if not always and self.db.meta("secret_notice_shown"):
+            return
+        cleaned = int(self.db.meta("sync_log_scrubbed") or 0)
+        found = self.db.backups_with_secrets()
+        self.db.set_meta("secret_notice_shown", "1")
+        if not cleaned and not found:
+            if always:
+                QMessageBox.information(self, tr("Saved passwords"), tr("No backup holds a saved password."))
+            return
+        text = []
+        if cleaned:
+            text.append(tr("Sync history messages that held a password from an old error were cleaned in this "
+                           "log:") + f" {cleaned}.")
+        if found:
+            text.append(tr("These backups still hold one. Delete them (Show in Finder / Explorer):") + "\n• " +
+                        "\n• ".join(f"{p.name} ({n})" for p, n in found))
+        text.append(tr("Change your LoTW and eQSL passwords: copies may also be in Time Machine or cloud backups."))
+        box = QMessageBox(QMessageBox.Icon.Warning, tr("Saved passwords"), "\n\n".join(text), parent=self)
+        show = box.addButton(tr("Show backups"), QMessageBox.ButtonRole.ActionRole) if found else None
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if show is not None and box.clickedButton() is show:
+            from PySide6.QtCore import QUrl  # noqa: PLC0415
+            from PySide6.QtGui import QDesktopServices  # noqa: PLC0415
+
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.db.backup_dir)))
+
     def _first_run(self) -> None:
+        self.check_secrets()
         age = dxcc.user_copy_age_days()
         if (age is None or age > 7) and not os.environ.get("QHLOGGER_OFFLINE"):
             QTimer.singleShot(3000, lambda: self.update_cty(quiet=True))

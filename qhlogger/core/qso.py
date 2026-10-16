@@ -16,6 +16,13 @@ from .fields import BY_ADIF, BY_COL, FIELDS
 GRID_RE = re.compile(r"^([A-Ra-r]{2})(\d{2})([A-Xa-x]{2})?(\d{2})?$")
 
 PRIVATE_COLS = {"notes", "email"}
+# Record tags that look like account credentials (e.g. EQSL_PSWD pasted into a QSO by another program): never
+# kept on import, never written to an export or a service upload.
+_CREDENTIAL_TAG = re.compile(r"PASSWORD|PASSWD|PSWD|APIKEY|API_KEY|^EQSL_USER$")
+
+
+def is_credential_tag(tag: str) -> bool:
+    return bool(_CREDENTIAL_TAG.search(tag.upper()))
 
 
 def clean(col: str, value: Any) -> Any:
@@ -143,7 +150,7 @@ def from_adif(rec: dict[str, str], *, program_id: str | None = None) -> dict:
         tag = tag.upper()
         if value is None or value == "":
             continue
-        if tag in ("QSO_DATE", "TIME_ON", "QSO_DATE_OFF", "TIME_OFF", "NAME"):
+        if tag in ("QSO_DATE", "TIME_ON", "QSO_DATE_OFF", "TIME_OFF", "NAME") or is_credential_tag(tag):
             continue
         if tag == "APP_QRZLOG_STATUS":
             if value.strip().upper() == "C":
@@ -218,7 +225,7 @@ def to_adif(qso: dict, *, include_private: bool = True, sat_name: str | None = N
     if include_service_status and qso.get("qrz_qsl_rcvd") == "Y":
         put("APP_QRZLOG_STATUS", "C")
     for tag, v in load_extra(qso).items():
-        if tag not in out:
+        if tag not in out and not is_credential_tag(tag):
             put(tag, v)
     return out
 
