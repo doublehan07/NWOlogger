@@ -23,7 +23,20 @@ from PySide6.QtWidgets import (
 )
 
 from ... import i18n
-from ...core import bands, callsign, devices, dupes, dxcc, geo, modes, regions, sats, similar, timeutil
+from ...core import (
+    bands,
+    calllists,
+    callsign,
+    devices,
+    dupes,
+    dxcc,
+    geo,
+    modes,
+    regions,
+    sats,
+    similar,
+    timeutil,
+)
 from ...core import qso as qsomod
 from ...core.contest import scp as scpmod
 from ...core.operators import OperatorSession, is_club
@@ -45,6 +58,7 @@ from ..widgets import (
     mode_text,
     primary,
     prop_combo,
+    run_async,
     sat_list,
     set_combo_data,
 )
@@ -126,6 +140,7 @@ class DXPanel(QWidget):
         self.db.add_listener(self._on_db_change)
         self.reload_profiles()
         self.reload_devices()
+        self.reload_call_lists()
         saved_device = self.prefs.get("device") or {}
         self.clear_form(keep_sticky=False)
         self._set_device(saved_device)
@@ -355,7 +370,8 @@ class DXPanel(QWidget):
         wb = Section(tr("Worked before"))
         self.similar = QTableWidget(0, 2)
         self.similar.setHorizontalHeaderLabels([tr("Similar calls"), tr("Last QSO or where it is known")])
-        self.similar.setToolTip(tr("Your log first (most recent first), then calls QRZ.com / HamQTH know, then "
+        self.similar.setToolTip(tr("Your log first (most recent first), then calls QRZ.com / HamQTH know, then LoTW "
+                                   "users and eQSL AG members (File → Update LoTW and eQSL call lists), then "
                                    "MASTER.SCP. Click a call to use it."))
         self.similar.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.similar.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -997,6 +1013,13 @@ class DXPanel(QWidget):
                 detail = " · ".join(x for x in parts if x)
             elif m.tier == similar.KNOWN:
                 detail = tr("not worked") + " · " + (m.source or "QRZ.com / HamQTH")
+            elif m.tier == similar.LISTED:
+                parts = []
+                if m.lotw is not None:
+                    parts.append(tr("uses LoTW") + (f", {tr('last upload')} {m.lotw}" if m.lotw else ""))
+                if m.ag:
+                    parts.append(tr("eQSL AG member"))
+                detail = tr("not worked") + " · " + " · ".join(parts)
             else:
                 detail = tr("not worked") + " · MASTER.SCP"
             call_it = QTableWidgetItem(m.call)
@@ -1035,6 +1058,21 @@ class DXPanel(QWidget):
         out = self._index.online_candidates(call, skip=self._asked_online)
         self._asked_online.update(out)
         return out
+
+    def reload_call_lists(self) -> None:
+        """Load the LoTW user and eQSL AG lists next to the log on a worker thread (about a second)."""
+        folder = calllists.folder_for(self.db.path)
+
+        def done(lists: calllists.CallLists) -> None:
+            if not len(lists):
+                return  # none downloaded yet
+            try:
+                self._index.set_lists(lists)
+                self._check_timer.start()
+            except RuntimeError:  # the window was closed meanwhile
+                pass
+
+        run_async(calllists.load, folder, on_done=done)
 
     def reload_scp(self) -> None:
         self._index.set_scp(scpmod.Scp.from_file(scpmod.path_for(self.db.path)).calls)

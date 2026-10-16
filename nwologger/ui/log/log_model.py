@@ -24,7 +24,8 @@ IdRole = Qt.ItemDataRole.UserRole + 1
 
 
 def confirmed(q: dict) -> bool:
-    return any(q.get(c) == "Y" for c in ("lotw_qsl_rcvd", "eqsl_qsl_rcvd", "qrz_qsl_rcvd", "qsl_rcvd"))
+    """A green call: confirmed by LoTW (Y, or V for verified). eQSL, QRZ.com and paper cards don't count."""
+    return q.get("lotw_qsl_rcvd") in ("Y", "V")
 
 
 class LogModel(QAbstractTableModel):

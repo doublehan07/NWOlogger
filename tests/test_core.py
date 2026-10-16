@@ -328,3 +328,69 @@ def test_mldx_confirmation_without_upload_record_counts_as_uploaded():
                          "qsl_received": "LoTW:20261011, QRZLogbook:20261012"}, rep)
     assert q["lotw_qsl_sent"] == "Y" and q.get("lotw_qslsdate") is None
     assert q["qrzcom_qso_upload_status"] == "Y" and rep.inferred == {"lotw": 1, "qrz": 1}
+
+
+def test_call_lists_find_typos_and_missing_characters():
+    from nwologger.core import calllists
+
+    lotw = calllists.parse_lotw("BI1NWO,2026-10-10,04:00:00\nBA1PK,2025-01-02,00:00:00\nBA1PK/P,,\nnot a call,x\n"
+                                "XBI1N,2024-05-05,00:00:00\n")
+    ag = calllists.parse_ag("List of AG members as of 15-Oct-2026 10:34 UTC\nBI1NWO\nBH1SFO\n108ct322\n")
+    assert set(lotw) == {"BI1NWO", "BA1PK", "BA1PK/P", "XBI1N"} and ag == {"BI1NWO", "BH1SFO"}
+    cl = calllists.CallLists(lotw, ag)
+    assert len(cl) == 5 and "BH1SFO" in cl and "BI1NW" not in cl
+    assert cl.get("BI1NWO") == calllists.Hit("BI1NWO", calllists.EXACT, "2026-10-10", True)
+    assert cl.get("BA1PK/P").lotw == "" and cl.get("BH1SFO").lotw is None
+
+    def found(text):
+        return {h.call: h.kind for h in cl.matches(text)}
+
+    assert found("BI1NW") == {"BI1NWO": calllists.PREFIX}  # a letter missing at the end
+    assert found("BINWO") == {"BI1NWO": calllists.ONE_EDIT}  # the digit missing
+    assert found("BI1NXO") == {"BI1NWO": calllists.ONE_EDIT}  # a wrong letter
+    assert found("BA1PK") == {"BA1PK": calllists.EXACT, "BA1PK/P": calllists.PREFIX}
+    assert found("BI1N") == {"BI1NWO": calllists.PREFIX, "XBI1N": calllists.CONTAINS}
+    assert found("B") == {}  # too short to search
+    assert calllists.CallLists().matches("BI1NW") == []
+
+
+def test_similar_calls_list_lotw_and_eqsl_users_after_your_lookups():
+    from nwologger.core import calllists, similar
+
+    idx = similar.CallIndex({"BA1PK": "2026-10-10T15:19:00Z"}, {"BA1PX": "QRZ.com"}, ["BA1PQ", "BA1PL"])
+    idx.set_lists(calllists.CallLists({"BA1PL": "2026-01-02", "BA1PK": "2026-01-01"}, ["BA1PR"]))
+    got = [(m.call, m.tier) for m in idx.find("BA1P")]
+    # Worked, known on QRZ.com, then the lists, then MASTER.SCP; each call once.
+    assert got == [("BA1PK", similar.WORKED), ("BA1PX", similar.KNOWN), ("BA1PL", similar.LISTED),
+                   ("BA1PR", similar.LISTED), ("BA1PQ", similar.SCP)]
+    listed = {m.call: m for m in idx.find("BA1P") if m.tier == similar.LISTED}
+    assert listed["BA1PL"].lotw == "2026-01-02" and not listed["BA1PL"].ag and listed["BA1PR"].ag
+
+
+def test_call_lists_download_over_https_and_keep_the_old_copy_on_a_bad_answer(tmp_path, mock_net):
+    import httpx
+
+    from nwologger.core import calllists, net
+
+    lotw = "\n".join(f"BA{i}AA,2026-01-01,00:00:00" for i in range(1200))
+    ag = "List of AG members\n" + "\n".join(f"BG{i}ZZ" for i in range(1200))
+    seen = mock_net(lambda req: httpx.Response(200, text=lotw if req.url.host == "lotw.arrl.org" else ag))
+    assert calllists.age_days(tmp_path) is None
+    assert calllists.download(tmp_path) == {"lotw": 1200, "eqsl_ag": 1200}
+    assert {r.url.host for r in seen} == {"lotw.arrl.org", "www.eqsl.cc"} and all(r.url.scheme == "https" for r in seen)
+    assert len(calllists.load(tmp_path)) == 2400 and calllists.age_days(tmp_path) < 1
+    mock_net(lambda req: httpx.Response(200, text="<html>maintenance</html>"))
+    with pytest.raises(net.NetError):
+        calllists.download(tmp_path)
+    assert len(calllists.load(tmp_path)) == 2400  # the old copy stays
+
+
+def test_clear_sync_history_per_service(db):
+    for svc in ("LoTW", "QRZ.com", "QRZ.com", "eQSL"):
+        db.sync_log_add(svc, "download", "2026-10-16T00:00:00Z", message="ok")
+    db.sync_set("lotw", "last_qsl", "2026-10-01")
+    assert db.sync_history_counts() == {"LoTW": 1, "QRZ.com": 2, "eQSL": 1}
+    assert db.clear_sync_history(["QRZ.com"]) == 2
+    assert db.sync_history_counts() == {"LoTW": 1, "eQSL": 1}
+    assert db.sync_get("lotw", "last_qsl") == "2026-10-01"  # where the next download starts is kept
+    assert db.clear_sync_history([]) == 0

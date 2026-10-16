@@ -1,6 +1,6 @@
 # NWOlogger — Design Plan
 
-Status: **v0.1.2** (2026-10-16): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1), and the Device section, the Sync results window and the diagnostic log (v0.1.2); see §14 for where the code differs from
+Status: **v0.1.3** (2026-10-16): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1), the Device section, the Sync results window and the diagnostic log (v0.1.2), and the LoTW / eQSL call lists for Similar calls and per-service sync history clearing (v0.1.3); see §14 for where the code differs from
 this plan, and [TODO.md](TODO.md) for what is left. Open questions are collected in §13.
 
 ## 1. Requirements
@@ -60,12 +60,12 @@ These may move to TODO later, but they are not part of the core.
 
 - **One source of truth:** the `version` in `pyproject.toml`, read at runtime through `importlib.metadata` and exposed as `nwologger.__version__`. Versions follow SemVer and start at `0.1.0`. While in `0.x`, a new milestone bumps the minor number and a fix bumps the patch number.
 - **Shown in the app** in four places:
-  - the window title (`NWOlogger v0.1.2 — nwolog.sqlite`)
+  - the window title (`NWOlogger v0.1.3 — nwolog.sqlite`)
   - the right end of the toolbar, as in MacLoggerDX
   - Help → About (version, Qt/PySide6 version, DB schema version, data-file path)
   - `nwologger --version`
-- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.2 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
-- **Releases:** a git tag such as `v0.1.2` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
+- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.3 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
+- **Releases:** a git tag such as `v0.1.3` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
 
 Architecture rule: `nwologger/core/` never imports Qt. All logic lives there: DB, ADIF, search, dupes, DXCC, contest scoring and sync.
 The UI layer is thin, so the core is unit-testable and could also back a CLI.
@@ -152,7 +152,7 @@ Notes on the model:
 | `saved_filter` | Named searches (JSON filter spec) |
 | `lookup_cache` | Callsign → JSON result, source, fetched_at (TTL in Prefs) |
 | `sync_state` | Per-service cursors (LoTW last QSL / last QSO-rx, eQSL RcvdSince); QRZ.com is always fetched whole |
-| `sync_log` | Sync history: service, direction, time, counts, errors |
+| `sync_log` | Sync history: service, direction, time, counts, errors. *Clear history…* deletes it per service; `sync_state` (where downloads resume) is separate and kept |
 | `undo_log` | Before-images for bulk edit, delete and import, so they can be undone |
 
 ### 4.3 Safety
@@ -238,7 +238,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 - **Keyboard-first:** every action has a shortcut, plus a command palette (⌘K / Ctrl+K).
 
 ```
-┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.2 ┐
+┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.3 ┐
 ├ Entry panel ── [ DX | Contest ] ─────────────────────────────────────────────────────────────────────────────┤
 │ Call [______]  First  Last    │ Time On  2026-10-16 04:19:35   Time Off                                      │
 │ Address / City                │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │
@@ -291,7 +291,8 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
   - Enter logs the QSO.
   - **Similar calls** sit at the top of Worked before, updated while you type (from two characters):
     - A call matches when it is the typed text, starts with it, contains it, or is one character away (changed, added or dropped). Portable calls match through their base call.
-    - Order: calls in your log (count, last QSO, confirmations; most recent first), then calls not worked that QRZ.com / HamQTH have returned (the lookup cache), then MASTER.SCP. Within each group, better matches first.
+    - Order: calls in your log (count, last QSO, confirmations; most recent first), then calls not worked that QRZ.com / HamQTH have returned (the lookup cache), then the public call lists, then MASTER.SCP. Within each group, better matches first.
+    - **Public call lists** (`core/calllists.py`): QRZ.com's XML API and HamQTH only look up one complete call (no partial or wildcard search), so the internet's call data comes from ARRL's LoTW user list (`lotw-user-activity.csv`, ~236,000 calls with their last upload date) and eQSL's AG member list (`AGMemberList.txt`, ~199,000 calls), about 320,000 calls together. In one real log they hold 76% of the Chinese calls, against 28% for MASTER.SCP. They are downloaded over HTTPS without a login next to the log file (File → Update LoTW and eQSL call lists, and weekly at start), kept as one sorted text with offsets (~5 MB in memory, loaded on a worker thread), and searched by binary search: exact, prefix, contains, and every text one character changed, added or removed (~8 ms per query). A bad download (fewer than 1,000 calls) keeps the old copy. The row shows "uses LoTW, last upload <date>" and / or "eQSL AG member".
     - Click a call to use it. The matrix and last QSOs below still show the typed call.
     - The lists are kept in memory and updated when you log, so typing never queries the log file.
   - Double-clicking a row loads that QSO into the panel for editing (Save / Cancel).
@@ -299,7 +300,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
   - Clicking any header sorts with SQL `ORDER BY`. `time_on` breaks ties.
   - Columns can be shown, hidden and reordered from the header context menu.
   - Confirmation columns: LoTW ↑/↓, eQSL ↑/↓, QRZ ↑/↓, HRDLog ↑, Paper sent/rcvd. Each shows a date; an empty cell means not done.
-  - Row colour: confirmed (any service or paper), unconfirmed, `SUSPECT` (amber), `DUPE` (red). Text is grey while a QSO is not yet uploaded to all four services (`core/uploads.py`, the same rule as Upload pending); the tooltip names the missing ones.
+  - Row colour: the call is green when LoTW confirmed the QSO (`lotw_qsl_rcvd` Y or V; eQSL, QRZ.com and paper cards don't count); `SUSPECT` rows have an amber background, `DUPE` rows red text on red. Text is grey while a QSO is not yet uploaded to all four services (`core/uploads.py`, the same rule as Upload pending); the tooltip names the missing ones.
 - **Context menu on a selection:**
   - Edit
   - Bulk edit…

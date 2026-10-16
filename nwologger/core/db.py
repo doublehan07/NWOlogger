@@ -698,6 +698,21 @@ class LogDB:
         return [self._row_dict(r) for r in self.conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT ?",
                                                               (limit,))]
 
+    def sync_history_counts(self) -> dict[str, int]:
+        """Rows of sync history per service name (LoTW, eQSL, QRZ.com, HRDLog)."""
+        return {r[0]: r[1] for r in self.conn.execute(
+            "SELECT service, COUNT(*) FROM sync_log GROUP BY service ORDER BY service")}
+
+    def clear_sync_history(self, services: Iterable[str]) -> int:
+        """Delete the sync history of these services. Only the history: QSOs, their upload and confirmation
+        status, and where the next download starts are not touched."""
+        names = sorted(set(services))
+        if not names:
+            return 0
+        cur = self.conn.execute(f"DELETE FROM sync_log WHERE service IN ({','.join('?' * len(names))})", names)
+        self._notify("sync_log", [])
+        return cur.rowcount
+
     # ------------------------------------------------------------------ contest sessions
     def contest_sessions(self) -> list[dict]:
         out = []

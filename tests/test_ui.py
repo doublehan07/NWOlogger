@@ -532,3 +532,66 @@ def test_comment_labels_say_which_one_is_uploaded(win):
         rec = apply.upload_record(q, svc, sats.load())
         assert "NOTES" not in rec and "Wudaokou" not in "".join(rec.values()) and "BR1TST" not in "".join(rec.values())
     assert apply.upload_record(q, "qrz", sats.load())["COMMENT"] == "Tnx QSO 73"
+
+
+def test_only_a_lotw_confirmation_makes_the_call_green(win):
+    from PySide6.QtCore import Qt
+
+    from nwologger.core import qso as qsomod
+    from nwologger.ui import theme
+
+    done = {"lotw_qsl_sent": "Y", "eqsl_qsl_sent": "Y", "qrzcom_qso_upload_status": "Y",
+            "hrdlog_qso_upload_status": "Y"}
+    ids = {}
+    for call, conf in (("BA1AA", {"lotw_qsl_rcvd": "Y"}), ("BA1BB", {"eqsl_qsl_rcvd": "Y"}),
+                       ("BA1CC", {"qrz_qsl_rcvd": "Y"}), ("BA1DD", {"qsl_rcvd": "Y"})):
+        ids[call] = win.db.insert(qsomod.normalize({"call": call, "time_on": "2026-10-10T10:00:00Z", "mode": "FM",
+                                                    "band": "2m", **done, **conf}))
+    win.model.refresh()
+    col = win.model.columns.index("call")
+    fg = {c: win.model.data(win.model.index(win.model.row_of[i], col), Qt.ItemDataRole.ForegroundRole)
+          for c, i in ids.items()}
+    assert fg["BA1AA"] is not None and fg["BA1AA"].color().name().lower() == theme.tokens().ok.lower()
+    assert fg["BA1BB"] is None and fg["BA1CC"] is None and fg["BA1DD"] is None
+
+
+def test_similar_calls_show_lotw_and_eqsl_users(win, qtbot):
+    from nwologger.core import calllists
+
+    p = win.dx
+    p._index.set_lists(calllists.CallLists({"BI1NWO": "2026-10-10"}, ["BI1NWO", "BH1SFO"]))
+    for typed, want in (("BINWO", "BI1NWO"), ("BH1SF", "BH1SFO")):
+        p.call.setText(typed)
+        p._call_edited(typed)
+        p._refresh_checks()
+        rows = {p.similar.item(r, 0).text(): p.similar.item(r, 1).text() for r in range(p.similar.rowCount())}
+        assert want in rows
+    assert rows["BH1SFO"] == "not worked · eQSL AG member"
+    p.call.setText("BINWO")
+    p._call_edited("BINWO")
+    p._refresh_checks()
+    rows = {p.similar.item(r, 0).text(): p.similar.item(r, 1).text() for r in range(p.similar.rowCount())}
+    assert rows["BI1NWO"] == "not worked · uses LoTW, last upload 2026-10-10 · eQSL AG member"
+
+
+def test_clear_sync_history_dialog_clears_only_the_chosen_service(win, monkeypatch):
+    from PySide6.QtWidgets import QDialog, QMessageBox
+
+    from nwologger.ui import sync_controller
+
+    for svc in ("LoTW", "QRZ.com"):
+        win.db.sync_log_add(svc, "download", "2026-10-16T00:00:00Z", message="ok")
+
+    def pick_qrz(dlg):
+        assert not dlg.ok.isEnabled() and not dlg.boxes["HRDLog"].isEnabled()  # nothing to clear there
+        dlg.boxes["QRZ.com"].setChecked(True)
+        assert dlg.ok.isEnabled()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(sync_controller.ClearHistoryDialog, "exec", pick_qrz)
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a[2]) or QMessageBox.StandardButton.Yes)
+    win.clear_sync_history()
+    assert "QRZ.com (1)" in asked[0]
+    assert [r["service"] for r in win.db.sync_history()] == ["LoTW"]
+    assert win.history.rowCount() == 1

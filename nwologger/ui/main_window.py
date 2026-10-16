@@ -12,11 +12,13 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QFileDialog,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
@@ -29,8 +31,8 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__, applog, i18n
+from ..core import calllists, dupes, dxcc, exporter, net, regions, timeutil
 from ..core import db as dbm
-from ..core import dupes, dxcc, exporter, net, regions, timeutil
 from ..core.contest import scp as scpmod
 from ..core.fields import DEFAULT_LOG_COLUMNS
 from ..core.lookup import clients as lookup_clients
@@ -48,7 +50,7 @@ from .log.log_view import LogView
 from .log.search_dialog import SearchDialog
 from .prefs_dialog import PrefsDialog
 from .qsl_paper import PaperQslTab, mark_paper
-from .sync_controller import SyncController
+from .sync_controller import SyncController, clear_history
 from .widgets import fmt, run_async
 
 tr = i18n.tr
@@ -121,6 +123,7 @@ class MainWindow(QMainWindow):
         self.a_recompute = A("Recompute country, DXCC and zones", self.recompute_dxcc)
         self.a_cty = A("Update country file (cty.csv)", lambda: self.update_cty(quiet=False))
         self.a_scp = A("Update MASTER.SCP (similar calls)", self.update_scp)
+        self.a_lists = A("Update LoTW and eQSL call lists (similar calls)", lambda: self.update_call_lists(quiet=False))
         self.a_check_backups = A("Check backups for saved passwords…", lambda: self.check_secrets("menu"))
         self.a_lookup_fill = A("Look up and fill missing fields", self.lookup_fill_selected)
         self.a_select_all = A("Select all shown", lambda: self.view.selectAll(), QKeySequence.StandardKey.SelectAll)
@@ -135,6 +138,7 @@ class MainWindow(QMainWindow):
         self.a_about = A("About NWOlogger", self.about)
         self.a_log_folder = A("Show log folder", self.show_log_folder)
         self.a_results = A("Show sync results", self.show_sync_results)
+        self.a_clear_hist = A("Clear sync history…", self.clear_sync_history)
         self.a_clear_filters = A("Clear filters", lambda: self.filter.clear(), "Ctrl+Shift+K")
         self.a_suspicious = A("Show suspicious dupes", lambda: self.filter.set_preset("suspicious"))
         sync_acts = {}
@@ -169,7 +173,7 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
         for a in (self.a_new_log, self.a_open_log, None, self.a_import, self.a_export_all, self.a_export_sel,
-                  self.a_export_flt, None, self.a_backup, self.a_check_backups, self.a_cty, self.a_scp, None,
+                  self.a_export_flt, None, self.a_backup, self.a_check_backups, self.a_cty, self.a_scp, self.a_lists, None,
                   self.a_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
@@ -194,6 +198,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction(self.a_sync_all)
         m.addAction(self.a_results)
+        m.addAction(self.a_clear_hist)
         m = mb.addMenu(tr("&Help"))
         m.addAction(self.a_about)
         m.addAction(self.a_palette)
@@ -324,7 +329,19 @@ class MainWindow(QMainWindow):
         self.history.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.history.horizontalHeader().setStretchLastSection(True)
-        self.tabs.addTab(self.history, theme.icon("history"), tr("Sync history"))
+        hist_tab = QWidget()
+        hl = QVBoxLayout(hist_tab)
+        hl.setContentsMargins(8, 6, 8, 6)
+        hbar = QHBoxLayout()
+        clear_hist = QPushButton(tr("Clear history…"))
+        clear_hist.setIcon(theme.icon("trash-2"))
+        clear_hist.setToolTip(tr("Delete the sync history of the services you choose, e.g. only QRZ.com"))
+        clear_hist.clicked.connect(self.clear_sync_history)
+        hbar.addStretch(1)
+        hbar.addWidget(clear_hist)
+        hl.addLayout(hbar)
+        hl.addWidget(self.history, 1)
+        self.tabs.addTab(hist_tab, theme.icon("history"), tr("Sync history"))
         self.tabs.currentChanged.connect(lambda i: self._refresh_history() if i == 2 else None)
         self.splitter.addWidget(self.tabs)
         self.splitter.setStretchFactor(0, 0)
@@ -809,6 +826,12 @@ class MainWindow(QMainWindow):
         folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
+    def clear_sync_history(self) -> None:
+        n = clear_history(self.db, self)
+        if n:
+            self._refresh_history()
+            self.flash(tr("Sync history cleared") + f": {n} " + tr("entries"))
+
     def show_sync_results(self) -> None:
         w = self.sync._window()  # noqa: SLF001 - the controller owns its results window
         w.show()
@@ -841,6 +864,23 @@ class MainWindow(QMainWindow):
 
         run_async(scpmod.download, scpmod.path_for(self.db.path), on_done=done,
                   on_error=lambda m: QMessageBox.warning(self, "MASTER.SCP", m))
+
+    def update_call_lists(self, quiet: bool = True) -> None:
+        """Download ARRL's LoTW user list and eQSL's AG member list for Similar calls (no login)."""
+        folder = calllists.folder_for(self.db.path)
+
+        def done(counts: dict[str, int]) -> None:
+            self.dx.reload_call_lists()
+            self.flash(tr("Call lists updated") + f": {counts.get('lotw', 0):,} " + tr("LoTW users") +
+                       f", {counts.get('eqsl_ag', 0):,} " + tr("eQSL AG members"))
+
+        def fail(msg: str) -> None:
+            if quiet:
+                self.flash(msg)
+            else:
+                QMessageBox.warning(self, tr("Call lists"), msg)
+
+        run_async(calllists.download, folder, on_done=done, on_error=fail)
 
     SECRET_CHECK = "2"  # bump to run the check once more after an update
 
@@ -895,6 +935,9 @@ class MainWindow(QMainWindow):
         age = dxcc.user_copy_age_days()
         if (age is None or age > 7) and not os.environ.get("NWOLOGGER_OFFLINE"):
             QTimer.singleShot(3000, lambda: self.update_cty(quiet=True))
+        lists_age = calllists.age_days(calllists.folder_for(self.db.path))
+        if (lists_age is None or lists_age > calllists.REFRESH_DAYS) and not os.environ.get("NWOLOGGER_OFFLINE"):
+            QTimer.singleShot(6000, lambda: self.update_call_lists(quiet=True))
         if not self.db.profiles():
             QMessageBox.information(self, APP_NAME, tr("Welcome! Create a station profile first: your callsign "
                                                        "and grid are added to every QSO you log."))

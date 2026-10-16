@@ -1,6 +1,6 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log. What is left is below.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service. What is left is below.
 
 ## Needs real accounts
 
@@ -41,6 +41,8 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Later / maybe
 
+- [ ] Similar calls online: when the typed call isn't found, look up the best few call-list matches on QRZ.com / HamQTH and show their name and QTH
+- [ ] Similar calls: a *Search online* button that tries the ten digits when the typed call has none (`BINWO` → `BI1NWO` …), as exact lookups
 - [ ] Statistics view: totals per year, band, mode and satellite, unique calls, QSL counts
 - [ ] Import aliases for satellite spellings other programs use (`TEVEL-5`, `InspireSat-7`, `ISS` → `ARISS`) and Yaesu's `FM DN` mode
 
@@ -48,6 +50,12 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
+
+## Done in v0.1.3 (2026-10-16)
+
+- [x] **Similar calls from the internet's call data:** ARRL's LoTW user list and eQSL's AG member list (about 320,000 calls; 76% of the Chinese calls in a real log, against 28% for MASTER.SCP) are downloaded next to the log, refreshed weekly (File → Update LoTW and eQSL call lists) and searched while you type, also for a missing letter or digit (`BINWO` → `BI1NWO`); rows show the last LoTW upload date and AG membership. QRZ.com and HamQTH can't search part of a call, so this is how their gap is filled
+- [x] A call is green only when LoTW confirmed the QSO (eQSL, QRZ.com and paper cards no longer count)
+- [x] *Clear history…* in Sync history (and QSL → Clear sync history…) deletes the history of the services you tick, e.g. only QRZ.com; QSOs, their upload and confirmation status, and download positions are kept
 
 ## Done in v0.1.2 (2026-10-16)
 

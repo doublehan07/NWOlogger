@@ -17,6 +17,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -156,6 +157,62 @@ class SyncResults(QDialog):
         page = self._current_fix()
         if page:
             self.prefs_requested.emit(page)
+
+
+class ClearHistoryDialog(QDialog):
+    """Choose which services' sync history to delete, e.g. only QRZ.com."""
+
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle(tr("Clear sync history"))
+        lay = QVBoxLayout(self)
+        lab = QLabel(tr("Delete the sync history of:"))
+        lay.addWidget(lab)
+        self.boxes: dict[str, QCheckBox] = {}
+        counts = db.sync_history_counts()
+        for name in [*apply.SERVICES.values(), *sorted(set(counts) - set(apply.SERVICES.values()))]:
+            n = counts.get(name, 0)
+            cb = QCheckBox(f"{name}  ({n} {tr('entries')})")
+            cb.setEnabled(n > 0)
+            cb.toggled.connect(self._update)
+            self.boxes[name] = cb
+            lay.addWidget(cb)
+        hint = QLabel(tr("Only the history is deleted. Your QSOs, their upload and confirmation status, and where "
+                         "the next download starts stay as they are."))
+        hint.setObjectName("Hint")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.ok = bb.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok.setText(tr("Clear"))
+        self.ok.setProperty("danger", True)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self._update()
+
+    def chosen(self) -> list[str]:
+        return [name for name, cb in self.boxes.items() if cb.isChecked()]
+
+    def _update(self) -> None:
+        self.ok.setEnabled(bool(self.chosen()))
+
+
+def clear_history(db, parent) -> int:
+    """Ask which services, confirm, and delete their sync history. Returns the rows deleted."""
+    dlg = ClearHistoryDialog(db, parent)
+    if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.chosen():
+        return 0
+    names = dlg.chosen()
+    counts = db.sync_history_counts()
+    what = ", ".join(f"{n} ({counts.get(n, 0)})" for n in names)
+    if QMessageBox.question(parent, tr("Clear sync history"), tr("Delete the sync history of these services?") +
+                            f"\n\n{what}\n\n" + tr("This can't be undone.")) != QMessageBox.StandardButton.Yes:
+        return 0
+    n = db.clear_sync_history(names)
+    log.info("Sync history cleared for %s: %d rows", ", ".join(names), n)
+    return n
 
 
 class SyncController(QObject):

@@ -54,7 +54,7 @@ Without `--db`, NWOlogger uses `~/Documents/NWOlogger/nwolog.sqlite`. Other opti
    - **Device:** add your rigs, antennas and setups in Preferences → Devices. Picking a setup fills rig, antenna and power at once; change any of them for the QSO if needed.
    - **Comment (upload)** goes to eQSL, QRZ.com and HRDLog with the QSO (your name, a thank-you). **Notes (local)** are only for you: the repeater you used, their rig, antenna and power, where you operated from.
    - Change Time On and see Time Off move to Time On + 1 min. **Now** next to Time On puts both back on the clock.
-   - Type part of a call: **Worked before** lists similar calls, your log first, then calls QRZ.com / HamQTH know, then [MASTER.SCP](https://www.supercheckpartial.com/) (File → Update MASTER.SCP). Click one to use it.
+   - Type part of a call: **Worked before** lists similar calls, your log first, then calls QRZ.com / HamQTH know, then LoTW users and eQSL AG members, then [MASTER.SCP](https://www.supercheckpartial.com/) (File → Update MASTER.SCP). Try a call with a letter or the digit missing, e.g. `BINWO`. Click one to use it.
    - **Clear** (Esc) empties the contact: frequency, mode, reports, propagation and satellite included. Your Device section (rig, antenna, power) stays. The *Keep* boxes only apply after Log QSO.
 4. **Search:** `BA*` or `B?1*` in the call box; mode `SSB` (finds USB/LSB) with and without *Exact*; presets such as *Suspicious dupes* and *Paper to send*.
 5. **Edit many QSOs:** select several rows → right-click → Bulk edit. Undo with ⌘Z / Ctrl+Z.
@@ -97,7 +97,8 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - Time Off follows Time On + 1 min. A Time Off earlier than Time On is refused. *Now* next to Time On goes back to the live clock.
   - Fields stay set for a whole satellite pass (*Keep*). *Clear* empties the contact and keeps your Device section.
   - An empty rig, antenna or power uses the station profile's, shown in grey.
-- **Similar calls** in Worked before, while you type: the same call, calls that start with or contain what you typed, and calls one letter away (typos). Your log comes first (most recent first), then calls QRZ.com / HamQTH know, then MASTER.SCP. When a call is not found on QRZ.com / HamQTH, up to three MASTER.SCP calls one letter away are looked up there.
+- **Similar calls** in Worked before, while you type: the same call, calls that start with or contain what you typed, and calls one character away (a typo, or a missing letter or digit). Your log comes first (most recent first), then calls QRZ.com / HamQTH know, then the calls of ARRL's [LoTW user list](https://lotw.arrl.org/lotw-user-activity.csv) and eQSL's AG member list (about 320,000 calls, with the date of each call's last LoTW upload), then MASTER.SCP. When a call is not found on QRZ.com / HamQTH, up to three MASTER.SCP calls one letter away are looked up there.
+  - QRZ.com and HamQTH can only look up a complete call, so the lists are downloaded instead (next to the log file, refreshed weekly; File → Update LoTW and eQSL call lists) and searched on your computer while you type.
 - **Operators:** an Operator field in the entry form.
   - Personal stations fill in your call.
   - Club stations must enter the operator, which then stays for the session.
@@ -108,9 +109,11 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, or keep one QSO and merge the others into it, delete one, or mark them as not dupes.
 - **Bulk edit** of a selection, with a preview and undo.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
+  - A call is **green** when LoTW confirmed the QSO (eQSL, QRZ.com and paper cards don't make it green).
   - **Uploads are always your choice.** *Sync everything* only downloads. QSOs not yet uploaded to all four services are shown in grey (the tooltip names the missing services); the preset *Not uploaded to every service* lists them, and *Upload selected* sends them.
   - Downloads also record what is already uploaded: LoTW's report of accepted QSOs and the QRZ.com logbook mark those QSOs as uploaded. eQSL (it only offers your inbox) and HRDLog (no download) can't tell NWOlogger what you uploaded there before.
   - Every outcome goes to one **Sync results** window that never blocks the app (QSL → Show sync results). A row that a setting can fix has *Open Preferences*.
+  - **Sync history** keeps every run; *Clear history…* (or QSL → Clear sync history…) deletes it for the services you choose, e.g. only QRZ.com. Your QSOs and their upload and confirmation status are not touched.
   - Checked before anything is sent: the TQSL station location (Preferences offers the locations TQSL has) and the eQSL QTH nickname of each station profile.
   - TQSL can wait in its own window (e.g. for your certificate passphrase); *Cancel* stops it, and quitting NWOlogger asks first, then stops it instead of waiting.
 - **Paper QSL cards** tracked separately (sent and received dates, via bureau, direct or manager), with a "to send" queue.
@@ -158,7 +161,8 @@ NWOlogger/
 │   │   ├── search.py          filters → SQL (wildcards, vague / exact mode)
 │   │   ├── dupes.py, modes.py, bands.py           dupe rules, mode relations, band plan
 │   │   ├── callsign.py, dxcc.py, regions.py, geo.py   calls, country file, China provinces, grids
-│   │   ├── similar.py         similar calls for Worked before (log, QRZ.com / HamQTH cache, MASTER.SCP)
+│   │   ├── similar.py         similar calls for Worked before (log, QRZ.com / HamQTH cache, call lists, MASTER.SCP)
+│   │   ├── calllists.py       LoTW user and eQSL AG member lists: download and fast search
 │   │   ├── net.py, secrets.py HTTPS to the services only, no secrets in messages; keychain access
 │   │   ├── sats.py, propagation.py                satellites and per-service names; TQSL propagation modes
 │   │   ├── operators.py       personal / club station operator
@@ -193,6 +197,7 @@ NWOlogger/
   - Deleting the last station profile with a callsign removes that callsign's QRZ Logbook key.
 - Error messages, sync history and logs never contain a password, key, upload code or session token, even when a service echoes one back encoded. Requests go over HTTPS to each service's own hosts only, redirects included. QRZ.com XML gets the password and session key in the request body; LoTW and eQSL only accept them in the (encrypted) URL. HTTP request logging stays off even when the app logs at DEBUG.
 - The diagnostic log (`~/Library/Logs/NWOlogger/` on macOS, `%LOCALAPPDATA%\NWOlogger\Logs` on Windows, `~/.local/state/nwologger/` on Linux) masks every secret and account user name NWOlogger has read, also inside tracebacks and echoed error pages, logs requests by host and path only (never the URL query), and shows your home folder as `~`. It holds counts and settings names, not your QSOs.
+- The LoTW user and eQSL AG lists are public files, downloaded without a login; nothing you type is sent anywhere to search them.
 - Uploads to LoTW, eQSL, QRZ.com and HRDLog send only standard ADIF fields, never another program's `APP_…` fields, and never a field holding one of your saved secrets. Imported fields that look like credentials (`EQSL_PSWD`, `…PASSWORD…`, `…TOKEN…`, `APP_…_KEY`) are left out, and never exported.
 - Never commit real log files. `*.sql`, `*.sqlite`, `*.adi` and similar are git-ignored because they contain other operators' personal data. Only synthetic files under `tests/fixtures/` are committed.
 

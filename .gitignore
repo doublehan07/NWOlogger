@@ -9,6 +9,9 @@
 *.cbr
 *.xlsx
 *.xls
+# Public call lists downloaded next to a log (other operators' calls)
+lotw-user-activity.csv
+eqsl-ag-members.txt
 *.log
 backups/
 # Test fixtures are synthetic and may be committed
