@@ -49,7 +49,7 @@ class AboutDialog(QDialog):
             "<p>Han Zhang (BI1NWO)<br>Claude Opus 5.5 Extra High (Anthropic)</p>"
             f"<h3>{tr('Copyright')}</h3>"
             f"<p>© 2026 Han Zhang. {tr('Released under the MIT License.')}</p>"
-            f"<h3>{tr('Made for')}</h3>"
+            f"<h3>{tr('Special thanks')}</h3>"
             f"<p><b>BY1QH</b> · {tr('club station, China')} · "
             "<a href='https://www.qrz.com/db/BY1QH'>qrz.com/db/BY1QH</a><br>"
             f"<span style='color:{mut}'>{tr('The BY1QH logo is used as the NWOlogger icon.')}</span></p>")
