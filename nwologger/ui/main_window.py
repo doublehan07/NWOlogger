@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -57,15 +57,21 @@ tr = i18n.tr
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, db: dbm.LogDB, prefs, app: QApplication):
+    # The language changed: build the window again in the new language (app.py does, keeping this one's state).
+    rebuild_requested = Signal()
+
+    def __init__(self, db: dbm.LogDB, prefs, app: QApplication, *, ops: OperatorSession | None = None,
+                 first_run: bool = True):
         super().__init__()
         self.db, self.prefs, self.app = db, prefs, app
         self.actions_: list[QAction] = []
-        self.ops = OperatorSession()
+        self.ops = ops or OperatorSession()
+        self._rebuild_waiting = False
         self.sync = SyncController(db, prefs, self)
         self.sync.message.connect(self.flash)
         self.sync.prefs_requested.connect(self.open_prefs)
         self.sync.history_requested.connect(self._show_history)
+        self.sync.idle.connect(self._sync_idle)
         self._lookup_clients: list | None = None
         self.resize(1480, 920)
         self._build()
@@ -78,7 +84,8 @@ class MainWindow(QMainWindow):
             self.splitter.restoreState(state)
         self.db.add_listener(self._on_db_change)
         self._update_status()
-        QTimer.singleShot(0, self._first_run)
+        if first_run:
+            QTimer.singleShot(0, self._first_run)
 
     # ------------------------------------------------------------------ build
     def act(self, text: str, slot, shortcut: str | QKeySequence | None = None, icon: str | None = None,
@@ -814,8 +821,85 @@ class MainWindow(QMainWindow):
                 t.step("entry form")
                 self.model.refresh()
                 t.step("log table")
+            if self.prefs.get("language") != i18n.lang():
+                self.request_rebuild()
         else:
             self.dx.reload_profiles()
+
+    # ------------------------------------------------------------------ language switch
+    def request_rebuild(self) -> None:
+        """A running upload or download reports back to this window, so the switch waits until it finishes."""
+        if self.sync.running():
+            self._rebuild_waiting = True
+            self.flash(tr("The language changes when the running sync finishes."))
+            return
+        self.rebuild_requested.emit()
+
+    def _sync_idle(self) -> None:
+        if self._rebuild_waiting:
+            self._rebuild_waiting = False
+            QTimer.singleShot(0, self.rebuild_requested.emit)  # after the finished job's own updates
+
+    def rebuilt(self) -> MainWindow:
+        """This window built again in the language now set in Preferences: the same log file (no new backup),
+        operator and state. This one is closed."""
+        lang = self.prefs.get("language")
+        with applog.timed(f"Language switch to {lang}", at_least=0) as t:
+            state = self.snapshot()
+            self.shutdown()
+            i18n.load(lang)
+            t.step("load")
+            new = MainWindow(self.db, self.prefs, self.app, ops=self.ops, first_run=False)
+            t.step("build")
+            new.restore(state)
+            new.show()
+            new.raise_()
+            new.activateWindow()
+            self.hide()
+            self.deleteLater()
+            t.step("restore")
+        return new
+
+    def save_layout(self) -> None:
+        self.prefs.set_value("window/geometry", self.saveGeometry())
+        self.prefs.set_value("window/splitter", self.splitter.saveState())
+        self.prefs.set_value("log/columns", self.view.visual_columns())
+        if self.contest is not None:
+            self.contest.save_state()
+
+    def snapshot(self) -> dict:
+        """What a window built again should show: layout (saved in Preferences), view, tab, filter, sort order,
+        selection and scroll position, the entry form and the Sync results rows."""
+        self.save_layout()
+        hh = self.view.horizontalHeader()
+        top = self.view.indexAt(self.view.viewport().rect().topLeft())
+        res = self.sync.results
+        return {"view": self.entry_stack.currentIndex(), "tab": self.tabs.currentIndex(), "filter": self.filter.spec(),
+                "sort": (self.model.columns[hh.sortIndicatorSection()]
+                         if 0 <= hh.sortIndicatorSection() < len(self.model.columns) else None,
+                         hh.sortIndicatorOrder()),
+                "selection": self.view.selected_ids(), "top": self.model.id_at(top.row()) if top.isValid() else None,
+                "form": self.dx.form_state(), "results": list(res.entries) if res is not None else [],
+                "results_shown": res is not None and res.isVisible()}
+
+    def restore(self, st: dict) -> None:
+        if st.get("view") == 1 and self.contest is not None:
+            self.set_view(1)
+        self.tabs.setCurrentIndex(st.get("tab") or 0)
+        self.filter.set_spec(st.get("filter") or {})
+        col, order = st.get("sort") or (None, None)
+        if col in self.model.columns:
+            self.view.horizontalHeader().setSortIndicator(self.model.columns.index(col), order)
+        self.view.select_ids(st.get("selection") or [], scroll=False)
+        top = st.get("top")
+        if top in self.model.row_of:
+            self.view.scrollTo(self.model.index(self.model.row_of[top], 0), QAbstractItemView.ScrollHint.PositionAtTop)
+        self.dx.restore_form(st.get("form") or {})
+        if st.get("results"):
+            w = self.sync._window()  # noqa: SLF001 - the controller owns its results window
+            w.replay(st["results"])
+            if st.get("results_shown"):
+                w.show()
 
     def palette(self) -> None:
         CommandPalette(self.actions_, self).exec()
@@ -906,10 +990,6 @@ class MainWindow(QMainWindow):
             return
         if running:
             self.sync.cancel_all()
-        self.prefs.set_value("window/geometry", self.saveGeometry())
-        self.prefs.set_value("window/splitter", self.splitter.saveState())
-        self.prefs.set_value("log/columns", self.view.visual_columns())
-        if self.contest is not None:
-            self.contest.save_state()
+        self.save_layout()
         self.shutdown()
         super().closeEvent(e)

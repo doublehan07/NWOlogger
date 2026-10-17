@@ -401,6 +401,77 @@ def test_preferences_ok_opens_no_backup(win, monkeypatch):
     assert not opened
 
 
+def _ink(icon) -> str:
+    img = icon.pixmap(18, 18).toImage()
+    return next(img.pixelColor(x, y).name() for y in range(img.height()) for x in range(img.width())
+                if img.pixelColor(x, y).alpha() > 200)
+
+
+def test_icons_follow_a_theme_switch(win):
+    from PySide6.QtWidgets import QApplication
+
+    from nwologger.ui import theme
+
+    assert _ink(win.a_prefs.icon()) == theme.LIGHT.text.lower()
+    theme.apply(QApplication.instance(), "dark")
+    try:
+        assert _ink(win.a_prefs.icon()) == theme.DARK.text.lower()
+        assert _ink(theme.icon("search", "muted")) == theme.DARK.muted.lower()
+    finally:
+        theme.apply(QApplication.instance(), "light")
+
+
+def test_theme_preview_and_cancel(win, qtbot):
+    from nwologger.ui import theme
+    from nwologger.ui.prefs_dialog import PrefsDialog
+
+    win.prefs.set("theme", "light")
+    dlg = PrefsDialog(win.db, win.prefs, win)
+    qtbot.addWidget(dlg)
+    dlg.theme.setCurrentIndex(dlg.theme.findData("dark"))
+    assert theme.tokens().name == "dark"  # shown at once
+    dlg.reject()
+    assert theme.tokens().name == "light" and win.prefs.get("theme") == "light"
+
+
+def test_language_switch_keeps_the_window_state(win, qtbot):
+    from nwologger import i18n
+
+    for c in ("BA1AA", "BA1BB", "BA1CC"):
+        log_one(win, qtbot, c)
+    win.tabs.setCurrentIndex(1)
+    win.model.refresh()
+    win.view.select_ids([2])
+    win.dx.call.setText("BG1XYZ")
+    win.dx._call_edited("BG1XYZ")
+    win.dx.w["freq"].setText("7.074")
+    win.sync.report("lotw", "ok", lambda t: "1 " + t("confirmations received"))
+    backups = list(win.db.backups())
+    win.prefs.set("language", "zh_CN")
+    new = win.rebuilt()
+    qtbot.addWidget(new)
+    try:
+        assert new.tabs.tabText(0) == i18n.tr("Log") != "Log"
+        assert new.dx.call.text() == "BG1XYZ" and new.dx._get("freq") == "7.074"
+        assert new.tabs.currentIndex() == 1 and new.view.selected_ids() == [2]
+        assert new.sync.results is not None and "1 confirmations received" in new.sync.results.texts()[0]
+        assert list(new.db.backups()) == backups and not win.isVisible()
+    finally:
+        new.shutdown()
+        win.prefs.set("language", "en")
+        i18n.load("en")
+
+
+def test_language_switch_waits_for_a_running_sync(win, qtbot):
+    win.sync.busy.add("lotwdown")
+    seen = []
+    win.rebuild_requested.connect(lambda: seen.append(1))
+    win.request_rebuild()
+    assert not seen and "finishes" in win.st_msg.text()
+    with qtbot.waitSignal(win.rebuild_requested, timeout=2000):
+        win.sync._end("lotw", "download")
+
+
 def test_sync_everything_never_uploads(win, monkeypatch):
     downloads = []
     monkeypatch.setattr(win.sync, "upload", lambda *a, **k: pytest.fail("Sync everything uploaded"))

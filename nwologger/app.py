@@ -31,6 +31,15 @@ def run(argv: list[str], *, db_path: str | None = None, lang: str | None = None,
         applog.shutdown()
 
 
+def _qt_translator(app: QApplication, language: str) -> QTranslator:
+    """Qt's own texts (OK, Cancel, the colour and file dialogs) in ``language``."""
+    qt_tr = QTranslator(app)
+    if language != "en" and qt_tr.load(QLocale(language), "qtbase", "_",
+                                       QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
+        app.installTranslator(qt_tr)
+    return qt_tr
+
+
 def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: str | None) -> int:
     app = QApplication.instance() or QApplication(argv)
     applog.install_qt_messages()
@@ -45,16 +54,13 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
     from .ui.main_window import MainWindow  # noqa: PLC0415
     from .ui.prefs import Prefs  # noqa: PLC0415
 
+    theme.watch_system(app)
     while True:
         prefs = Prefs()
         language = lang or prefs.get("language")
         i18n.load(language)
-        qt_tr = QTranslator(app)
-        if language != "en" and qt_tr.load(QLocale(language), "qtbase", "_",
-                                           QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
-            app.installTranslator(qt_tr)
+        qt_tr = _qt_translator(app, language)
         theme.apply(app, theme_mode or prefs.get("theme"))
-        theme.watch_system(app)
         path = db_path or prefs.get("db_path") or str(dbm.DEFAULT_PATH)
         applog.startup_banner(path)
         try:
@@ -66,11 +72,22 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
         with applog.timed("Window ready", at_least=0):
             win = MainWindow(logdb, prefs, app)
             win.show()
+        current = {"win": win, "qt_tr": qt_tr}
+
+        def rebuild(old: MainWindow, prefs=prefs, current=current) -> None:
+            """The language changed: the same log file and state, in a window built in the new language."""
+            app.removeTranslator(current["qt_tr"])
+            current["qt_tr"] = _qt_translator(app, prefs.get("language"))
+            new = old.rebuilt()
+            new.rebuild_requested.connect(lambda: rebuild(new))
+            current["win"] = new
+
+        win.rebuild_requested.connect(lambda w=win: rebuild(w))
         applog.start_watchdog()
         code = app.exec()
         applog.stop_watchdog()
-        win.deleteLater()
-        app.removeTranslator(qt_tr)
+        current["win"].deleteLater()
+        app.removeTranslator(current["qt_tr"])
         try:
             logdb.close()
         except Exception:  # noqa: BLE001 - already closed when switching files

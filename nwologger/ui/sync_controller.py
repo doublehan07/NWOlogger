@@ -129,11 +129,15 @@ class SyncResults(QDialog):
         row.addWidget(close)
         lay.addLayout(row)
         self.fixes: list[str | None] = []
+        self.entries: list[tuple] = []  # newest first: (time, service, kind, text, fix, ref)
 
-    def add(self, service: str, kind: str, text: str, *, fix: str | None = None, ref: str | None = None) -> None:
+    def add(self, service: str, kind: str, text: str, *, fix: str | None = None, ref: str | None = None,
+            at: str | None = None) -> None:
+        at = at or timeutil.now_utc().strftime("%H:%M:%S")
+        self.entries.insert(0, (at, service, kind, text, fix, ref))
         self.table.insertRow(0)
         detail = text + (f"  ·  ref {ref}" if ref else "")
-        cells = [timeutil.now_utc().strftime("%H:%M:%S"), service, tr(RESULT_LABELS.get(kind, kind)), detail]
+        cells = [at, service, tr(RESULT_LABELS.get(kind, kind)), detail]
         t = theme.tokens()
         color = {"ok": t.ok, "failed": t.bad, "skipped": t.warn, "cancelled": t.warn}.get(kind)
         for c, v in enumerate(cells):
@@ -150,7 +154,13 @@ class SyncResults(QDialog):
     def clear(self) -> None:
         self.table.setRowCount(0)
         self.fixes = []
+        self.entries = []
         self.fix_btn.setEnabled(False)
+
+    def replay(self, entries: list[tuple]) -> None:
+        """The rows of an earlier window (before a language switch), oldest added first."""
+        for at, service, kind, text, fix, ref in reversed(entries):
+            self.add(service, kind, text, fix=fix, ref=ref, at=at)
 
     def texts(self) -> list[str]:
         return [self.table.item(r, 3).text() for r in range(self.table.rowCount())]
@@ -228,6 +238,7 @@ class SyncController(QObject):
     message = Signal(str)
     prefs_requested = Signal(str)
     history_requested = Signal()
+    idle = Signal()  # the last running upload or download has finished
 
     def __init__(self, db, prefs, parent: QWidget):
         super().__init__(parent)
@@ -332,6 +343,8 @@ class SyncController(QObject):
         key = service + ("down" if direction == "download" else "up")
         self.busy.discard(key)
         self.jobs.pop(key, None)
+        if not self.busy:
+            self.idle.emit()
 
     def _fail(self, service: str, direction: str, started: str, dlg, msg: str, secrets=(), *,
               ref: str | None = None, quiet: bool = False) -> None:

@@ -6,8 +6,18 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QByteArray, QRectF, QSize, Qt
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QIcon,
+    QIconEngine,
+    QPainter,
+    QPalette,
+    QPixmap,
+)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
@@ -241,7 +251,6 @@ def apply(app: QApplication, mode: str = "system") -> Tokens:
     app.setStyle("Fusion")
     app.setPalette(palette(_current))
     app.setStyleSheet(stylesheet(_current))
-    icon.cache_clear()
     return _current
 
 
@@ -258,23 +267,55 @@ def watch_system(app: QApplication, on_change=None) -> None:
         pass
 
 
+@lru_cache(maxsize=1024)
+def _render(name: str, color: str, width: int, height: int, scale: float) -> QPixmap:
+    svg = (ICONS / f"{name}.svg").read_text(encoding="utf-8").replace("currentColor", color)
+    pm = QPixmap(max(1, round(width * scale)), max(1, round(height * scale)))
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    QSvgRenderer(QByteArray(svg.encode("utf-8"))).render(painter, QRectF(0, 0, pm.width(), pm.height()))
+    painter.end()
+    pm.setDevicePixelRatio(scale)
+    return pm
+
+
+class _ThemedIcon(QIconEngine):
+    """Draws the SVG in the current theme's colours whenever it is painted, so every icon follows a theme switch
+    (also one macOS makes under Follow system) without being set again."""
+
+    def __init__(self, name: str, color: str | None):
+        super().__init__()
+        self.name, self.color = name, color
+
+    def clone(self) -> QIconEngine:
+        return _ThemedIcon(self.name, self.color)
+
+    def _color(self, mode: QIcon.Mode) -> str:
+        if mode == QIcon.Mode.Disabled:
+            return _current.muted
+        if self.color is None:
+            return _current.text
+        return getattr(_current, self.color, self.color)  # a token name ("muted") or a colour ("#FFFFFF")
+
+    def scaledPixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State, scale: float) -> QPixmap:  # noqa: N802
+        return _render(self.name, self._color(mode), size.width(), size.height(), float(scale))
+
+    def pixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QPixmap:
+        return self.scaledPixmap(size, mode, state, 1.0)
+
+    def paint(self, painter: QPainter, rect, mode: QIcon.Mode, state: QIcon.State) -> None:
+        device = painter.device()
+        scale = device.devicePixelRatioF() if device is not None else 1.0
+        painter.drawPixmap(rect, self.scaledPixmap(rect.size(), mode, state, scale))
+
+
 @lru_cache(maxsize=256)
-def icon(name: str, color: str | None = None, size: int = 18) -> QIcon:
-    path = ICONS / f"{name}.svg"
-    if not path.exists():
+def icon(name: str, color: str | None = None) -> QIcon:
+    """A Lucide icon in the theme's text colour, or in ``color``: a token name such as ``"muted"`` (it follows the
+    theme) or a fixed colour such as ``"#FFFFFF"``."""
+    if not (ICONS / f"{name}.svg").exists():
         return QIcon()
-    svg = path.read_text(encoding="utf-8").replace("currentColor", color or _current.text)
-    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
-    ic = QIcon()
-    for scale in (1, 2):
-        pm = QPixmap(size * scale, size * scale)
-        pm.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pm)
-        renderer.render(painter, QRectF(0, 0, size * scale, size * scale))
-        painter.end()
-        pm.setDevicePixelRatio(scale)
-        ic.addPixmap(pm)
-    return ic
+    return QIcon(_ThemedIcon(name, color))
 
 
 def repolish(w) -> None:

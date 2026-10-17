@@ -1118,6 +1118,61 @@ class DXPanel(QWidget):
                     it.setBackground(QColor(t.accent_soft))
                 self.matrix.setItem(gi, bi, it)
 
+    def form_state(self) -> dict:
+        """Everything the form holds, so a window built again (a language switch) shows the same QSO in progress."""
+        fields = {}
+        for col, w in self.w.items():
+            if isinstance(w, UtcDateTimeEdit):
+                fields[col] = ("time", w.iso())
+            elif isinstance(w, AutoLineEdit):
+                fields[col] = ("text", w.text(), w.is_auto(), bool(w.property("guess")))
+        return {"edit_id": self.edit_id, "session_device": dict(self._session_device), "call": self.call.text(),
+                "fields": fields, "mode": combo_value(self.mode), "sat": combo_value(self.sat),
+                "prop": combo_value(self.prop), "device": self.device_values(), "rx_sync": self.rx_sync.isChecked(),
+                "time_on_locked": self.time_on_locked, "time_off_mode": self.time_off_mode,
+                "duration": self._duration, "hidden": dict(self._hidden), "last_lookup": self._last_lookup_call,
+                "operator": self.op_field.text()}
+
+    def restore_form(self, st: dict) -> None:
+        if st.get("edit_id") is not None and self.db.get(st["edit_id"]):
+            self.load_qso(st["edit_id"])  # the banner and the Save / Delete buttons
+            self._session_device = st.get("session_device") or {}
+        self.rx_sync.setChecked(bool(st.get("rx_sync")))
+        for w, v in ((self.mode, st.get("mode")), (self.sat, st.get("sat")), (self.prop, st.get("prop"))):
+            w.blockSignals(True)
+            set_combo_data(w, v or "")
+            w.blockSignals(False)
+        for col, f in (st.get("fields") or {}).items():
+            w = self.w.get(col)
+            if w is None:
+                continue
+            w.blockSignals(True)
+            if f[0] == "time":
+                w.set_iso(f[1])
+            elif f[2]:  # filled from a lookup, cty or your log: still replaced when the call changes
+                w.clear_all()
+                w.set_auto(f[1], guess=f[3])
+            else:
+                w.setText(f[1])
+                w.setCursorPosition(0)
+            w.blockSignals(False)
+        self._apply_device(st.get("device") or {})
+        self._match_setup()
+        self.call.blockSignals(True)
+        self.call.setText(st.get("call") or "")
+        self.call.blockSignals(False)
+        self.time_on_locked = bool(st.get("time_on_locked"))
+        self.time_off_mode = st.get("time_off_mode") or "live"
+        self._duration = st.get("duration") or 60.0
+        self._hidden = dict(st.get("hidden") or {})
+        self._last_lookup_call = st.get("last_lookup") or ""
+        if st.get("operator"):
+            self.op_field.setText(st["operator"])
+        self._mode_changed(combo_value(self.mode) or "")
+        self._freq_changed()
+        self._power_hint()
+        self._refresh_checks()
+
     # ------------------------------------------------------------------ actions
     def clear_form(self, keep_sticky: bool = True, *, full: bool = False) -> None:
         """Reset the form for the next QSO. ``full`` (Clear, Esc, Cancel) also empties frequency, mode, reports,

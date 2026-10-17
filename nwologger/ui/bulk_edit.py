@@ -116,7 +116,7 @@ class BulkEditDialog(QDialog):
         self.find = QLineEdit()
         self.find.setPlaceholderText(tr("Find a field…"))
         self.find.setClearButtonEnabled(True)
-        self.find.addAction(theme.icon("search", theme.tokens().muted), QLineEdit.ActionPosition.LeadingPosition)
+        self.find.addAction(theme.icon("search", "muted"), QLineEdit.ActionPosition.LeadingPosition)
         self.find.textChanged.connect(self._filter)
         self.only_active = QCheckBox(tr("Show only fields being changed"))
         self.only_active.toggled.connect(self._filter)

@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -516,8 +517,10 @@ class PrefsDialog(QDialog):
         for code, name in (("system", "Follow system"), ("light", "Light"), ("dark", "Dark")):
             self.theme.addItem(tr(name), code)
         self.theme.setCurrentIndex(max(0, self.theme.findData(prefs.get("theme"))))
+        self._theme_at_open = prefs.get("theme")
+        self.theme.currentIndexChanged.connect(self._preview_theme)
         f.addRow(tr("Language"), self.lang)
-        lang_hint = QLabel(tr("Language changes apply after restarting NWOlogger."))
+        lang_hint = QLabel(tr("A new language applies when you press OK."))
         lang_hint.setObjectName("Hint")
         f.addRow("", lang_hint)
         f.addRow(tr("Theme"), self.theme)
@@ -804,6 +807,15 @@ class PrefsDialog(QDialog):
             QMessageBox.information(self, tr("Satellites"), tr("Only satellites you added (★) can be removed."))
             return
         self._fill_satmap()
+
+    def _preview_theme(self) -> None:
+        """The theme you pick is shown at once; Cancel puts the one you had back."""
+        theme.apply(QApplication.instance(), self.theme.currentData())
+
+    def reject(self) -> None:
+        if self.theme.currentData() != self._theme_at_open:
+            theme.apply(QApplication.instance(), self._theme_at_open)
+        super().reject()
 
     def _fill_qrz_keys(self) -> None:
         """One row per station callsign in your profiles; a key typed or forgotten but not yet saved stays."""

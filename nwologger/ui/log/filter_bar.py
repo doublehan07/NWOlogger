@@ -25,7 +25,7 @@ class FilterBar(QWidget):
         self.call.setPlaceholderText(tr("Call  (? *)"))
         self.call.setClearButtonEnabled(True)
         self.call.setProperty("mono", True)
-        self.call.addAction(theme.icon("search", theme.tokens().muted), QLineEdit.ActionPosition.LeadingPosition)
+        self.call.addAction(theme.icon("search", "muted"), QLineEdit.ActionPosition.LeadingPosition)
         self.call.setMinimumWidth(130)
         self.band = QComboBox()
         self.band.addItem(tr("Any band"), "")
