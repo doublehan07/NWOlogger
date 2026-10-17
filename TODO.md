@@ -1,6 +1,6 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found. What is left is below.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found. What is left is below.
 
 ## Needs real accounts
 
@@ -25,7 +25,8 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Next
 
-- [ ] **Gridmaster-style grid display:** a map of Maidenhead grid squares coloured by worked / confirmed (VUCC), per band, mode or satellite
+- [ ] **Statistics view** (planned for v0.1.7): totals per year, band, mode and satellite, unique calls, QSL counts, award-style progress
+- [ ] **Gridmaster-style grid display** (planned for v0.1.7): a map of Maidenhead grid squares coloured by worked / confirmed (VUCC), per band, mode or satellite
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Bulk edit: refuse a Time Off earlier than Time On, as the entry form does
@@ -41,15 +42,19 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Later / maybe
 
-- [ ] Similar calls online: when the typed call isn't found, look up the best few call-list matches on QRZ.com / HamQTH and show their name and QTH
-- [ ] Similar calls: a *Search online* button that tries the ten digits when the typed call has none (`BINWO` → `BI1NWO` …), as exact lookups
-- [ ] Statistics view: totals per year, band, mode and satellite, unique calls, QSL counts
-- [ ] Import aliases for satellite spellings other programs use (`TEVEL-5`, `InspireSat-7`, `ISS` → `ARISS`) and Yaesu's `FM DN` mode
-
 - [ ] macOS code signing + notarization (the BY1QH icon is in place)
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
+
+## Done in v0.1.5 (2026-10-17)
+
+- [x] **No undo any more:** undoing a download put the log out of step with the services (and the next download couldn't repair it), and one click could delete a whole import. Every change to many QSOs (import, bulk edit, delete, merge, look up and fill, recompute DXCC) asks first and saves a backup; the last 10 such backups are kept apart from the launch copies. 0.1.4's undo history is removed from the log file once
+- [x] **Downloads say what is new:** "2 new confirmations · 1 already in your log · 6 not in your log" instead of "received / matched / updated" (LoTW sends its newest confirmation again, eQSL the last day, QRZ.com the whole logbook). The QRZ.com download date is set once, so the first download of a UTC day no longer "updates" every QSO. A Sync results row with new confirmations has *Select them*
+- [x] **Download everything again…** (QSL → LoTW / eQSL) starts downloads over from your first QSO; *Clear history* says it keeps where downloads resume
+- [x] **Wait between syncs** with the same service (Preferences → Services, default 5 min, at least 1): a sooner download or upload is refused with the time it can run; QSOs uploaded when logged wait and go together; kept across restarts
+- [x] Wildcards: a match only through a portable part (`4W/JI1AVY` for `JI1*`) ranks after the whole-call matches
+- [x] Preferences → OK no longer re-applies an unchanged theme (0.49 s in a real log)
 
 ## Done in v0.1.4 (2026-10-17)
 

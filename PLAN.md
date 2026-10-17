@@ -1,6 +1,6 @@
 # NWOlogger — Design Plan
 
-Status: **v0.1.4** (2026-10-17): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1), the Device section, the Sync results window and the diagnostic log (v0.1.2), the LoTW / eQSL call lists for Similar calls and per-service sync history clearing (v0.1.3), and the fixes from testing 0.1.3: a quick Preferences → OK, language and theme switches without a restart, wildcards in the call field, sorting from the first row, new confirmations selected after a sync, and a more telling diagnostic log (v0.1.4); see §14 for where the code differs from
+Status: **v0.1.5** (2026-10-17): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1), the Device section, the Sync results window and the diagnostic log (v0.1.2), the LoTW / eQSL call lists for Similar calls and per-service sync history clearing (v0.1.3), and the fixes from testing 0.1.3: a quick Preferences → OK, language and theme switches without a restart, wildcards in the call field, sorting from the first row, new confirmations selected after a sync, and a more telling diagnostic log (v0.1.4), and the fixes from testing 0.1.4: no undo (backups instead), downloads that say what is new, Download everything again, and a wait between syncs (v0.1.5); see §14 for where the code differs from
 this plan, and [TODO.md](TODO.md) for what is left. Open questions are collected in §13.
 
 ## 1. Requirements
@@ -60,12 +60,12 @@ These may move to TODO later, but they are not part of the core.
 
 - **One source of truth:** the `version` in `pyproject.toml`, read at runtime through `importlib.metadata` and exposed as `nwologger.__version__`. Versions follow SemVer and start at `0.1.0`. While in `0.x`, a new milestone bumps the minor number and a fix bumps the patch number.
 - **Shown in the app** in four places:
-  - the window title (`NWOlogger v0.1.4 — nwolog.sqlite`)
+  - the window title (`NWOlogger v0.1.5 — nwolog.sqlite`)
   - the right end of the toolbar, as in MacLoggerDX
   - Help → About (version, Qt/PySide6 version, DB schema version, data-file path)
   - `nwologger --version`
-- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.4 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
-- **Releases:** a git tag such as `v0.1.4` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
+- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.5 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
+- **Releases:** a git tag such as `v0.1.5` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
 
 Architecture rule: `nwologger/core/` never imports Qt. All logic lives there: DB, ADIF, search, dupes, DXCC, contest scoring and sync.
 The UI layer is thin, so the core is unit-testable and could also back a CLI.
@@ -241,7 +241,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 - **Keyboard-first:** every action has a shortcut, plus a command palette (⌘K / Ctrl+K).
 
 ```
-┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.4 ┐
+┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.5 ┐
 ├ Entry panel ── [ DX | Contest ] ─────────────────────────────────────────────────────────────────────────────┤
 │ Call [______]  First  Last    │ Time On  2026-10-16 04:19:35   Time Off                                      │
 │ Address / City                │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │

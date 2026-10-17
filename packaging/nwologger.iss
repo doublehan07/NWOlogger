@@ -1,6 +1,6 @@
 ; Inno Setup script for the Windows installer. CI passes /DAppVersion=x.y.z.
 #ifndef AppVersion
-  #define AppVersion "0.1.4"
+  #define AppVersion "0.1.5"
 #endif
 
 [Setup]
