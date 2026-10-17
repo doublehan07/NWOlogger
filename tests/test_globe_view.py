@@ -9,6 +9,7 @@ from PySide6.QtCore import QBuffer, QIODevice, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
 from nwologger.core import globe, grids, maptiles
+from nwologger.ui.stats import gridmap
 from nwologger.ui.stats.gridmap import BG, GridMapView
 
 
@@ -255,11 +256,11 @@ def test_low_resolution_tiles_stay_aligned_and_picking_precise_at_high_zoom(view
     view.center_lon, view.center_lat = center
     view.provider = maptiles.NASA
     z = view._imagery_level()
-    assert z <= 5 and view.zoom > z
+    assert z == maptiles.NASA.max_zoom and view.zoom > z  # magnified: sampled smaller and scaled up smoothly
     tile = QImage(256, 256, QImage.Format.Format_RGB32)
     painter = QPainter(tile)
-    for column in range(256):
-        painter.fillRect(column, 0, 1, 256, QColor("red") if column % 2 == 0 else QColor("blue"))
+    for column in range(0, 256, 2):  # two-texel stripes: their centres stay pure after smooth scaling
+        painter.fillRect(column, 0, 2, 256, QColor("red") if column % 4 == 0 else QColor("blue"))
     painter.end()
     pixmap = QPixmap.fromImage(tile)
     for tx, ty in view._tile_indices(z):
@@ -272,12 +273,16 @@ def test_low_resolution_tiles_stay_aligned_and_picking_precise_at_high_zoom(view
     world_x, world_y = grids.to_world(*center, z)
     checked = 0
     for offset in range(-2, 3):
-        column = math.floor(world_x) + offset
-        lon, lat = grids.from_world(column + .5, math.floor(world_y) + .5, z)
+        column = (math.floor(world_x) // 2 + offset) * 2
+        lon, lat = grids.from_world(column + 1, math.floor(world_y) + .5, z)
         pos = view.to_screen(lon, lat)
         if not view.rect().contains(pos.toPoint()):
             continue
-        assert image.pixelColor(pos.toPoint()) == (QColor("red") if column % 2 == 0 else QColor("blue"))
+        color = image.pixelColor(pos.toPoint())
+        if column % 4 == 0:
+            assert color.red() > color.blue() + 100, (column, color.getRgb())
+        else:
+            assert color.blue() > color.red() + 100, (column, color.getRgb())
         assert view.to_lonlat(pos) == pytest.approx((globe.normalize_lon(lon), lat), abs=1e-8)
         assert view.square_at(pos) == next(grids.squares_in(globe.normalize_lon(lon), lat,
                                                            globe.normalize_lon(lon), lat))
@@ -301,7 +306,7 @@ def test_high_zoom_requests_only_small_visible_tile_set(view, monkeypatch, cente
     assert len(indices) == len(wanted)
     for z, tx, ty in indices:
         assert 0 <= tx < 2 ** z and 0 <= ty < 2 ** z
-        assert z <= 5
+        assert 8 <= z <= maptiles.TIANDITU.max_zoom  # detail follows the zoom instead of stopping at level 5
         assert (tx, ty) in set(view._tile_indices(z))
 
 
@@ -353,6 +358,7 @@ def _png_bytes(color):
 
 def test_replacing_a_tile_refreshes_cached_frame_without_changing_cache_size(view, monkeypatch):
     view.center_lon, view.center_lat = 20, 20
+    view.set_terminator_enabled(False)  # the colours, not the time of day
     view.provider = maptiles.NASA
     monkeypatch.setattr(view, "_imagery_level", lambda: 3)
     monkeypatch.setattr(view.fetcher, "want", lambda *_args: None)
@@ -393,8 +399,9 @@ def test_rotation_and_resize_invalidate_cached_frames(view, monkeypatch):
     assert resized.deviceIndependentSize() == view.size()
 
 
-def test_scaled_display_keeps_frame_resolution_bounded_while_idle_and_dragging(view, monkeypatch, qtbot):
-    monkeypatch.setattr(view, "devicePixelRatioF", lambda: 2.5)
+@pytest.mark.parametrize(("ratio", "frame"), [(1.0, 1.0), (1.5, 1.5), (2.0, 2.0), (2.5, 2.0)])
+def test_scaled_display_renders_at_its_own_resolution_up_to_twice(view, monkeypatch, qtbot, ratio, frame):
+    monkeypatch.setattr(view, "devicePixelRatioF", lambda: ratio)
     updates = []
     update = view.update
 
@@ -404,18 +411,39 @@ def test_scaled_display_keeps_frame_resolution_bounded_while_idle_and_dragging(v
 
     monkeypatch.setattr(view, "update", record_update)
     view.grab()
-    assert view._frame.devicePixelRatio() == 1
-    assert view._frame.width() == view.width()
+    assert view._frame.devicePixelRatio() == frame
+    assert view._frame.width() == math.ceil(view.width() * frame)
+    assert view._raster_scale(frame) == frame
     start = QPoint(view.width() // 2, view.height() // 2)
     end = start + QPoint(60, 25)
     qtbot.mousePress(view, Qt.MouseButton.LeftButton, pos=start)
     qtbot.mouseMove(view, pos=end)
     view.grab()
-    assert view._frame.devicePixelRatio() == 1
-    assert view._frame.width() == view.width()
+    # Lines and text stay sharp while dragging; imagery and squares are computed at one pixel per point.
+    assert view._frame.devicePixelRatio() == frame
+    assert view._raster_scale(frame, moving=True) == 1.0
     before_release = len(updates)
     qtbot.mouseRelease(view, Qt.MouseButton.LeftButton, pos=end)
     assert len(updates) > before_release
     view.grab()
-    assert view._frame.devicePixelRatio() == 1
-    assert view._frame.width() == view.width()
+    assert view._frame.devicePixelRatio() == frame
+
+
+def test_per_pixel_layers_stay_within_their_pixel_budget_on_a_huge_view(view, monkeypatch):
+    monkeypatch.setattr(view, "devicePixelRatioF", lambda: 2.0)
+    view.resize(3000, 2000)
+    scale = view._raster_scale(view._frame_dpr())
+    assert scale < 2.0
+    assert (view.width() * scale) * (view.height() * scale) <= gridmap.RASTER_PIXELS * 1.001
+
+
+def test_squares_are_filled_per_pixel(view):
+    view.set_terminator_enabled(False)
+    view.zoom, view.center_lon, view.center_lat = 6, 1, .5
+    cell = grids.Square("JJ00")
+    cell.confirmed, cell.source = {"call": "N0CALL"}, "lotw"
+    view.set_cells({cell.square: cell})
+    image = view.grab().toImage()
+    inside = image.pixelColor(view.to_screen(0.5, 0.75).toPoint())
+    outside = image.pixelColor(view.to_screen(-0.5, 0.75).toPoint())
+    assert inside.green() > inside.red() + 60 and outside.green() < outside.red() + 60

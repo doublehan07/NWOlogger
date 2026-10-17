@@ -10,7 +10,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QImage
 
 from nwologger.core import globe, grids
-from nwologger.ui.stats import gridmap
+from nwologger.ui.stats import globeraster, gridmap
 
 
 @pytest.fixture
@@ -37,6 +37,12 @@ def _solar_dot(lon, lat, sun):
     return sum(a * b for a, b in zip(point, sun_point, strict=True))
 
 
+def _night_alpha(view, image, lon, lat):
+    pos = view.to_screen(lon, lat)
+    return image.pixelColor(min(image.width() - 1, int(pos.x() * image.width() / view.width())),
+                            min(image.height() - 1, int(pos.y() * image.height() / view.height()))).alpha()
+
+
 @pytest.mark.parametrize(("center", "sun"), [
     ((0, 0), (0, 0)),
     ((0, 0), (180, 0)),
@@ -47,58 +53,62 @@ def _solar_dot(lon, lat, sun):
     ((179.9, 89), (-179.9, 23)),
     ((0, 0), (90, 0)),
 ])
-def test_night_polygon_matches_solar_dot_on_visible_hemisphere(view, center, sun):
+def test_night_shade_follows_solar_altitude_on_visible_hemisphere(view, center, sun):
     view.center_lon, view.center_lat = center
     view._sun_position = sun
-    night, _boundary = view._terminator_paths()
+    image = view._night_image()
+    full = gridmap.NIGHT_SHADE.alpha()
     checked = 0
     for lon in range(-177, 180, 13):
         for lat in range(-83, 90, 11):
-            if view._camera().project(lon, lat)[2] < .05:
+            if view._camera().project(lon, lat)[2] < .2:
                 continue
-            dot = _solar_dot(lon, lat, sun)
-            if abs(dot) < .005:
-                continue
-            assert night.contains(view.to_screen(lon, lat)) == (dot < 0), (center, sun, lon, lat, dot)
+            altitude = math.degrees(math.asin(_solar_dot(lon, lat, sun)))
+            alpha = _night_alpha(view, image, lon, lat)
+            if altitude > globeraster.DAY_ALTITUDE + 2:
+                assert alpha == 0, (center, sun, lon, lat, altitude)
+            elif altitude < globeraster.NIGHT_ALTITUDE - 2:
+                assert alpha == full, (center, sun, lon, lat, altitude)
             checked += 1
     assert checked > 100
 
 
-@pytest.mark.parametrize(("center", "sun"), [
-    ((0, 0), (90, 0)),
-    ((117, 40.5), (10, 23.44)),
-    ((179, 25), (-179, -23.4)),
-    ((0, 90), (179.9, 0)),
-    ((-90, -90), (45, -23)),
-])
-def test_terminator_boundary_has_zero_geometric_solar_altitude(view, center, sun):
+@pytest.mark.parametrize(("center", "sun"), [((0, 0), (90, 0)), ((117, 40.5), (10, 23.44))])
+def test_twilight_fades_from_day_to_night_without_a_line(view, center, sun):
     view.center_lon, view.center_lat = center
     view._sun_position = sun
-    _night, boundary = view._terminator_paths()
-    assert not boundary.isEmpty()
-    sun_x, sun_y, sun_z = view._camera().project(*sun)
-    radius = view._radius()
-    for index in range(boundary.elementCount()):
-        point = boundary.elementAt(index)
-        x, y = (point.x - view.width() / 2) / radius, (view.height() / 2 - point.y) / radius
-        assert x * x + y * y <= 1 + 1e-12
-        depth = math.sqrt(max(0, 1 - x * x - y * y))
-        assert abs(x * sun_x + y * sun_y + depth * sun_z) <= 1e-7
+    image = view._night_image()
+    # Along the great circle from the subsolar point to its antipode, the shade only grows, through many steps.
+    sun_lon, sun_lat = sun
+    between = set()
+    for bearing in (90, 270):
+        alphas = []
+        for step in range(0, 181):
+            lon, lat = globe.destination(sun_lon, sun_lat, bearing, step * globe.EARTH_KM * math.pi / 180)
+            if view._camera().project(lon, lat)[2] > .2:
+                alphas.append(_night_alpha(view, image, lon, lat))
+        assert alphas == sorted(alphas)
+        between |= {a for a in alphas if 0 < a < gridmap.NIGHT_SHADE.alpha()}
+    assert len(between) >= 3
+    # No boundary line is drawn on top: the scene's pixels near the terminator are not brighter than the day.
+    assert not hasattr(gridmap, "TERMINATOR_LINE")
 
 
 @pytest.mark.parametrize("center", [(0, 0), (117, 40.5), (179, -60), (30, 90)])
 def test_view_facing_sun_or_antisun_has_whole_day_or_whole_night(view, center):
     view.center_lon, view.center_lat = center
     view._sun_position = center
-    night, boundary = view._terminator_paths()
-    assert night.isEmpty() and boundary.isEmpty()
-    view._sun_position = (globe.normalize_lon(center[0] + 180), -center[1])
-    night, boundary = view._terminator_paths()
-    assert boundary.isEmpty() and not night.isEmpty()
+    image = view._night_image()
     middle = QPointF(view.width() / 2, view.height() / 2)
-    assert night.contains(middle)
-    assert night.contains(middle + QPointF(view._radius() * .95, 0))
-    assert not night.contains(middle + QPointF(view._radius() * 1.05, 0))
+    for offset in (0, .9):
+        pos = middle + QPointF(view._radius() * offset, 0)
+        lonlat = view.to_lonlat(pos)
+        assert _night_alpha(view, image, *lonlat) == 0
+    view._sun_position = (globe.normalize_lon(center[0] + 180), -center[1])
+    image = view._night_image()
+    for offset in (0, .9):
+        lonlat = view.to_lonlat(middle + QPointF(view._radius() * offset, 0))
+        assert _night_alpha(view, image, *lonlat) == gridmap.NIGHT_SHADE.alpha()
 
 
 def test_default_overlay_toggle_changes_night_pixels_and_png_export(view, tmp_path):

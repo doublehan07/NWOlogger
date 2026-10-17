@@ -38,7 +38,7 @@ def test_grid_and_call_labels_return_after_interactive_rotation(view, monkeypatc
     cell.first = {"call": "N0CALL"}
     view.set_cells({cell.square: cell})
     drawn = []
-    monkeypatch.setattr(view, "_halo_text", lambda _painter, _pos, text, *_args: drawn.append(text))
+    monkeypatch.setattr(view, "_label_text", lambda _painter, _pos, text, *_args: drawn.append(text))
 
     _draw_labels(view)
     assert drawn == ["JJ00", "N0CALL"]
@@ -72,9 +72,8 @@ def test_offscreen_label_rejected_before_constructing_cell_geometry(view, monkey
     def unexpected_geometry(*_args):
         pytest.fail("an offscreen label constructed cell geometry")
 
-    monkeypatch.setattr(view, "_rect", unexpected_geometry)
     monkeypatch.setattr(view, "_square_path", unexpected_geometry)
-    monkeypatch.setattr(view, "_halo_text", unexpected_geometry)
+    monkeypatch.setattr(view, "_label_text", unexpected_geometry)
     _draw_labels(view)
 
 
@@ -108,21 +107,21 @@ def test_repeated_label_reuses_sprite_and_draws_at_each_requested_position(view)
     image.fill(Qt.GlobalColor.transparent)
     painter = QPainter(image)
     try:
-        view._halo_text(painter, QPointF(80, 45), "JJ00", font, QColor("white"),
+        view._label_text(painter, QPointF(80, 45), "JJ00", font, QColor("white"),
                         Qt.AlignmentFlag.AlignHCenter)
         assert len(view._text_sprites) == 1
         sprite_key = next(iter(view._text_sprites.values()))[0].cacheKey()
-        view._halo_text(painter, QPointF(240, 45), "JJ00", font, QColor("white"),
+        view._label_text(painter, QPointF(240, 45), "JJ00", font, QColor("white"),
                         Qt.AlignmentFlag.AlignHCenter)
         assert len(view._text_sprites) == 1
         assert next(iter(view._text_sprites.values()))[0].cacheKey() == sprite_key
         assert image.copy(QRect(0, 0, 160, 80)) == image.copy(QRect(160, 0, 160, 80))
         assert any(image.pixelColor(x, y).alpha() for x in range(160) for y in range(80))
 
-        view._halo_text(painter, QPointF(80, 45), "JJ01", font, QColor("white"))
+        view._label_text(painter, QPointF(80, 45), "JJ01", font, QColor("white"))
         assert len(view._text_sprites) == 2
         font.setPixelSize(20)
-        view._halo_text(painter, QPointF(80, 45), "JJ01", font, QColor("white"))
+        view._label_text(painter, QPointF(80, 45), "JJ01", font, QColor("white"))
         assert len(view._text_sprites) == 3
     finally:
         painter.end()

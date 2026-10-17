@@ -75,7 +75,7 @@ class StatisticsTab(QWidget):
         self.radius.setValue(int(grids.RADIUS_KM))
         self.home = QLineEdit()
         self.home.setMaxLength(6)
-        self.home.setFixedWidth(72)
+        self.home.setFixedWidth(self.home.fontMetrics().horizontalAdvance("MM00MM") + 24)
         self.home.setPlaceholderText(tr("grid"))
         self.region = QComboBox()
         for key, name in grids.REGION_NAMES.items():
@@ -108,7 +108,8 @@ class StatisticsTab(QWidget):
         self.terminator_btn.setCheckable(True)
         self.terminator_btn.setObjectName("TerminatorBtn")
         self.terminator_btn.setToolTip(tr(
-            "Show the day/night boundary and night shading for the current UTC time; updates automatically."))
+            "Shade the night side for the current UTC time, fading from day to night through twilight; updates "
+            "automatically."))
         row2.insertWidget(row2.count() - 1, self.terminator_btn)
         lay.addLayout(row2)
         self.map = GridMapView(self)

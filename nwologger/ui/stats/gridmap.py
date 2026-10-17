@@ -1,7 +1,8 @@
 """A rotatable globe with satellite imagery and Maidenhead grid squares.
 
-Imagery, cells and grid lines share an orthographic projection. Only the visible hemisphere is drawn; the same
-geometry supplies tooltips, square selection and PNG exports.
+Imagery, squares, the night side and grid lines share an orthographic projection. Imagery, squares and night are
+computed per pixel at the display's resolution (:mod:`globeraster`); lines, outlines and labels are vector paths on
+top. Only the visible hemisphere is drawn; the same geometry supplies tooltips, square selection and PNG exports.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import math
 from collections import OrderedDict
 from datetime import UTC, datetime
 
+import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
@@ -31,7 +33,7 @@ from ...core import geo, globe, grids, maptiles, solar
 from ...core.grids import SOURCE_NAMES
 from .. import theme
 from .globegeometry import CellGeometry
-from .globeraster import GlobeRaster
+from .globeraster import CellTable, GlobeRaster
 
 tr = i18n.tr
 BG = QColor("#080f1a")
@@ -41,15 +43,31 @@ FIELD_LINE = QColor(255, 255, 255, 120)
 FIELD_WATERMARK = QColor(255, 255, 255, 20)  # 8% opacity
 FIELD_LABEL_PX = 64.0
 MIN_ZOOM, MAX_ZOOM = 1.0, 11.0
-GRID_LABEL_PX, CALL_PX, FINE_GRID_PX = 34.0, 50.0, 28.0
+FINE_GRID_PX = 28.0
+BORDER = QColor(255, 255, 255, 70)  # the light edge of each worked square, from BORDER_PX[0] wide squares,
+BORDER_PX = 10.0, 24.0  # full at BORDER_PX[1]
+CALL_MAX_PT, GRID_MAX_PT = 14.0, 11.0  # full label sizes, reached as you zoom in
+CALL_MIN_PX = 6.5  # smaller calls are left out: they start about half a zoom step inside a whole-country view
+NAME_MIN_PX = 5.0  # the square's name above its call
+CALL_WIDTH = .85  # a call fills at most this share of its square's width
+CAP = 0.7  # cap height of a label font, as a share of its size
 PIX_CACHE = 600
-TEXT_CACHE = 2048
-NIGHT_SHADE = QColor(3, 9, 22, 130)
-TERMINATOR_LINE = QColor(255, 215, 128, 220)
+TEXT_CACHE = 6000
+MAX_TILES = 144  # tiles in one view's atlas; a busier view uses the next coarser level
+MAX_DPR = 2.0
+RASTER_PIXELS = 4_000_000  # per-pixel layers above this many device pixels are computed smaller and scaled up
+NIGHT_SHADE = QColor(3, 9, 22, 165)
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _hairline(color: QColor, style: Qt.PenStyle = Qt.PenStyle.SolidLine) -> QPen:
+    """A one-device-pixel line: wider strokes on a scaled display take Qt's general stroker, many times slower."""
+    pen = QPen(color, 1, style)
+    pen.setCosmetic(True)
+    return pen
 
 
 def _samples(start: float, end: float, step: float) -> list[float]:
@@ -93,11 +111,24 @@ class GridMapView(QWidget):
         self._frame = None
         self._raster = GlobeRaster()
         self._cell_geometry = CellGeometry()
-        self._atlas_key = None
-        self._atlas = None
+        self._table_key = None
+        self._table: CellTable | None = None
+        self._atlas_layout = None
+        self._atlas = QImage()
+        self._atlas_drawn: dict[tuple[int, int], tuple] = {}
+        self._atlas_revision = None
+        self._tile_timer = QTimer(self)
+        self._tile_timer.setSingleShot(True)
+        self._tile_timer.setInterval(40)  # tiles arriving together repaint once
+        self._tile_timer.timeout.connect(self.update)
         self._field_glyphs: dict[str, tuple[QPainterPath, QRectF]] = {}
         self._field_glyph_font = None
-        self._text_sprites: OrderedDict[tuple[str, str, int], tuple[QPixmap, QPointF, float]] = OrderedDict()
+        self._text_sprites: OrderedDict[tuple, tuple[QPixmap, QPointF, float]] = OrderedDict()
+        self._label_key = None
+        self._label_data = None
+        self._label_font_key = None
+        self._label_fonts: dict[tuple, QFont] = {}
+        self._advances: dict[tuple[str, bool], float] = {}
         self.terminator_enabled = True
         self._solar_time: datetime | None = None
         self._sun_position = (0.0, 0.0)
@@ -117,6 +148,7 @@ class GridMapView(QWidget):
             self.fetcher.log_summary(self.provider)
             self.fetcher.forget()
             self._pix.clear()
+            self._atlas_layout = None
             self._frame_key = None
             self._tile_revision += 1
         self.provider, self.api_key = provider, api_key
@@ -292,19 +324,17 @@ class GridMapView(QWidget):
         return self._geometry[key]
 
     def _prepare_cell_paths(self) -> None:
+        """Outlines of the highlighted squares and the home square, projected in one batch. Fills are per pixel."""
         self._prepare_geometry()
-        key = "cells", self._cell_revision, id(self.cells), self.highlight, self.home
+        key = "outlines", self.highlight, self.home
         if key in self._geometry:
             return
-        squares = dict.fromkeys((*self.cells, *self.highlight))
+        squares = dict.fromkeys(self.highlight)
         if home := grids.square(self.home):
             squares[home] = None
         paths = self._cell_geometry.paths(squares, self._camera(), self._radius(), self.width(), self.height())
         self._geometry.update((("square", sq), path) for sq, path in paths.items())
         self._geometry[key] = True
-
-    def _rect(self, sq: str) -> QRectF:
-        return self._square_path(sq).boundingRect()
 
     @staticmethod
     def _field_bounds(field: str) -> tuple[float, float, float, float]:
@@ -389,7 +419,8 @@ class GridMapView(QWidget):
         self._tile_revision += 1
         while len(self._pix) > PIX_CACHE:
             self._pix.popitem(last=False)
-        self.update()
+        if not self._tile_timer.isActive():
+            self._tile_timer.start()
 
     def _tile(self, z: int, x: int, y: int) -> QPixmap | None:
         key = self.provider.key, z, x, y
@@ -398,24 +429,84 @@ class GridMapView(QWidget):
             self._pix.move_to_end(key)
         return pix
 
+    def _visible_samples(self) -> tuple[np.ndarray, np.ndarray]:
+        """Longitudes relative to the centre and latitudes (degrees) of points spread over the visible globe: a
+        grid across the viewport and the limb. A latitude-longitude box around the view's cap is far larger than
+        the viewport once zoomed in; these points bound the tiles actually seen."""
+        key = "samples"
+        self._prepare_geometry()
+        if key in self._geometry:
+            return self._geometry[key]
+        width, height, radius = self.width(), self.height(), self._radius()
+        px, py = np.meshgrid(np.linspace(0, width, 33), np.linspace(0, height, 25))
+        x, y = ((px - width / 2) / radius).ravel(), ((height / 2 - py) / radius).ravel()
+        angle = np.linspace(0, math.tau, 241)
+        limb_x, limb_y = width / 2 + radius * np.cos(angle), height / 2 - radius * np.sin(angle)
+        on_screen = (limb_x >= 0) & (limb_x <= width) & (limb_y >= 0) & (limb_y <= height)
+        x = np.concatenate((x, np.cos(angle[on_screen]) * (1 - 1e-9), [0.0]))
+        y = np.concatenate((y, np.sin(angle[on_screen]) * (1 - 1e-9), [0.0]))
+        squared = x * x + y * y
+        x, y = x[squared <= 1], y[squared <= 1]
+        camera = self._camera()
+        depth = np.sqrt(np.maximum(0, 1 - x * x - y * y))
+        north = y * camera._cos_lat + depth * camera._sin_lat
+        horizontal = depth * camera._cos_lat - y * camera._sin_lat
+        result = (np.degrees(np.arctan2(x, horizontal)), np.degrees(np.arcsin(np.clip(north, -1, 1))))
+        self._geometry[key] = result
+        return result
+
     def _tile_indices(self, z: int):
-        west, south, east, north = self._visible_box()
-        south, north = max(-grids.MAX_LAT, south), min(grids.MAX_LAT, north)
-        if south > north:
+        relative, lat = self._visible_samples()
+        if not lat.size:
             return
         n = 2 ** z
-        x0 = math.floor((west + 180) / 360 * n)
-        x1 = math.floor((east + 180) / 360 * n)
+        if self._overlaps_pole() or relative.max() - relative.min() > 300:
+            x0, x1 = 0, n - 1
+        else:
+            # Quarter-tile margins cover extremes that fall between the samples.
+            x0 = math.floor((self.center_lon + relative.min() + 180) / 360 * n - .25)
+            x1 = math.floor((self.center_lon + relative.max() + 180) / 360 * n + .25)
+        south, north = max(-grids.MAX_LAT, float(lat.min())), min(grids.MAX_LAT, float(lat.max()))
+        if south > north:
+            return
         _, y0 = grids.to_world(0, north, z)
         _, y1 = grids.to_world(0, south, z)
         xs = dict.fromkeys(x % n for x in range(x0, min(x1 + 1, x0 + n)))
         for x in xs:
-            for y in range(max(0, math.floor(y0 / 256)), min(n - 1, math.floor(y1 / 256)) + 1):
+            for y in range(max(0, math.floor(y0 / 256 - .25)), min(n - 1, math.floor(y1 / 256 + .25)) + 1):
                 yield x, y
 
+    def _overlaps_pole(self) -> bool:
+        """Whether either pole is in view (every longitude meets there)."""
+        for lat in (90, -90):
+            x, y, depth = self._camera().project(0, lat)
+            pos = self._screen(x, y)
+            if depth >= 0 and QRectF(self.rect()).contains(pos):
+                return True
+        return False
+
+    def _frame_dpr(self) -> float:
+        """Device pixels per logical pixel for the scene: the display's own, up to MAX_DPR."""
+        return max(1.0, min(MAX_DPR, self.devicePixelRatioF()))
+
+    def _raster_scale(self, dpr: float, moving: bool = False) -> float:
+        """Pixels of the per-pixel layers per logical pixel: the frame's, within RASTER_PIXELS, and at most one
+        while the globe is dragged (restored on release)."""
+        budget = math.sqrt(RASTER_PIXELS / max(1, self.width() * self.height()))
+        scale = min(dpr, budget)
+        if moving:
+            scale = min(scale, 1.0)
+        return max(0.25, scale)
+
     def _imagery_level(self) -> int:
-        level = self.zoom - 1 + math.log2(max(0.12, math.cos(math.radians(self.center_lat))))
-        return max(self.provider.min_zoom, min(self.provider.max_zoom, 5, round(level)))
+        """About one tile pixel per screen pixel at the centre (Mercator stretches tiles by 1 / cos latitude),
+        dropping a level while the view would need more than MAX_TILES tiles."""
+        scale = self._raster_scale(self._frame_dpr())
+        level = self.zoom + math.log2(scale) + math.log2(max(0.12, math.cos(math.radians(self.center_lat))))
+        z = max(self.provider.min_zoom, min(self.provider.max_zoom, round(level)))
+        while z > self.provider.min_zoom and sum(1 for _ in self._tile_indices(z)) > MAX_TILES:
+            z -= 1
+        return z
 
     def _tile_source(self, z: int, tx: int, ty: int):
         pix = self._tile(z, tx, ty)
@@ -431,40 +522,113 @@ class GridMapView(QWidget):
                 return parent, QRectF((tx % count) * width, (ty % count) * height, width, height)
         return None, QRectF()
 
-    def _draw_tiles(self, painter: QPainter) -> None:
+    def _prepare_atlas(self) -> tuple[QImage, int, int, int] | None:
+        """The tiles around the view as one image, with its level, first column (unwrapped) and first row.
+
+        The atlas reaches one tile beyond the view on every side, so rotating a little reuses it; only tiles whose
+        source changed are drawn again, so a tile arriving costs one tile.
+        """
         if self.provider is None:
-            return
+            return None
         z = self._imagery_level()
         indices = tuple(self._tile_indices(z))
         if not indices:
-            return
-        xs = tuple(dict.fromkeys(tx for tx, _ty in indices))
+            return None
+        n = 2 ** z
+        xs = tuple(dict.fromkeys(tx for tx, _ty in indices))  # consecutive columns, west to east
         top, bottom = min(ty for _tx, ty in indices), max(ty for _tx, ty in indices)
-        key = self.provider, z, indices, self._tile_revision, len(self._pix)
-        if self._atlas_key != key:
-            # Only the visible tile rectangle is assembled; even deep zoom uses a small atlas.
-            atlas = QImage(len(xs) * 256, (bottom - top + 1) * 256, QImage.Format.Format_ARGB32)
-            atlas.fill(Qt.GlobalColor.transparent)
-            assembler = QPainter(atlas)
-            available = False
-            columns = {tx: column for column, tx in enumerate(xs)}
-            try:
-                for tx, ty in indices:
+        layout = self._atlas_layout
+        fits = (layout is not None and layout[:2] == (self.provider.key, z) and layout[4] <= top and
+                bottom <= layout[5] and all((tx - layout[2]) % n < layout[3] for tx in (xs[0], xs[-1])))
+        if not fits:
+            columns = min(n, len(xs) + 2)
+            left = xs[0] - (1 if columns > len(xs) else 0)
+            first, last = max(0, top - 1), min(n - 1, bottom + 1)
+            layout = self._atlas_layout = self.provider.key, z, left, columns, first, last
+            self._atlas = QImage(columns * 256, (last - first + 1) * 256, QImage.Format.Format_ARGB32_Premultiplied)
+            self._atlas.fill(Qt.GlobalColor.transparent)
+            self._atlas_drawn, self._atlas_revision = {}, None
+            margin = [(left + c) % n for c in range(columns)]
+            self._draw_atlas(layout, ((tx, ty) for tx in margin for ty in range(first, last + 1)), fetch=False)
+        if self._atlas_revision != (self._tile_revision, indices):
+            self._draw_atlas(layout, indices, fetch=True)
+            self._atlas_revision = self._tile_revision, indices
+        if not self._atlas_drawn:
+            return None
+        return self._atlas, z, layout[2], layout[4]
+
+    def _draw_atlas(self, layout, tiles, *, fetch: bool) -> None:
+        """Draw tiles whose best available source changed; ``fetch`` also asks for missing ones."""
+        _provider, z, left, _columns, first, _last = layout
+        n = 2 ** z
+        assembler = None
+        try:
+            for tx, ty in tiles:
+                if fetch:
                     pix, source = self._tile_source(z, tx, ty)
-                    if pix is not None:
-                        assembler.drawPixmap(QRectF(columns[tx] * 256, (ty - top) * 256, 256, 256), pix, source)
-                        available = True
-            finally:
+                else:
+                    pix = self._tile(z, tx, ty)
+                    source = QRectF(0, 0, pix.width(), pix.height()) if pix is not None else QRectF()
+                if pix is None:
+                    continue
+                state = pix.cacheKey(), source.x(), source.y(), source.width()
+                if self._atlas_drawn.get((tx, ty)) == state:
+                    continue
+                if assembler is None:
+                    assembler = QPainter(self._atlas)
+                    assembler.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+                target = QRectF((tx - left) % n * 256, (ty - first) * 256, 256, 256)
+                assembler.drawPixmap(target, pix, source)
+                self._atlas_drawn[(tx, ty)] = state
+        finally:
+            if assembler is not None:
                 assembler.end()
-            self._atlas = atlas if available else QImage()
-            self._atlas_key = key
-        if self._atlas.isNull():
-            return
+
+    def _cell_table(self) -> CellTable | None:
+        if not self.cells:
+            return None
+        key = self._cell_revision, id(self.cells)
+        if self._table_key != key:
+            self._table = CellTable({sq: FILL[cell.status] for sq, cell in self.cells.items()})
+            self._table_key = key
+        return self._table
+
+    def _layers(self, painter: QPainter, *, squares: bool = True) -> tuple[QImage, QImage]:
+        """Imagery and squares for this frame, each covering the whole viewport."""
         moving = self._drag is not None and self._moved
-        image = self._raster.image(self._atlas, self.size(), self._radius(), self._camera(),
-                                   level=z, tile_left=xs[0], tile_top=top,
-                                   max_pixels=256 if moving else 320)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        scale = self._raster_scale(painter.device().devicePixelRatioF(), moving)
+        options = {}
+        atlas = self._prepare_atlas()
+        if atlas is not None:
+            image, z, left, top = atlas
+            # Tile pixels per logical pixel at the centre; when the tiles are coarser than the screen (beyond the
+            # provider's deepest level), a smaller image is sampled and scaled up smoothly instead of blockily.
+            texels = 2 ** (z - self.zoom) / max(0.12, math.cos(math.radians(self.center_lat)))
+            image_scale = scale
+            if texels < scale * 0.8:  # steps of √2, so rotating reuses the same sampling grid
+                image_scale = max(scale / 16, scale / 2 ** (round(2 * math.log2(scale / texels)) / 2))
+            options = {"atlas": image, "level": z, "tile_left": left, "tile_top": top, "image_scale": image_scale}
+        table = self._cell_table() if squares else None
+        return self._raster.layers(self.size(), self._radius(), self._camera(), scale=scale, table=table,
+                                   border=self._border(), **options)
+
+    def _border(self) -> QColor:
+        """Worked squares get an edge once they are big enough for it not to crowd them."""
+        width = math.radians(2) * self._radius() * math.cos(math.radians(min(70.0, abs(self.center_lat))))
+        low, high = BORDER_PX
+        color = QColor(BORDER)
+        color.setAlpha(round(BORDER.alpha() * max(0.0, min(1.0, (width - low) / (high - low)))))
+        return color
+
+    def _draw_tiles(self, painter: QPainter) -> None:
+        self._draw_layer(painter, self._layers(painter, squares=False)[0])
+
+    def _draw_layer(self, painter: QPainter, image: QImage) -> None:
+        """Draw a viewport-sized layer; one smaller than the device pixels is scaled up smoothly."""
+        if image.isNull():
+            return
+        device = self.width() * painter.device().devicePixelRatioF()
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, image.width() < device - 1)
         painter.drawImage(QRectF(self.rect()), image)
 
     # ------------------------------------------------------------------ painting
@@ -472,8 +636,7 @@ class GridMapView(QWidget):
         self._update_sun()
         self._prepare_geometry()
         moving = self._drag is not None and self._moved
-        # Bound globe raster work on scaled displays; the surrounding controls retain native resolution.
-        dpr = min(1.0, self.devicePixelRatioF())
+        dpr = self._frame_dpr()
         key = (self._geometry_key, self._tile_revision, len(self._pix), self._cell_revision, id(self.cells),
                self.home, self.radius_km, self.highlight, self.provider, tuple(self.fetcher.stopped.items()),
                i18n.lang(), dpr, moving, self.terminator_enabled,
@@ -509,36 +672,24 @@ class GridMapView(QWidget):
         painter.save()
         try:
             painter.setClipPath(sphere)
-            self._draw_tiles(painter)
+            imagery, cells = self._layers(painter)
+            self._draw_layer(painter, imagery)
+            if self.terminator_enabled:
+                self._draw_night(painter)
+            self._draw_layer(painter, cells)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            night, terminator = self._terminator_paths() if self.terminator_enabled else (QPainterPath(), QPainterPath())
-            painter.fillPath(night, NIGHT_SHADE)
-            fills = {status: QPainterPath() for status in FILL}
-            viewport = QRectF(self.rect())
-            for path in fills.values():
-                path.setFillRule(Qt.FillRule.WindingFill)
-            for sq, cell in self.cells.items():
-                path = self._geometry["square", sq]
-                if path.boundingRect().intersects(viewport):
-                    fills[cell.status].addPath(path)
-            for status, path in fills.items():
-                painter.fillPath(path, FILL[status])
             self._draw_field_watermarks(painter)
             cell_px = math.radians(2) * radius
             painter.setBrush(Qt.BrushStyle.NoBrush)
             if cell_px >= FINE_GRID_PX:
-                painter.setPen(QPen(LINE, 1))
+                painter.setPen(_hairline(LINE))
                 painter.drawPath(self._grid_path(2, 1))
-            painter.setPen(QPen(FIELD_LINE, 1))
+            painter.setPen(_hairline(FIELD_LINE))
             painter.drawPath(self._grid_path(20, 10))
             if self.highlight and cell_px >= 3:
-                painter.setPen(QPen(QColor(255, 255, 255, 150), 1, Qt.PenStyle.DotLine))
+                painter.setPen(_hairline(QColor(255, 255, 255, 150), Qt.PenStyle.DotLine))
                 for sq in self.highlight:
                     painter.drawPath(self._geometry["square", sq])
-            if not terminator.isEmpty():
-                painter.setPen(QPen(TERMINATOR_LINE, 1.4))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawPath(terminator)
             self._draw_home(painter)
             self._draw_labels(painter, cell_px)
             shade = QRadialGradient(middle, radius)
@@ -548,37 +699,20 @@ class GridMapView(QWidget):
             painter.fillPath(sphere, shade)
         finally:
             painter.restore()
-        painter.setPen(QPen(QColor(150, 195, 225, 120), 1))
+        painter.setPen(_hairline(QColor(150, 195, 225, 120)))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(sphere)
         self._draw_credit(painter)
 
-    def _terminator_paths(self) -> tuple[QPainterPath, QPainterPath]:
-        """Project the solar great circle and close the night side along the globe's limb."""
-        sun_x, sun_y, sun_z = self._camera().project(*self._sun_position)
-        horizontal = math.hypot(sun_x, sun_y)
-        night, boundary = QPainterPath(), QPainterPath()
-        if horizontal < 1e-10:
-            if sun_z < 0:
-                night.addEllipse(QPointF(self.width() / 2, self.height() / 2), self._radius(), self._radius())
-            return night, boundary
-        # T lies on both horizons. V points from it along the visible half of the solar great circle.
-        tangent_x, tangent_y = -sun_y / horizontal, sun_x / horizontal
-        visible_x, visible_y = -sun_z * sun_x / horizontal, -sun_z * sun_y / horizontal
-        radius, cx, cy = self._radius(), self.width() / 2, self.height() / 2
-        step = min(math.pi / 32, math.sqrt(2 / radius))
-        points = [QPointF(cx + radius * (tangent_x * math.cos(angle) + visible_x * math.sin(angle)),
-                         cy - radius * (tangent_y * math.cos(angle) + visible_y * math.sin(angle)))
-                  for angle in _samples(0, math.pi, step)]
-        boundary.moveTo(points[0])
-        for point in points[1:]:
-            boundary.lineTo(point)
-        angle = math.atan2(sun_y, sun_x)
-        limb = [QPointF(cx + radius * math.cos(a), cy - radius * math.sin(a))
-                for a in _samples(angle + 1.5 * math.pi, angle + 0.5 * math.pi, step)]
-        night.addPolygon(QPolygonF(points + limb[1:]))
-        night.closeSubpath()
-        return night, boundary
+    def _night_image(self) -> QImage:
+        """The night side, fading from day to night through twilight (see :func:`GlobeRaster.night`)."""
+        return self._raster.night(self.size(), self._radius(), self._camera(), self._sun_position, NIGHT_SHADE)
+
+    def _draw_night(self, painter: QPainter) -> None:
+        image = self._night_image()
+        if not image.isNull():
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.drawImage(QRectF(self.rect()), image)
 
     def _draw_home(self, painter: QPainter) -> None:
         sq = grids.square(self.home)
@@ -593,9 +727,11 @@ class GridMapView(QWidget):
             painter.setPen(QPen(QColor(255, 255, 255, 220), 1.3, Qt.PenStyle.DashLine))
             painter.drawPath(self._line_path(ring))
 
-    def _halo_text(self, painter: QPainter, pos: QPointF, text: str, font: QFont, color: QColor,
-                   align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft) -> None:
-        key = font.toString(), text, color.rgba()
+    def _label_text(self, painter: QPainter, pos: QPointF, text: str, font: QFont, color: QColor,
+                    align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft, key: tuple | None = None) -> None:
+        """Draw text from a cached sprite; ``key`` (font, text and colour) saves building one."""
+        dpr = painter.device().devicePixelRatioF()
+        key = (key or (font.toString(), text, color.rgba())) + (dpr,)
         cached = self._text_sprites.get(key)
         if cached is None:
             metrics = QFontMetricsF(font)
@@ -603,16 +739,14 @@ class GridMapView(QWidget):
             if bounds.isEmpty():
                 return
             offset = bounds.topLeft() - QPointF(2, 2)
-            sprite = QPixmap(math.ceil(bounds.width() + 4), math.ceil(bounds.height() + 4))
+            sprite = QPixmap(math.ceil((bounds.width() + 4) * dpr), math.ceil((bounds.height() + 4) * dpr))
+            sprite.setDevicePixelRatio(dpr)
             sprite.fill(Qt.GlobalColor.transparent)
             renderer = QPainter(sprite)
             try:
                 renderer.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
                 renderer.translate(-offset)
-                renderer.setFont(font)
-                # Native glyphs and one dark shadow keep new labels cheap to build as the globe rotates.
-                renderer.setPen(QColor(0, 0, 0, 170))
-                renderer.drawText(QPointF(1, 1), text)
+                renderer.setFont(font)  # native glyphs keep new labels cheap to build as the globe rotates
                 renderer.setPen(color)
                 renderer.drawText(QPointF(), text)
             finally:
@@ -665,52 +799,121 @@ class GridMapView(QWidget):
         transform.translate(-bounds.center().x(), -bounds.center().y())
         return transform.map(path)
 
+    def _projected_extents(self, lon: np.ndarray, lat: np.ndarray, half_lon: float, half_lat: float):
+        """Screen centre, depth and on-screen width and height of boxes centred at the given radians, for many
+        boxes at once. Mid-edge extents size text without building and clipping each polygon."""
+        camera = self._camera()
+        delta = lon - math.radians(camera.center_lon)
+        cos_lat, sin_lat, cos_delta = np.cos(lat), np.sin(lat), np.cos(delta)
+        horizontal = cos_lat * cos_delta
+        radius = self._radius()
+        x = self.width() / 2 + radius * cos_lat * np.sin(delta)
+        y = self.height() / 2 - radius * (camera._cos_lat * sin_lat - camera._sin_lat * horizontal)
+        depth = camera._sin_lat * sin_lat + camera._cos_lat * horizontal
+        width = np.abs(2 * radius * math.sin(half_lon) * horizontal)
+        height = np.abs(2 * radius * math.sin(half_lat) * (camera._cos_lat * cos_lat + camera._sin_lat * sin_lat * cos_delta))
+        return x, y, depth, width, height
+
+    _FIELD_LON = np.radians([(x * 20 - 170) for x in range(18) for _y in range(18)])
+    _FIELD_LAT = np.radians([(y * 10 - 85) for _x in range(18) for y in range(18)])
+
     def _draw_field_watermarks(self, painter: QPainter) -> None:
+        _x, _y, depth, width, height = self._projected_extents(self._FIELD_LON, self._FIELD_LAT,
+                                                               math.radians(10), math.radians(5))
+        candidates = np.flatnonzero((depth >= 0.15) & (width >= FIELD_LABEL_PX) & (height >= FIELD_LABEL_PX / 2))
+        if not candidates.size:
+            return
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(FIELD_WATERMARK)
-        for x in range(18):
-            for y in range(18):
-                path = self._field_watermark_path(chr(65 + x) + chr(65 + y))
-                if path is not None and path.boundingRect().intersects(QRectF(self.rect())):
-                    painter.drawPath(path)
+        viewport = QRectF(self.rect())
+        for index in candidates:
+            path = self._field_watermark_path(chr(65 + index // 18) + chr(65 + index % 18))
+            if path is not None and path.boundingRect().intersects(viewport):
+                painter.drawPath(path)
         painter.restore()
 
-    def _draw_labels(self, painter: QPainter, cell_px: float) -> None:
-        if cell_px < GRID_LABEL_PX or (self._drag is not None and self._moved):
-            return
-        camera = self._camera()
-        viewport = QRectF(self.rect())
-        for sq, cell in self.cells.items():
-            lat, lon = grids.center(sq)
-            x, y, depth = camera.project(lon, lat)
-            if depth < 0.15:
-                continue
-            center = self._screen(x, y)
-            if not viewport.contains(center):
-                continue
-            path = self._geometry.get(("square", sq))
-            rect = path.boundingRect() if path is not None else self._rect(sq)
-            if rect.width() < GRID_LABEL_PX or rect.height() < 16:
-                continue
-            small = QFont(self._mono)
-            small.setPointSizeF(max(7.0, min(11.0, math.floor(rect.width() / 7 * 2) / 2)))
-            self._halo_text(painter, QPointF(center.x(), center.y() - 3), sq, small,
-                            QColor(255, 255, 255, 235), Qt.AlignmentFlag.AlignHCenter)
-            if rect.width() >= CALL_PX and rect.height() >= 26:
-                call = ((cell.confirmed or cell.first or {}).get("call") or "")
-                font = QFont(self.font())
+    def _labels(self):
+        """Every square's centre in radians, the call shown, whether it is confirmed, and the call's width per point
+        of font size (0 without a call)."""
+        font_key = self.font().toString()
+        if self._label_font_key != font_key:
+            self._label_fonts.clear()
+            self._advances.clear()
+            self._label_font_key = font_key
+        key = self._cell_revision, id(self.cells), font_key
+        if self._label_key != key:
+            squares = list(self.cells)
+            centers = [grids.center(sq) for sq in squares]
+            calls = [((cell.confirmed or cell.first or {}).get("call") or "") for cell in self.cells.values()]
+            confirmed = [bool(cell.confirmed) for cell in self.cells.values()]
+            advance = np.array([self._call_advance(call, not sure) if call else 0.0
+                                for call, sure in zip(calls, confirmed, strict=True)])
+            self._label_data = (squares, np.radians([lon for _lat, lon in centers]),
+                                np.radians([lat for lat, _lon in centers]), calls, confirmed, advance)
+            self._label_key = key
+        return self._label_data
+
+    def _label_font(self, kind: str, points: float, italic: bool = False) -> QFont:
+        key = kind, points, italic
+        font = self._label_fonts.get(key)
+        if font is None:
+            font = QFont(self._mono if kind == "grid" else self.font())
+            if kind == "call":
                 font.setBold(True)
-                font.setItalic(not cell.confirmed)
-                font.setPointSizeF(max(8.0, min(14.0, math.floor(rect.width() / 6 * 2) / 2)))
-                width = QFontMetricsF(font).horizontalAdvance(call)
-                if width > rect.width() - 6:
-                    font.setPointSizeF(max(.5, math.floor(font.pointSizeF() * (rect.width() - 6) / width * 2) / 2))
-                if font.pointSizeF() >= 6:
-                    self._halo_text(painter, QPointF(center.x(), center.y() + font.pointSizeF() * 1.5), call, font,
-                                    QColor("white") if cell.confirmed else QColor(255, 243, 214),
-                                    Qt.AlignmentFlag.AlignHCenter)
+                font.setItalic(italic)
+            font.setPointSizeF(points)
+            font = self._label_fonts[key] = font
+        return font
+
+    def _call_advance(self, call: str, italic: bool) -> float:
+        """Width of a call per point of font size."""
+        key = call, italic
+        if key not in self._advances:
+            self._advances[key] = QFontMetricsF(self._label_font("call", 100.0, italic)).horizontalAdvance(call) / 100
+        return self._advances[key]
+
+    def _draw_labels(self, painter: QPainter, _cell_px: float = 0.0) -> None:
+        """The square's name and its first call, in two lines, once a square is big enough to read them (about
+        half a zoom step inside a whole-country view); a square too low for two lines shows only the call. Text
+        grows with the square up to its full size (name 11 pt, call 14 pt)."""
+        if not self.cells or (self._drag is not None and self._moved):
+            return
+        squares, lon, lat, calls, confirmed, advance = self._labels()
+        x, y, depth, width, height = self._projected_extents(lon, lat, math.radians(1), math.radians(.5))
+        px_per_pt = self.logicalDpiY() / 72
+        # Sizes for every square at once; only squares that get some text reach the drawing loop.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            fit = np.where(advance > 0, CALL_WIDTH * (width - 2) / advance, 0)
+        call_pt = np.floor(np.minimum(np.minimum(fit, height * .8 / px_per_pt), CALL_MAX_PT) * 2) / 2
+        call_pt = np.where(call_pt * px_per_pt >= CALL_MIN_PX, call_pt, 0)
+        # The name comes with the call, never larger (a square without a call shows its name at call size).
+        name_pt = np.floor(np.minimum(width / 7, GRID_MAX_PT) * 2) / 2
+        name_pt = np.where(advance > 0, np.minimum(name_pt, call_pt), name_pt)
+        call_px, name_px = call_pt * px_per_pt, name_pt * px_per_pt
+        gap = np.where(call_pt > 0, np.maximum(2, call_px * .25), 0)
+        two_lines = (((call_pt > 0) & (name_px >= NAME_MIN_PX)) | ((advance == 0) & (name_px >= CALL_MIN_PX))) & \
+            (height >= CAP * (name_px + call_px) + gap + 4)
+        drawn = ((depth >= 0.15) & (x >= 0) & (x <= self.width()) & (y >= 0) & (y <= self.height()) &
+                 (two_lines | (call_pt > 0)))
+        grid_color, call_color, worked_color = QColor(255, 255, 255, 235), QColor("white"), QColor(255, 243, 214)
+        center = Qt.AlignmentFlag.AlignHCenter
+        for index in np.flatnonzero(drawn):
+            cx, cy, size, below = float(x[index]), float(y[index]), float(call_pt[index]), float(call_px[index])
+            if two_lines[index]:
+                name, above = float(name_pt[index]), float(name_px[index])
+                base = cy - (CAP * above + float(gap[index]) + CAP * below) / 2 + CAP * above
+                sq = squares[index]
+                self._label_text(painter, QPointF(cx, base), sq, self._label_font("grid", name), grid_color,
+                                 center, ("grid", name, sq))
+                base += float(gap[index]) + CAP * below
+            else:
+                base = cy + CAP * below / 2
+            if size:
+                call, sure = calls[index], confirmed[index]
+                self._label_text(painter, QPointF(cx, base), call, self._label_font("call", size, not sure),
+                                 call_color if sure else worked_color, center, ("call", size, sure, call))
 
     def _draw_credit(self, painter: QPainter) -> None:
         if self.provider is None:
