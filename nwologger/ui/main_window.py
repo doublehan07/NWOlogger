@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
         self.sync.history_requested.connect(self._show_history)
         self.sync.idle.connect(self._sync_idle)
         self.sync.confirmed.connect(self._select_confirmed)
+        self.sync.select_requested.connect(self._show_ids)
         self._confirmed_sel: set[int] | None = None  # what the last download selected, while you haven't clicked
         self._lookup_clients: list | None = None
         self.resize(1480, 920)
@@ -836,6 +837,17 @@ class MainWindow(QMainWindow):
         hidden = sum(1 for i in ids if i not in self.model.row_of)
         self.flash(f"{uploads.SERVICES.get(service, service)}: {len(ids)} " + tr("new confirmations selected") +
                    (f" ({hidden} " + tr("hidden by the filter") + ")" if hidden else ""))
+
+    def _show_ids(self, ids: list[int]) -> None:
+        """Sync results → Select them: the Log tab with those QSOs selected and the first in view."""
+        self.tabs.setCurrentIndex(0)
+        self.model.refresh()
+        self.view.select_ids(ids, scroll=True)
+        self._confirmed_sel = set(self.view.selected_ids())
+        hidden = sum(1 for i in ids if i not in self.model.row_of)
+        self.flash(f"{len(ids) - hidden} " + tr("QSOs selected") +
+                   (f" ({hidden} " + tr("hidden by the filter") + ")" if hidden else ""))
+        self.view.setFocus()
 
     # ------------------------------------------------------------------ language switch
     def request_rebuild(self) -> None:

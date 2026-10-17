@@ -182,11 +182,11 @@ def test_sync_summaries_are_logged_in_english(logfile, ctrl):
 
     i18n.load("zh_CN")
     try:
-        ctrl.report("lotw", "ok", lambda t: "1 " + t("confirmations received"), log_detail="download 2.0 s")
+        ctrl.report("lotw", "ok", lambda t: t("No new confirmations"), log_detail="download 2.0 s")
     finally:
         i18n.load("en")
-    assert "1 confirmations received; download 2.0 s" in _text(logfile)
-    assert ctrl.results.texts()[-1] != "1 confirmations received"  # the window shows it translated
+    assert "No new confirmations; download 2.0 s" in _text(logfile)
+    assert ctrl.results.texts()[-1] != "No new confirmations"  # the window shows it translated
 
 
 def test_tidy_path_hides_the_home_folder():

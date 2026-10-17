@@ -99,6 +99,29 @@ def test_downloads_list_only_first_confirmations(tmp_path):
     d.close()
 
 
+def test_summaries_lead_with_what_is_new_and_qrz_dates_once(tmp_path, monkeypatch):
+    from nwologger.core import timeutil
+
+    d = dbm.LogDB(tmp_path / "l.sqlite", backup_on_open=False)
+    for call in ("BA1AA", "BA1BB"):
+        d.insert(qso.normalize({"call": call, "time_on": "2026-10-10T15:19:00Z", "mode": "FM", "band": "2m"}))
+    cat = sats.load()
+    recs = [{"CALL": c, "QSO_DATE": "20261010", "TIME_ON": "1519", "BAND": "2M", "MODE": "FM",
+             "APP_QRZLOG_LOGID": str(i)} for i, c in enumerate(("BA1AA", "BA1BB", "BG9ZZZ"))]
+    first = apply.apply_qrz(d, recs, cat)
+    assert first.changed == 2
+    monkeypatch.setattr(timeutil, "today_iso", lambda: "2026-10-18")  # the next UTC day
+    again = apply.apply_qrz(d, recs, cat)
+    assert again.changed == 0 and d.get(1)["qrzcom_qso_download_date"] != "2026-10-18"
+    words = lambda r: apply.summary(lambda s: s, r, new_one="new confirmation", new_many="new confirmations",  # noqa: E731
+                                    none="No new confirmations")
+    assert words(again) == "No new confirmations · 2 already in your log · 1 not in your log"
+    recs[0]["APP_QRZLOG_STATUS"] = "C"
+    assert words(apply.apply_qrz(d, recs, cat)) == "1 new confirmation · 1 already in your log · 1 not in your log"
+    assert "new 1" in apply.counts(apply.ApplyResult(total=3, matched=2, changed=1, confirmed=[1]))
+    d.close()
+
+
 # ------------------------------------------------------------------ found with real accounts (2026-10-16)
 
 def test_upload_rule_is_one_rule(tmp_path):

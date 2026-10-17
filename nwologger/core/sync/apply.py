@@ -24,6 +24,33 @@ class ApplyResult:
 CONFIRMED = ("Y", "V")  # V: LoTW verified
 
 
+def summary(t, res: ApplyResult, *, new_one: str, new_many: str, none: str,
+            uploaded: ApplyResult | None = None) -> str:
+    """What a download found, new things first: "2 new confirmations · 1 already in your log". Records a service
+    sends again (LoTW's newest confirmation, eQSL's last day, QRZ.com's whole logbook) are only "already in your
+    log". ``t`` translates (tr for the window, as is for the log file)."""
+    def count(n: int, one: str, many: str) -> str:
+        return f"{n:,} " + t(one if n == 1 else many)
+
+    n = len(res.confirmed)
+    parts = [count(n, new_one, new_many) if n else t(none)]
+    if res.changed - n:
+        parts.append(count(res.changed - n, "QSO updated", "QSOs updated"))
+    if res.matched - res.changed:
+        parts.append(count(res.matched - res.changed, "already in your log", "already in your log"))
+    if res.unmatched:
+        parts.append(count(len(res.unmatched), "not in your log", "not in your log"))
+    if uploaded is not None and uploaded.changed:
+        parts.append(count(uploaded.changed, "QSO marked as uploaded", "QSOs marked as uploaded"))
+    return " · ".join(parts)
+
+
+def counts(res: ApplyResult) -> str:
+    """The numbers behind :func:`summary`, for the log file."""
+    return (f"received {res.total}, matched {res.matched}, changed {res.changed}, new {len(res.confirmed)}, "
+            f"unmatched {len(res.unmatched)}")
+
+
 def pending(db, service: str, ids: list[int] | None = None) -> list[dict]:
     """QSOs to upload: the given ids (re-upload allowed), or every QSO not yet sent."""
     if ids:
@@ -153,7 +180,9 @@ def apply_qrz(db, records: list[dict[str, str]], catalog) -> ApplyResult:
     today = timeutil.today_iso()
 
     def changes(rec: dict, q: dict, ex: dict) -> dict:
-        ch = {"qrzcom_qso_download_status": "Y", "qrzcom_qso_download_date": today}
+        ch: dict = {}
+        if ex.get("qrzcom_qso_download_status") != "Y":  # dated once: every download fetches the whole logbook
+            ch = {"qrzcom_qso_download_status": "Y", "qrzcom_qso_download_date": today}
         if rec.get("APP_QRZLOG_LOGID"):
             ch["qrz_logid"] = rec["APP_QRZLOG_LOGID"]
         if (rec.get("APP_QRZLOG_STATUS") or "").upper() == "C":

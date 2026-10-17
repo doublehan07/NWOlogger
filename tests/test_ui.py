@@ -469,7 +469,7 @@ def test_language_switch_keeps_the_window_state(win, qtbot):
     win.dx.call.setText("BG1XYZ")
     win.dx._call_edited("BG1XYZ")
     win.dx.w["freq"].setText("7.074")
-    win.sync.report("lotw", "ok", lambda t: "1 " + t("confirmations received"))
+    win.sync.report("lotw", "ok", lambda t: t("No new confirmations"))
     backups = list(win.db.backups())
     win.prefs.set("language", "zh_CN")
     new = win.rebuilt()
@@ -478,7 +478,7 @@ def test_language_switch_keeps_the_window_state(win, qtbot):
         assert new.tabs.tabText(0) == i18n.tr("Log") != "Log"
         assert new.dx.call.text() == "BG1XYZ" and new.dx._get("freq") == "7.074"
         assert new.tabs.currentIndex() == 1 and new.view.selected_ids() == [2]
-        assert new.sync.results is not None and "1 confirmations received" in new.sync.results.texts()[0]
+        assert new.sync.results is not None and "No new confirmations" in new.sync.results.texts()[0]
         assert list(new.db.backups()) == backups and not win.isVisible()
     finally:
         new.shutdown()
@@ -535,6 +535,18 @@ def test_new_confirmations_become_the_selection(win, qtbot):
     win.filter.set_spec({"quick": {"call": "BA1*"}})
     win.sync.confirmed.emit("qrz", [2, 3])
     assert win.view.selected_ids() == [2] and "1 " in win.st_msg.text().split("(")[1]  # 3 is hidden by the filter
+
+
+def test_sync_results_select_them(win, qtbot):
+    _many(win, 30)
+    win.tabs.setCurrentIndex(2)
+    win.sync.report("lotw", "ok", lambda t: "2 " + t("new confirmations"), ids=[4, 9])
+    w = win.sync.results
+    assert w.select_btn.isEnabled()
+    w.select_btn.click()
+    assert win.tabs.currentIndex() == 0 and sorted(win.view.selected_ids()) == [4, 9]
+    win.sync.report("lotw", "ok", lambda t: t("No new confirmations"))
+    assert not w.select_btn.isEnabled()  # nothing to select on that row
 
 
 def test_sync_everything_never_uploads(win, monkeypatch):

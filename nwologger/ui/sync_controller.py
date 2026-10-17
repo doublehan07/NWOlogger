@@ -90,6 +90,7 @@ class SyncResults(QDialog):
 
     prefs_requested = Signal(str)
     history_requested = Signal()
+    select_requested = Signal(list)  # the QSO ids of the chosen row (its new confirmations)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -116,25 +117,31 @@ class SyncResults(QDialog):
         self.fix_btn.setEnabled(False)
         self.fix_btn.setToolTip(tr("Opens the Preferences page that fixes the selected result"))
         self.fix_btn.clicked.connect(self._fix)
+        self.select_btn = QPushButton(tr("Select them"))
+        self.select_btn.setEnabled(False)
+        self.select_btn.setToolTip(tr("Select the QSOs this download confirmed for the first time in the log"))
+        self.select_btn.clicked.connect(self._select_ids)
         hist = QPushButton(tr("Show sync history"))
         hist.clicked.connect(self.history_requested)
         clear = QPushButton(tr("Clear"))
         clear.clicked.connect(self.clear)
         close = QPushButton(tr("Close"))
         close.clicked.connect(self.hide)
-        for w in (self.fix_btn, hist):
+        for w in (self.fix_btn, self.select_btn, hist):
             row.addWidget(w)
         row.addStretch(1)
         row.addWidget(clear)
         row.addWidget(close)
         lay.addLayout(row)
         self.fixes: list[str | None] = []
-        self.entries: list[tuple] = []  # newest first: (time, service, kind, text, fix, ref)
+        self.ids: list[list[int] | None] = []
+        self.entries: list[tuple] = []  # newest first: (time, service, kind, text, fix, ref, ids)
 
     def add(self, service: str, kind: str, text: str, *, fix: str | None = None, ref: str | None = None,
-            at: str | None = None) -> None:
+            at: str | None = None, ids: list[int] | None = None) -> None:
         at = at or timeutil.now_utc().strftime("%H:%M:%S")
-        self.entries.insert(0, (at, service, kind, text, fix, ref))
+        self.entries.insert(0, (at, service, kind, text, fix, ref, ids))
+        self.ids.insert(0, ids)
         self.table.insertRow(0)
         detail = text + (f"  ·  ref {ref}" if ref else "")
         cells = [at, service, tr(RESULT_LABELS.get(kind, kind)), detail]
@@ -154,13 +161,15 @@ class SyncResults(QDialog):
     def clear(self) -> None:
         self.table.setRowCount(0)
         self.fixes = []
+        self.ids = []
         self.entries = []
         self.fix_btn.setEnabled(False)
+        self.select_btn.setEnabled(False)
 
     def replay(self, entries: list[tuple]) -> None:
         """The rows of an earlier window (before a language switch), oldest added first."""
-        for at, service, kind, text, fix, ref in reversed(entries):
-            self.add(service, kind, text, fix=fix, ref=ref, at=at)
+        for at, service, kind, text, fix, ref, ids in reversed(entries):
+            self.add(service, kind, text, fix=fix, ref=ref, at=at, ids=ids)
 
     def texts(self) -> list[str]:
         return [self.table.item(r, 3).text() for r in range(self.table.rowCount())]
@@ -169,8 +178,18 @@ class SyncResults(QDialog):
         r = self.table.currentRow()
         return self.fixes[r] if 0 <= r < len(self.fixes) else None
 
+    def _current_ids(self) -> list[int] | None:
+        r = self.table.currentRow()
+        return self.ids[r] if 0 <= r < len(self.ids) else None
+
     def _selected(self) -> None:
         self.fix_btn.setEnabled(bool(self._current_fix()))
+        self.select_btn.setEnabled(bool(self._current_ids()))
+
+    def _select_ids(self) -> None:
+        ids = self._current_ids()
+        if ids:
+            self.select_requested.emit(list(ids))
 
     def _fix(self) -> None:
         page = self._current_fix()
@@ -240,6 +259,7 @@ class SyncController(QObject):
     history_requested = Signal()
     idle = Signal()  # the last running upload or download has finished
     confirmed = Signal(str, list)  # service, the QSO ids a download confirmed for the first time
+    select_requested = Signal(list)  # Sync results → Select them
 
     def __init__(self, db, prefs, parent: QWidget):
         super().__init__(parent)
@@ -256,14 +276,16 @@ class SyncController(QObject):
         if self.results is None:
             self.results = SyncResults(self.win)
             self.results.prefs_requested.connect(self.prefs_requested)
+            self.results.select_requested.connect(self.select_requested)
             self.results.history_requested.connect(self.history_requested)
         return self.results
 
     def report(self, service: str, kind: str, text: Text, *, fix: str | None = None, ref: str | None = None,
-               quiet: bool = False, secrets=(), log_detail: str = "") -> None:
+               quiet: bool = False, secrets=(), log_detail: str = "", ids: list[int] | None = None) -> None:
         """One outcome: a row in Sync results, the status bar and the log file. ``quiet`` (upload on log) only
         brings the window up for a failure, and then without taking the keyboard from the entry form. The log
-        file gets the text in English (when ``text`` is built with a translate function) and ``log_detail``."""
+        file gets the text in English (when ``text`` is built with a translate function) and ``log_detail``.
+        ``ids``: QSOs the row can select again (new confirmations)."""
         name = apply.SERVICES.get(service, service)
         english = self._safe(text(_as_is) if callable(text) else text, secrets)
         text = self._safe(text(tr), secrets) if callable(text) else english
@@ -271,7 +293,7 @@ class SyncController(QObject):
         log.log(level, "%s %s%s: %s%s", name, RESULT_LABELS.get(kind, kind).lower(),
                 f" (ref {ref})" if ref else "", english, f"; {log_detail}" if log_detail else "")
         w = self._window()
-        w.add(name, kind, text, fix=fix, ref=ref)
+        w.add(name, kind, text, fix=fix, ref=ref, ids=ids or None)
         if not quiet:
             w.show()
             w.raise_()
@@ -671,14 +693,13 @@ class SyncController(QObject):
             if h2.get("APP_LOTW_LASTQSORX"):
                 self.db.sync_set("lotw", "last_qsorx", h2["APP_LOTW_LASTQSORX"])
             self._log("lotw", "download", started, received=a.total, matched=a.matched,
-                      message=f"{a.changed} confirmations updated, {len(a.confirmed)} newly confirmed; "
-                              f"{up.changed} upload states updated")
-            log.info("LoTW download (ref %s): %d uploads received, %d matched, %d unmatched", ref, up.total,
-                     up.matched, len(up.unmatched))
-            self.report("lotw", "ok", lambda t: f"{a.total} " + t("confirmations received") + f", {a.matched} " +
-                        t("matched") + f", {a.changed} " + t("updated") + f", {len(a.confirmed)} " +
-                        t("newly confirmed") + f". {up.changed} " + t("QSOs marked as uploaded."), ref=ref,
-                        log_detail=timing)
+                      message=apply.summary(_as_is, a, new_one="new confirmation", new_many="new confirmations",
+                                            none="No new confirmations", uploaded=up))
+            log.info("LoTW download (ref %s): upload states %s", ref, apply.counts(up))
+            self.report("lotw", "ok", lambda t: apply.summary(t, a, new_one="new confirmation",
+                                                              new_many="new confirmations",
+                                                              none="No new confirmations", uploaded=up),
+                        ref=ref, ids=a.confirmed, log_detail=f"{apply.counts(a)}; {timing}")
             self.confirmed.emit("lotw", a.confirmed)
             self._show_unmatched("lotw", a)
 
@@ -719,10 +740,10 @@ class SyncController(QObject):
             # missed (cards already applied just match again).
             self.db.sync_set("eqsl", "rcvd_since", (timeutil.now_utc() - timedelta(days=1)).strftime("%Y%m%d"))
             self._log("eqsl", "download", started, received=a.total, matched=a.matched,
-                      message=f"{a.changed} updated, {len(a.confirmed)} newly confirmed")
-            self.report("eqsl", "ok", lambda t: f"{a.total} " + t("cards received") + f", {a.matched} " +
-                        t("matched") + f", {a.changed} " + t("updated") + f", {len(a.confirmed)} " +
-                        t("newly confirmed") + ".", ref=ref, log_detail=timing)
+                      message=apply.summary(_as_is, a, new_one="new card", new_many="new cards", none="No new cards"))
+            self.report("eqsl", "ok", lambda t: apply.summary(t, a, new_one="new card", new_many="new cards",
+                                                              none="No new cards"),
+                        ref=ref, ids=a.confirmed, log_detail=f"{apply.counts(a)}; {timing}")
             self.confirmed.emit("eqsl", a.confirmed)
             self._show_unmatched("eqsl", a)
 
@@ -756,10 +777,12 @@ class SyncController(QObject):
             a = apply.apply_qrz(self.db, recs, self.catalog())
             timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
             self._log("qrz", "download", started, received=a.total, matched=a.matched,
-                      message=f"{a.changed} updated, {len(a.confirmed)} newly confirmed")
-            self.report("qrz", "ok", lambda t: f"{a.total} " + t("records received") + f", {a.matched} " +
-                        t("matched") + f", {a.changed} " + t("updated") + f", {len(a.confirmed)} " +
-                        t("newly confirmed") + ".", ref=ref, log_detail=timing)
+                      message=apply.summary(_as_is, a, new_one="new confirmation", new_many="new confirmations",
+                                            none="No new confirmations"))
+            self.report("qrz", "ok", lambda t: apply.summary(t, a, new_one="new confirmation",
+                                                             new_many="new confirmations",
+                                                             none="No new confirmations"),
+                        ref=ref, ids=a.confirmed, log_detail=f"{apply.counts(a)}; {timing}")
             self.confirmed.emit("qrz", a.confirmed)
             self._show_unmatched("qrz", a)
 
