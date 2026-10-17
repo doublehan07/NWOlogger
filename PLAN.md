@@ -153,18 +153,17 @@ Notes on the model:
 | `lookup_cache` | Callsign → JSON result, source, fetched_at (TTL in Prefs) |
 | `sync_state` | Per-service cursors (LoTW last QSL / last QSO-rx, eQSL RcvdSince); QRZ.com is always fetched whole |
 | `sync_log` | Sync history: service, direction, time, counts, errors. *Clear history…* deletes it per service; `sync_state` (where downloads resume) is separate and kept |
-| `undo_log` | Before-images for bulk edit, delete and import, so they can be undone |
 
 ### 4.3 Safety
 
 - Backups go to `backups/` next to the log as `<log>-<UTC time>-<reason>.sqlite`, copied with SQLite's online backup while the log stays open:
   - `open` each time an existing log is opened, skipped when the log is unchanged since the newest backup (the copies are compared page by page, past the 100-byte file header);
-  - `import` and `bulk-edit` right before those changes, the newest 5 kept apart so launches can't push them out;
+  - `import`, `bulk-edit`, `delete`, `merge`, `dupes`, `lookup` and `recompute` right before those changes, the newest 10 kept apart so launches can't push them out;
   - `manual` from File → Back up now and Preferences → Database.
   - Of `open` and `manual`, the newest N are kept (Preferences, default 20). Restoring is opening a backup with File → Open log file.
 - All writes happen in transactions.
 - Schema migrations are versioned.
-- Undo is available for bulk edit, delete and import.
+- **No undo** (removed in 0.1.5): undoing a download put the log out of step with the services, and one click could delete a whole import. Instead, every change to many QSOs (import, bulk edit, delete, merge, ignore all dupes, look up and fill, recompute DXCC) asks first and saves a backup (§4.3 backups); 0.1.4's undo history is dropped from the file once.
 
 ## 5. Modes, mode groups and dupes
 
@@ -332,7 +331,7 @@ Bulk edit follows the BBLogger idea of editing many selected QSOs at once, with 
   - find & replace
   - fill from lookup
 - A preview lists the count and an old → new diff of the first rows.
-- Apply runs in one transaction and is recorded in `undo_log`, so it can be undone.
+- Apply runs in one transaction, after a `bulk-edit` backup.
 - After applying, the affected QSOs are flagged as modified for QRZ and HRDLog re-upload (§4.1).
 
 ### 6.2 Dupe compare and review
@@ -343,13 +342,13 @@ A QSO can collide with more than one other QSO, so the window shows a **group**.
   - The column header shows the time and the mark (Dupe / Suspect).
   - Fields that differ are highlighted, and the fields that decide a dupe (call, band, mode, propagation, satellite, time) are bold.
   - The top lists each QSO against the earlier ones, e.g. "#2 dupe of #1: same mode and submode, 15 s apart; #3 possible dupe of #2: related modes, 12 min apart".
-- **Editing in the window:** double-click a cell and type, then *Save edits*. All edits are saved as one undo step and the group's marks are recomputed. A Time Off earlier than Time On is refused.
+- **Editing in the window:** double-click a cell and type, then *Save edits*. All edits are saved in one transaction and the group's marks are recomputed. A Time Off earlier than Time On is refused.
 - **Actions** (click a column header to select a QSO):
   - *Not dupes*: marks every QSO in the group `OK`, so later scans leave them alone.
   - *Keep #n, merge others*: copies the fields and confirmations #n is missing from the others, then deletes the others.
   - *Delete selected*.
   - *Open in entry form*.
-  - Every action can be undone.
+  - Merge and delete save a backup first.
 - **Opened from:**
   - *Review suspicious dupes…* (⇧⌘D / Ctrl+Shift+D), which steps through every marked QSO with Previous / Next.
   - The right-click *Compare with the original…*.
@@ -602,7 +601,7 @@ N1MM conventions:
 - Typing `14025` in the Call field sets the frequency, and `CW` / `SSB` sets the mode.
 - Space jumps to the next useful field, skipping the RSTs.
 - Enter on the Call field moves to the exchange; Enter on the exchange logs the QSO (ESM without a keyer).
-- Esc or Alt+W wipes the line. Ctrl+Z undoes the last QSO. Alt+E edits the last QSO.
+- Esc or Alt+W wipes the line. Alt+E edits the last QSO.
 
 ### Panes
 

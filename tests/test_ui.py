@@ -64,7 +64,7 @@ def test_log_dupe_and_bulk_edit(win, qtbot):
     win.dx.commit()
     assert db.count() == 2
     assert db.get(2)["dupe_flag"] == "SUSPECT"
-    # Bulk edit then undo.
+    # Bulk edit, with a backup first.
     from nwologger.ui.bulk_edit import BulkEditDialog
 
     dlg = BulkEditDialog(db, [1, 2], win)
@@ -74,8 +74,8 @@ def test_log_dupe_and_bulk_edit(win, qtbot):
     assert dlg.changed_count == 2
     dlg._apply()
     assert db.get(1)["rst_sent"] == "55"
-    win.undo()
-    assert db.get(1)["rst_sent"] != "55"
+    assert [db._label(p) for p in db.backups()] == ["bulk-edit"]
+    assert not any("Undo" in a.text() for a in win.actions_)  # there is no undo
 
 
 def test_filters_and_export(win, qtbot, tmp_path):

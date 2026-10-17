@@ -208,7 +208,7 @@ class ContestPanel(QWidget):
         bar.addWidget(self.log_btn)
         root.addLayout(bar)
         hint = QLabel(tr("Space: next field · Enter: next empty field, then log · type a frequency (14025) or a mode "
-                         "(CW, SSB, RTTY) in the call field and press Enter · Esc: wipe · ⌘/Ctrl+Z: undo last QSO"))
+                         "(CW, SSB, RTTY) in the call field and press Enter · Esc: wipe"))
         hint.setObjectName("Hint")
         hint.setWordWrap(True)
         root.addWidget(hint)

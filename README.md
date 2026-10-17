@@ -57,7 +57,7 @@ Without `--db`, NWOlogger uses `~/Documents/NWOlogger/nwolog.sqlite`. Other opti
    - Type part of a call: **Worked before** lists similar calls, your log first, then calls QRZ.com / HamQTH know, then LoTW users and eQSL AG members, then [MASTER.SCP](https://www.supercheckpartial.com/) (File → Update MASTER.SCP). Try a call with a letter or the digit missing, e.g. `BINWO`, or a pattern with `*` and `?`, e.g. `BA*K`. Click one to use it.
    - **Clear** (Esc) empties the contact: frequency, mode, reports, propagation and satellite included. Your Device section (rig, antenna, power) stays. The *Keep* boxes only apply after Log QSO.
 4. **Search:** `BA*` or `B?1*` in the call box; mode `SSB` (finds USB/LSB) with and without *Exact*; presets such as *Suspicious dupes* and *Paper to send*.
-5. **Edit many QSOs:** select several rows → right-click → Bulk edit. Undo with ⌘Z / Ctrl+Z.
+5. **Edit many QSOs:** select several rows → right-click → Bulk edit. There is no undo: a backup of the log is saved before every bulk edit, import, delete and merge (Preferences → Database → Show backups folder).
 6. **Contest mode:** toolbar → Contest → New contest. Pick CQ WW, log with Space / Enter, watch the score and the Check Partial pane, then Export Cabrillo.
 7. **Your own data:** File → Import accepts ADIF files and MacLoggerDX databases (`MacLoggerDX.sql`).
 8. **Services (optional):** Preferences → Lookup / Services for QRZ.com, HamQTH, LoTW (needs [TQSL](https://www.arrl.org/tqsl-download)), eQSL and HRDLog.
@@ -107,7 +107,7 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - Only the same call, band and exact mode within 30 seconds blocks logging.
   - The same mode later, or a related mode (SSB vs USB, USB vs LSB, FT8 vs FT4), only warns.
   - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, or keep one QSO and merge the others into it, delete one, or mark them as not dupes.
-- **Bulk edit** of a selection, with a preview and undo.
+- **Bulk edit** of a selection, with a preview; a backup is saved first.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
   - A call is **green** when LoTW confirmed the QSO (eQSL, QRZ.com and paper cards don't make it green).
   - **Uploads are always your choice.** *Sync everything* only downloads. QSOs not yet uploaded to all four services are shown in grey (the tooltip names the missing services); the preset *Not uploaded to every service* lists them, and *Upload selected* sends them.
@@ -140,7 +140,6 @@ No rig control, by design: NWOlogger never talks to a radio.
 | ⌘B / Ctrl+B | Bulk edit the selection |
 | ⇧⌘D / Ctrl+Shift+D | Review suspicious dupes |
 | ⇧⌘O / Ctrl+Shift+O | Go to the Operator field |
-| ⌘Z / Ctrl+Z | Undo (log, edit, bulk edit, delete, import) |
 | ⌘1–3 / Ctrl+1–3 | Log · Paper QSL · Sync history tabs |
 | ⇧⌘1 / ⇧⌘2 | DX view / Contest view |
 
@@ -154,7 +153,7 @@ NWOlogger/
 │   ├── applog.py              the diagnostic log file (secrets masked), hang watchdog
 │   ├── i18n.py                tr(): looks up UI text in resources/translations/
 │   ├── core/                  all logic, no Qt (unit-tested)
-│   │   ├── db.py              the SQLite log file: schema, migrations, backups, undo
+│   │   ├── db.py              the SQLite log file: schema, migrations, backups
 │   │   ├── fields.py          one entry per QSO column: ADIF name, type, label
 │   │   ├── qso.py, adif.py    QSO cleaning; ADIF reader / writer
 │   │   ├── importer.py, exporter.py, mldx.py      import (dupe marking, merge), export, MacLoggerDX

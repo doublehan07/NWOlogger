@@ -169,17 +169,31 @@ def test_import_merge_updates_confirmation(db):
 
 # ------------------------------------------------------------------ db
 
-def test_undo_and_service_modified(db):
+def test_service_modified_and_delete_backs_up_first(db):
     qid = db.insert(make("BA1AA", qrzcom_qso_upload_status="Y"))
     db.update_many([qid], {"rst_sent": "55"}, label="Bulk edit")
     row = db.get(qid)
     assert row["rst_sent"] == "55" and row["qrzcom_qso_upload_status"] == "M"
-    assert db.undo_last() == "Bulk edit"
-    assert db.get(qid)["rst_sent"] is None and db.get(qid)["qrzcom_qso_upload_status"] == "Y"
     db.delete([qid])
-    assert db.count() == 0
-    db.undo_last()
-    assert db.count() == 1
+    assert db.count() == 0 and [db._label(p) for p in db.backups()] == ["delete"]
+
+
+def test_old_undo_history_is_removed(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    d = dbm.LogDB(path, backup_on_open=False)
+    d.insert(make("BA1AA"))
+    d.close()
+    con = sqlite3.connect(path)  # what 0.1.4 left in the file
+    con.executescript("CREATE TABLE undo_batch (id INTEGER PRIMARY KEY, label TEXT, created_at TEXT);"
+                      "CREATE TABLE undo_log (id INTEGER PRIMARY KEY, batch_id INTEGER, op TEXT, qso_id INTEGER, "
+                      "before TEXT); INSERT INTO undo_log VALUES (1, 1, 'update', 1, '{\"call\": \"BA1AA\"}');")
+    con.close()
+    d = dbm.LogDB(path, backup_on_open=False)
+    tables = {r[0] for r in d.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert not tables & {"undo_log", "undo_batch"} and d.count() == 1
+    d.close()
 
 
 def test_partial_update_recomputes_band_and_mode(db):
@@ -206,7 +220,7 @@ def test_backups_skip_an_unchanged_log_and_keep_the_copies_before_imports(tmp_pa
     d = launch()  # nothing changed since that copy: no second one
     assert d.backups() == [first]
     d = dbm.LogDB(path, backup_keep=3)
-    for _ in range(7):
+    for _ in range(dbm.SAFETY_KEEP + 2):
         d.backup("import")
     d.backup("bulk-edit")
     d.insert(make("BA1BB"))

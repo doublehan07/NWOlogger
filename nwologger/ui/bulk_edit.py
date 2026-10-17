@@ -1,4 +1,4 @@
-"""Bulk edit: change many selected QSOs at once, with a preview and one undo step."""
+"""Bulk edit: change many selected QSOs at once, with a preview; a backup is saved first."""
 
 from __future__ import annotations
 
@@ -164,8 +164,9 @@ class BulkEditDialog(QDialog):
         self.preview.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.preview.horizontalHeader().setStretchLastSection(True)
         rl.addWidget(self.preview, 1)
-        hint = QLabel(tr("Changes are applied in one step and can be undone with Edit → Undo. "
-                         "QSOs already uploaded to QRZ / HRDLog are marked for re-upload."))
+        hint = QLabel(tr("Changes are applied in one step and can't be undone: a backup of the log is saved first "
+                         "(Preferences → Database → Show backups folder). QSOs already uploaded to QRZ / HRDLog are "
+                         "marked for re-upload."))
         hint.setObjectName("Hint")
         hint.setWordWrap(True)
         rl.addWidget(hint)

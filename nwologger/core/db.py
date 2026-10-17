@@ -1,4 +1,4 @@
-"""SQLite log file: schema, migrations, backups, CRUD and undo."""
+"""SQLite log file: schema, migrations, backups and CRUD."""
 
 from __future__ import annotations
 
@@ -41,10 +41,8 @@ CREATE TABLE IF NOT EXISTS sync_log (
     id INTEGER PRIMARY KEY, service TEXT NOT NULL, direction TEXT NOT NULL, started_at TEXT NOT NULL,
     finished_at TEXT, sent INTEGER DEFAULT 0, received INTEGER DEFAULT 0, matched INTEGER DEFAULT 0,
     errors INTEGER DEFAULT 0, message TEXT);
-CREATE TABLE IF NOT EXISTS undo_batch (id INTEGER PRIMARY KEY, label TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS undo_log (
-    id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL, op TEXT NOT NULL, qso_id INTEGER NOT NULL, before TEXT);
 """
+_DROPPED_TABLES = ("undo_log", "undo_batch")  # undo history, until 0.1.4
 
 _INDEXES = [
     ("idx_qso_call", "call"),
@@ -59,9 +57,9 @@ _INDEXES = [
     ("idx_qso_dupe_key", "call, band, time_on"),
 ]
 
-UNDO_KEEP = 50
-SAFETY_LABELS = ("import", "bulk-edit")  # backups taken right before a big change
-SAFETY_KEEP = 5
+# Backups taken right before a change to many QSOs (there is no undo: a backup is the way back).
+SAFETY_LABELS = ("import", "bulk-edit", "delete", "merge", "dupes", "lookup", "recompute")
+SAFETY_KEEP = 10
 QSO_COLS = [f.col for f in FIELDS if f.col != "id"]
 
 ChangeListener = Callable[[str, list[int]], None]
@@ -101,7 +99,7 @@ class LogDB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self._listeners: list[ChangeListener] = []
-        self._batch_id: int | None = None
+        self._in_batch = False
         self._pending: list[tuple[str, list[int]]] = []
         if existed and backup_on_open:
             self.backup("open")
@@ -118,6 +116,12 @@ class LogDB:
                 c.execute(f"ALTER TABLE qso ADD COLUMN {f.col} {fields.sql_type(f.kind)}")
         for name, cols in _INDEXES:
             c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON qso ({cols})")
+        old = {r["name"] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")} & set(_DROPPED_TABLES)
+        if old:
+            for t in _DROPPED_TABLES:
+                c.execute(f"DROP TABLE IF EXISTS {t}")
+            c.execute("VACUUM")  # give the space of the old undo history back
+            log.info("Removed the undo history of NWOlogger 0.1.4 and earlier from the log file")
         if self.meta("schema_version") is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
             self.set_meta("created_at", timeutil.now_iso())
@@ -196,96 +200,38 @@ class LogDB:
             self._listeners.remove(fn)
 
     def _notify(self, kind: str, ids: list[int]) -> None:
-        if self._batch_id is not None:
+        if self._in_batch:
             self._pending.append((kind, ids))
             return
         for fn in list(self._listeners):
             fn(kind, ids)
 
-    # ------------------------------------------------------------------ batches / undo
+    # ------------------------------------------------------------------ batches
     @contextmanager
-    def batch(self, label: str) -> Iterator[int]:
-        """Group writes into one transaction and one undo step."""
-        if self._batch_id is not None:  # nested: join the outer batch
-            yield self._batch_id
+    def batch(self, label: str) -> Iterator[None]:
+        """Group writes into one transaction (all or nothing), with one change notice per kind at the end.
+        ``label`` names the change in the diagnostic log (with --debug)."""
+        if self._in_batch:  # nested: join the outer batch
+            yield
             return
         self.conn.execute("BEGIN")
+        self._in_batch = True
         try:
-            cur = self.conn.execute("INSERT INTO undo_batch(label, created_at) VALUES(?, ?)",
-                                    (label, timeutil.now_iso()))
-            self._batch_id = cur.lastrowid
-            yield self._batch_id
+            yield
             self.conn.execute("COMMIT")
         except BaseException:
             self.conn.execute("ROLLBACK")
-            self._batch_id = None
             self._pending.clear()
             raise
-        self._batch_id = None
-        self._prune_undo()
+        finally:
+            self._in_batch = False
+        log.debug("Change: %s", label)
         pending, self._pending = self._pending, []
         merged: dict[str, list[int]] = {}
         for kind, ids in pending:
             merged.setdefault(kind, []).extend(ids)
         for kind, ids in merged.items():
             self._notify(kind, ids)
-
-    def _record_undo(self, op: str, qso_id: int, before: dict | None) -> None:
-        if self._batch_id is None:
-            return
-        self.conn.execute("INSERT INTO undo_log(batch_id, op, qso_id, before) VALUES(?, ?, ?, ?)",
-                          (self._batch_id, op, qso_id, json.dumps(before) if before is not None else None))
-
-    def _prune_undo(self) -> None:
-        rows = self.conn.execute("SELECT id FROM undo_batch ORDER BY id DESC LIMIT -1 OFFSET ?",
-                                 (UNDO_KEEP,)).fetchall()
-        if rows:
-            cutoff = rows[0]["id"]
-            self.conn.execute("DELETE FROM undo_log WHERE batch_id <= ?", (cutoff,))
-            self.conn.execute("DELETE FROM undo_batch WHERE id <= ?", (cutoff,))
-
-    def last_undo_label(self) -> str | None:
-        r = self.conn.execute(
-            "SELECT b.label FROM undo_batch b WHERE EXISTS (SELECT 1 FROM undo_log l WHERE l.batch_id=b.id) "
-            "ORDER BY b.id DESC LIMIT 1").fetchone()
-        return r["label"] if r else None
-
-    def undo_last(self) -> str | None:
-        """Reverse the newest batch. Returns its label, or None if there is nothing to undo."""
-        b = self.conn.execute(
-            "SELECT b.id, b.label FROM undo_batch b WHERE EXISTS (SELECT 1 FROM undo_log l WHERE l.batch_id=b.id) "
-            "ORDER BY b.id DESC LIMIT 1").fetchone()
-        if not b:
-            return None
-        ops = self.conn.execute("SELECT op, qso_id, before FROM undo_log WHERE batch_id=? ORDER BY id DESC",
-                                (b["id"],)).fetchall()
-        changed: list[int] = []
-        removed: list[int] = []
-        self.conn.execute("BEGIN")
-        try:
-            for op in ops:
-                qid = op["qso_id"]
-                if op["op"] == "insert":
-                    self.conn.execute("DELETE FROM qso WHERE id=?", (qid,))
-                    removed.append(qid)
-                else:
-                    before = json.loads(op["before"])
-                    cols = list(before)
-                    self.conn.execute(
-                        f"INSERT OR REPLACE INTO qso ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
-                        [before[c] for c in cols])
-                    changed.append(qid)
-            self.conn.execute("DELETE FROM undo_log WHERE batch_id=?", (b["id"],))
-            self.conn.execute("DELETE FROM undo_batch WHERE id=?", (b["id"],))
-            self.conn.execute("COMMIT")
-        except BaseException:
-            self.conn.execute("ROLLBACK")
-            raise
-        if removed:
-            self._notify("delete", removed)
-        if changed:
-            self._notify("reset", changed)
-        return b["label"]
 
     # ------------------------------------------------------------------ QSO CRUD
     def _row_dict(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -319,7 +265,6 @@ class LogDB:
             f"INSERT INTO qso ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", [q[c] for c in cols])
         qid = cur.lastrowid
         assert qid is not None
-        self._record_undo("insert", qid, None)
         self._notify("insert", [qid])
         return qid
 
@@ -349,13 +294,12 @@ class LogDB:
         diff["updated_at"] = timeutil.now_iso()
         sets = ", ".join(f"{k}=?" for k in diff)
         self.conn.execute(f"UPDATE qso SET {sets} WHERE id=?", [*diff.values(), qso_id])
-        self._record_undo("update", qso_id, before)
         self._notify("update", [qso_id])
         return True
 
     def update_many(self, ids: Iterable[int], changes: dict | Callable[[dict], dict], label: str = "Edit",
                     *, track_service: bool = True) -> int:
-        """Apply the same changes (or a per-QSO function) to many QSOs in one undo step."""
+        """Apply the same changes (or a per-QSO function) to many QSOs in one transaction."""
         n = 0
         ids = list(ids)
         rows = self.get_many(ids)
@@ -369,20 +313,22 @@ class LogDB:
                     n += 1
         return n
 
-    def delete(self, ids: Iterable[int], label: str = "Delete") -> int:
+    def delete(self, ids: Iterable[int], label: str = "Delete", *, backup: bool = True) -> int:
+        """Delete QSOs. A ``delete`` backup is saved first (there is no undo); ``backup=False`` when the caller has
+        just saved its own."""
         ids = list(ids)
         rows = self.get_many(ids)
+        if rows and backup:
+            self.backup("delete")
         with self.batch(label):
             for qid in ids:
                 if qid in rows:
-                    self._record_undo("delete", qid, rows[qid])
                     self.conn.execute("DELETE FROM qso WHERE id=?", (qid,))
             # Clear references from other QSOs' dupe marks.
             for i in range(0, len(ids), 500):
                 chunk = ids[i:i + 500]
                 ph = ", ".join("?" * len(chunk))
-                for r in self.conn.execute(f"SELECT * FROM qso WHERE dupe_of IN ({ph})", chunk).fetchall():
-                    self._record_undo("update", r["id"], self._row_dict(r))
+                for r in self.conn.execute(f"SELECT id FROM qso WHERE dupe_of IN ({ph})", chunk).fetchall():
                     self.conn.execute("UPDATE qso SET dupe_flag=NULL, dupe_of=NULL WHERE id=?", (r["id"],))
             self._notify("delete", [i for i in ids if i in rows])
         return len(rows)

@@ -357,9 +357,11 @@ class DupeCompareDialog(QDialog):
         others = [q for q in self._real() if q["id"] != keep["id"]]
         if confirm and QMessageBox.question(
                 self, tr("Merge"), tr("Keep") + f" #{col + 1} " + tr("and delete the other") + f" {len(others)} " +
-                tr("QSOs? Missing fields and confirmations are copied first. You can undo this.")
+                tr("QSOs? Missing fields and confirmations are copied first. This can't be undone; a backup of the "
+                   "log is saved first.")
         ) != QMessageBox.StandardButton.Yes:
             return
+        self.db.backup("merge")
         with self.db.batch(tr("Merge duplicates")):
             merged = dict(keep)
             for o in others:
@@ -367,7 +369,7 @@ class DupeCompareDialog(QDialog):
                 if ch:
                     self.db.update(keep["id"], ch, track_service=False)
                     merged.update(ch)
-            self.db.delete([o["id"] for o in others])
+            self.db.delete([o["id"] for o in others], backup=False)
             self.db.update(keep["id"], {"dupe_flag": None, "dupe_of": None}, track_service=False, normalized=True)
         self._next_group()
 
@@ -385,8 +387,9 @@ class DupeCompareDialog(QDialog):
                 != QMessageBox.StandardButton.Yes:
             return
         rest = [x["id"] for x in self._real() if x["id"] != q["id"]]
+        self.db.backup("delete")
         with self.db.batch(tr("Delete QSO")):
-            self.db.delete([q["id"]])
+            self.db.delete([q["id"]], backup=False)
             dupes.mark(self.db, rest, **self._windows())
         self._load()
 

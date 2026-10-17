@@ -696,8 +696,9 @@ class PrefsDialog(QDialog):
         self.keep.setValue(prefs.get("backup_keep"))
         f.addRow(tr("Backups to keep"), self.keep)
         f.addRow("", self._hint(tr("A copy is made each time NWOlogger opens the log (skipped when nothing changed "
-                                   "since the last copy) and when you choose Back up now. The last 5 copies made "
-                                   "before an import or a bulk edit are kept as well.")))
+                                   "since the last copy) and when you choose Back up now. The last 10 copies made "
+                                   "before an import, bulk edit, delete, merge or other change to many QSOs are kept "
+                                   "as well: there is no undo, so a backup is the way back.")))
         b = QHBoxLayout()
         now = QPushButton(tr("Back up now"))
         now.clicked.connect(self._backup)

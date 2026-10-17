@@ -114,7 +114,6 @@ class MainWindow(QMainWindow):
         self.a_open_log = A("Open log file…", self.open_log)
         self.a_backup = A("Back up now", lambda: self.flash(tr("Backup saved") + f": {self.db.backup('manual')}"))
         self.a_quit = A("Quit", self.close, QKeySequence.StandardKey.Quit)
-        self.a_undo = A("Undo", self.undo, QKeySequence.StandardKey.Undo, "undo-2")
         self.a_bulk = A("Bulk edit selected…", self.bulk_edit, "Ctrl+B", "pencil")
         self.a_edit = A("Edit QSO", self.edit_current, "Ctrl+E")
         self.a_delete = A("Delete selected QSOs", self.delete_selected, "Ctrl+Backspace", "trash-2")
@@ -162,7 +161,7 @@ class MainWindow(QMainWindow):
                             tr("Download confirmations from LoTW, eQSL and QRZ.com. Nothing is uploaded: grey "
                                "QSOs are not yet on every service; select them and use Upload selected."))
         for a, short in ((self.a_import, "Import"), (self.a_search, "Search"), (self.a_bulk, "Bulk edit"),
-                         (self.a_prefs, "Prefs"), (self.a_undo, "Undo")):
+                         (self.a_prefs, "Prefs")):
             a.setIconText(tr(short))
 
         # View switch: Log / Contest
@@ -185,7 +184,7 @@ class MainWindow(QMainWindow):
                   self.a_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
-        for a in (self.a_undo, None, self.a_edit, self.a_bulk, self.a_delete, self.a_select_all, None,
+        for a in (self.a_edit, self.a_bulk, self.a_delete, self.a_select_all, None,
                   self.a_dupes, self.a_review, self.a_not_dupe, self.a_show_dupe, None, self.a_operator,
                   self.a_recompute, self.a_lookup_fill,
                   None, self.a_prefs):
@@ -250,7 +249,6 @@ class MainWindow(QMainWindow):
         syn.setMenu(sm)
         tb.addWidget(syn)
         tb.addAction(self.a_bulk)
-        tb.addAction(self.a_undo)
         tb.addSeparator()
         tb.addAction(self.a_prefs)
         spacer = QWidget()
@@ -417,11 +415,6 @@ class MainWindow(QMainWindow):
         for k, a in self.sync_acts.items():
             if k.endswith("_up_sel"):
                 a.setEnabled(n > 0)
-        label = self.db.last_undo_label()
-        self.a_undo.setEnabled(bool(label))
-        self.a_undo.setText(tr("Undo") + (f" “{label}”" if label else ""))
-        self.a_undo.setIconText(tr("Undo"))
-        self.a_undo.setToolTip(self.a_undo.text())
 
     def _refresh_history(self) -> None:
         rows = self.db.sync_history()
@@ -531,12 +524,6 @@ class MainWindow(QMainWindow):
         self.dx.reload_sats()
         self.sync.upload_on_log(qid)
 
-    def undo(self) -> None:
-        label = self.db.undo_last()
-        if label:
-            self.flash(tr("Undone") + f": {label}")
-        self._update_actions()
-
     def bulk_edit(self) -> None:
         ids = self.view.selected_ids()
         if not ids:
@@ -544,14 +531,15 @@ class MainWindow(QMainWindow):
         dlg = BulkEditDialog(self.db, ids, self)
         if dlg.exec():
             self.flash(tr("Bulk edit applied to") + f" {dlg.changed_count} " + tr("QSOs") + " · " +
-                       tr("Undo is in the Edit menu"))
+                       tr("a backup was saved first"))
 
     def delete_selected(self) -> None:
         ids = self.view.selected_ids()
         if not ids:
             return
         if QMessageBox.question(self, tr("Delete"), f"{tr('Delete')} {len(ids)} {tr('QSOs')}? " +
-                                tr("You can undo this.")) != QMessageBox.StandardButton.Yes:
+                                tr("This can't be undone; a backup of the log is saved first.")
+                                ) != QMessageBox.StandardButton.Yes:
             return
         n = self.db.delete(ids, label=tr("Delete") + f" {len(ids)}")
         self.flash(tr("Deleted") + f" {n} " + tr("QSOs"))
@@ -594,6 +582,12 @@ class MainWindow(QMainWindow):
 
     def recompute_dxcc(self) -> None:
         ids = self.view.selected_ids()
+        if not ids or QMessageBox.question(
+                self, tr("Recompute country, DXCC and zones"),
+                f"{len(ids)} " + tr("QSOs: country, DXCC, zones and continent are replaced from the country file.") +
+                " " + tr("This can't be undone; a backup of the log is saved first.")) != QMessageBox.StandardButton.Yes:
+            return
+        self.db.backup("recompute")
         cty = dxcc.default()
 
         def ch(q: dict) -> dict:
@@ -711,6 +705,7 @@ class MainWindow(QMainWindow):
                     out["state"] = regions.normalize_cn(out["state"]) or out["state"]
                 return out
 
+            self.db.backup("lookup")
             n = self.db.update_many(ids, ch, label=tr("Look up and fill"))
             self.flash(tr("Filled") + f" {n} " + tr("QSOs"))
 
