@@ -77,6 +77,28 @@ def test_apply_lotw_and_eqsl_sat_names(tmp_path):
     d.close()
 
 
+def test_downloads_list_only_first_confirmations(tmp_path):
+    d = dbm.LogDB(tmp_path / "l.sqlite", backup_on_open=False)
+    for call in ("BA1AA", "BA1BB", "BA1CC"):
+        d.insert(qso.normalize({"call": call, "time_on": "2026-10-10T15:19:00Z", "mode": "FM", "band": "2m"}))
+    d.update(3, {"lotw_qsl_rcvd": "Y"})
+    cat = sats.load()
+
+    def rec(call, **kw):
+        return {"CALL": call, "QSO_DATE": "20261010", "TIME_ON": "1519", "BAND": "2M", "MODE": "FM", **kw}
+
+    up = apply.apply_lotw_uploads(d, [rec("BA1AA", APP_LOTW_RXQSO="2026-10-11 01:02:03")], cat)
+    assert up.changed == 1 and up.confirmed == []  # an upload state is not a confirmation
+    r = apply.apply_lotw_qsls(d, [rec(c, QSL_RCVD="Y", QSLRDATE="20261012") for c in ("BA1AA", "BA1BB", "BA1CC")],
+                              cat)
+    assert r.confirmed == [1, 2]  # BA1CC was confirmed before
+    assert apply.apply_lotw_qsls(d, [rec("BA1AA", QSL_RCVD="Y", QSLRDATE="20261012")], cat).confirmed == []
+    assert apply.apply_eqsl(d, [rec("BA1CC")], cat).confirmed == [3]  # a first eQSL card for it
+    assert apply.apply_qrz(d, [rec("BA1BB", APP_QRZLOG_STATUS="C")], cat).confirmed == [2]
+    assert apply.apply_qrz(d, [rec("BA1AA", APP_QRZLOG_STATUS="N")], cat).confirmed == []
+    d.close()
+
+
 # ------------------------------------------------------------------ found with real accounts (2026-10-16)
 
 def test_upload_rule_is_one_rule(tmp_path):

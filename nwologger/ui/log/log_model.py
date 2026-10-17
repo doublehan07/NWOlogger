@@ -39,6 +39,7 @@ class LogModel(QAbstractTableModel):
         self.row_of: dict[int, int] = {}
         self.cache: dict[int, dict] = {}
         self.order: list[tuple[str, bool]] = [("time_on", True)]
+        self.resorted = False  # the reset under way is a new sort order (a header click), not new data
         self.spec: dict = {}
         self.extra_where: tuple[str, list] = ("", [])
         self.contest_session_id: int | None = None
@@ -179,4 +180,8 @@ class LogModel(QAbstractTableModel):
         if 0 <= column < len(self.columns):
             self.order = [(self.columns[column], order == Qt.SortOrder.DescendingOrder)]
             applog.log.debug("Log sorted by %s %s", self.columns[column], "↓" if self.order[0][1] else "↑")
-            self.refresh()
+            self.resorted = True
+            try:
+                self.refresh()
+            finally:
+                self.resorted = False

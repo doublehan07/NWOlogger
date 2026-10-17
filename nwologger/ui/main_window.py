@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__, applog, i18n
-from ..core import calllists, dupes, dxcc, exporter, net, regions, timeutil
+from ..core import calllists, dupes, dxcc, exporter, net, regions, timeutil, uploads
 from ..core import db as dbm
 from ..core.contest import scp as scpmod
 from ..core.fields import DEFAULT_LOG_COLUMNS
@@ -72,6 +72,8 @@ class MainWindow(QMainWindow):
         self.sync.prefs_requested.connect(self.open_prefs)
         self.sync.history_requested.connect(self._show_history)
         self.sync.idle.connect(self._sync_idle)
+        self.sync.confirmed.connect(self._select_confirmed)
+        self._confirmed_sel: set[int] | None = None  # what the last download selected, while you haven't clicked
         self._lookup_clients: list | None = None
         self.resize(1480, 920)
         self._build()
@@ -825,6 +827,20 @@ class MainWindow(QMainWindow):
                 self.request_rebuild()
         else:
             self.dx.reload_profiles()
+
+    def _select_confirmed(self, service: str, ids: list[int]) -> None:
+        """A download's newly confirmed QSOs become the log's selection, so you see them; one click clears it.
+        Downloads that finish later (Sync everything) add theirs, unless you have clicked in the log since."""
+        if not ids:
+            return
+        self.model.refresh()  # the confirmed rows are in the table now, not after the change timer
+        prev = self._confirmed_sel
+        keep = prev if prev is not None and set(self.view.selected_ids()) == prev else set()
+        self.view.select_ids(sorted(keep | set(ids)), scroll=True)
+        self._confirmed_sel = set(self.view.selected_ids())
+        hidden = sum(1 for i in ids if i not in self.model.row_of)
+        self.flash(f"{uploads.SERVICES.get(service, service)}: {len(ids)} " + tr("new confirmations selected") +
+                   (f" ({hidden} " + tr("hidden by the filter") + ")" if hidden else ""))
 
     # ------------------------------------------------------------------ language switch
     def request_rebuild(self) -> None:

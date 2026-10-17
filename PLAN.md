@@ -302,7 +302,8 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
     - The lists are kept in memory and updated when you log, so typing never queries the log file.
   - Double-clicking a row loads that QSO into the panel for editing (Save / Cancel).
 - **Log table.** A `QAbstractTableModel` over SQL with lazy loading (`fetchMore`), so 100k+ QSOs stay fast.
-  - Clicking any header sorts with SQL `ORDER BY`. `time_on` breaks ties.
+  - Clicking any header sorts with SQL `ORDER BY`. `time_on` breaks ties (latest first). A header click shows the first row of the new order; the selection stays highlighted. New data (an edit, a sync) keeps the row you were looking at on top.
+  - After a download, the QSOs it confirmed for the first time (LoTW, eQSL or QRZ.com received flag turned to Y; not upload states or filled-in details) become the log's selection and the table scrolls to the first; one click clears it. With Sync everything, each download that finishes adds its own, unless you clicked in the log in between. Rows hidden by the filter are counted in the status bar.
   - Columns can be shown, hidden and reordered from the header context menu.
   - Confirmation columns: LoTW ↑/↓, eQSL ↑/↓, QRZ ↑/↓, HRDLog ↑, Paper sent/rcvd. Each shows a date; an empty cell means not done.
   - Row colour: the call is green when LoTW confirmed the QSO (`lotw_qsl_rcvd` Y or V; eQSL, QRZ.com and paper cards don't count); `SUSPECT` rows have an amber background, `DUPE` rows red text on red. Text is grey while a QSO is not yet uploaded to all four services (`core/uploads.py`, the same rule as Upload pending); the tooltip names the missing ones.

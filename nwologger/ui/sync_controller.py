@@ -239,6 +239,7 @@ class SyncController(QObject):
     prefs_requested = Signal(str)
     history_requested = Signal()
     idle = Signal()  # the last running upload or download has finished
+    confirmed = Signal(str, list)  # service, the QSO ids a download confirmed for the first time
 
     def __init__(self, db, prefs, parent: QWidget):
         super().__init__(parent)
@@ -670,12 +671,15 @@ class SyncController(QObject):
             if h2.get("APP_LOTW_LASTQSORX"):
                 self.db.sync_set("lotw", "last_qsorx", h2["APP_LOTW_LASTQSORX"])
             self._log("lotw", "download", started, received=a.total, matched=a.matched,
-                      message=f"{a.changed} confirmations updated; {up.changed} upload states updated")
+                      message=f"{a.changed} confirmations updated, {len(a.confirmed)} newly confirmed; "
+                              f"{up.changed} upload states updated")
             log.info("LoTW download (ref %s): %d uploads received, %d matched, %d unmatched", ref, up.total,
                      up.matched, len(up.unmatched))
             self.report("lotw", "ok", lambda t: f"{a.total} " + t("confirmations received") + f", {a.matched} " +
-                        t("matched") + f", {a.changed} " + t("updated") + f". {up.changed} " +
-                        t("QSOs marked as uploaded."), ref=ref, log_detail=timing)
+                        t("matched") + f", {a.changed} " + t("updated") + f", {len(a.confirmed)} " +
+                        t("newly confirmed") + f". {up.changed} " + t("QSOs marked as uploaded."), ref=ref,
+                        log_detail=timing)
+            self.confirmed.emit("lotw", a.confirmed)
             self._show_unmatched("lotw", a)
 
         run_async(work, on_done=done, on_error=lambda m: self._fail("lotw", "download", started, dlg, m, [pw],
@@ -715,9 +719,11 @@ class SyncController(QObject):
             # missed (cards already applied just match again).
             self.db.sync_set("eqsl", "rcvd_since", (timeutil.now_utc() - timedelta(days=1)).strftime("%Y%m%d"))
             self._log("eqsl", "download", started, received=a.total, matched=a.matched,
-                      message=f"{a.changed} updated")
+                      message=f"{a.changed} updated, {len(a.confirmed)} newly confirmed")
             self.report("eqsl", "ok", lambda t: f"{a.total} " + t("cards received") + f", {a.matched} " +
-                        t("matched") + f", {a.changed} " + t("updated") + ".", ref=ref, log_detail=timing)
+                        t("matched") + f", {a.changed} " + t("updated") + f", {len(a.confirmed)} " +
+                        t("newly confirmed") + ".", ref=ref, log_detail=timing)
+            self.confirmed.emit("eqsl", a.confirmed)
             self._show_unmatched("eqsl", a)
 
         run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "download", started, dlg, m, [pw],
@@ -750,9 +756,11 @@ class SyncController(QObject):
             a = apply.apply_qrz(self.db, recs, self.catalog())
             timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
             self._log("qrz", "download", started, received=a.total, matched=a.matched,
-                      message=f"{a.changed} updated")
+                      message=f"{a.changed} updated, {len(a.confirmed)} newly confirmed")
             self.report("qrz", "ok", lambda t: f"{a.total} " + t("records received") + f", {a.matched} " +
-                        t("matched") + f", {a.changed} " + t("updated") + ".", ref=ref, log_detail=timing)
+                        t("matched") + f", {a.changed} " + t("updated") + f", {len(a.confirmed)} " +
+                        t("newly confirmed") + ".", ref=ref, log_detail=timing)
+            self.confirmed.emit("qrz", a.confirmed)
             self._show_unmatched("qrz", a)
 
         run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "download", started, dlg, m,

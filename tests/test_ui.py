@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 
 from nwologger.core import db as dbm
 
@@ -494,6 +494,47 @@ def test_language_switch_waits_for_a_running_sync(win, qtbot):
     assert not seen and "finishes" in win.st_msg.text()
     with qtbot.waitSignal(win.rebuild_requested, timeout=2000):
         win.sync._end("lotw", "download")
+
+
+def _many(win, n=80):
+    from nwologger.core import qso as qsomod
+
+    for i in range(n):
+        win.db.insert(qsomod.normalize({"call": f"BA{i % 10}A{chr(65 + i // 10)}", "mode": "FM", "band": "2m",
+                                        "time_on": f"2026-10-{1 + i // 24:02d}T{i % 24:02d}:00:00Z"}))
+    win.model.refresh()
+
+
+def test_a_header_click_shows_the_first_row(win, qtbot):
+    _many(win)
+    v = win.view
+    col = win.model.columns.index("time_on")
+    v.select_ids([40])
+    v.scrollTo(win.model.index(win.model.row_of[40], 0), v.ScrollHint.PositionAtTop)
+    assert v.verticalScrollBar().value() > 0
+    for order in (Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder):
+        v.horizontalHeader().setSortIndicator(col, order)  # what a header click does
+        assert v.verticalScrollBar().value() == 0 and v.selected_ids() == [40]
+    assert win.model.id_at(0) == 80  # latest first
+    # New data keeps the row you were looking at on top.
+    v.scrollTo(win.model.index(30, 0), v.ScrollHint.PositionAtTop)
+    top = win.model.id_at(v.indexAt(v.viewport().rect().topLeft()).row())
+    log_one(win, qtbot, "BG1ZZ")
+    win.model.refresh()
+    assert win.model.id_at(v.indexAt(v.viewport().rect().topLeft()).row()) == top
+
+
+def test_new_confirmations_become_the_selection(win, qtbot):
+    _many(win)
+    win.view.select_ids([5])
+    win.sync.confirmed.emit("eqsl", [70, 71])
+    assert win.view.selected_ids() == [71, 70] and "2 " in win.st_msg.text()
+    win.sync.confirmed.emit("lotw", [10])  # Sync everything: the next download adds to it
+    assert sorted(win.view.selected_ids()) == [10, 70, 71]
+    win.view.select_ids([3])  # a click: the next download starts afresh
+    win.filter.set_spec({"quick": {"call": "BA1*"}})
+    win.sync.confirmed.emit("qrz", [2, 3])
+    assert win.view.selected_ids() == [2] and "1 " in win.st_msg.text().split("(")[1]  # 3 is hidden by the filter
 
 
 def test_sync_everything_never_uploads(win, monkeypatch):

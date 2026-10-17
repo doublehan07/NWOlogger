@@ -19,6 +19,9 @@ class ApplyResult:
     matched: int = 0
     changed: int = 0
     unmatched: list[dict] = field(default_factory=list)
+    confirmed: list[int] = field(default_factory=list)  # QSOs this download confirmed for the first time
+
+CONFIRMED = ("Y", "V")  # V: LoTW verified
 
 
 def pending(db, service: str, ids: list[int] | None = None) -> list[dict]:
@@ -73,7 +76,10 @@ def _fill(existing: dict, incoming: dict, cols: list[str]) -> dict:
     return {c: incoming[c] for c in cols if incoming.get(c) not in (None, "") and existing.get(c) in (None, "")}
 
 
-def _apply(db, recs: list[tuple[dict, dict]], service: str, catalog, label: str, changes_fn) -> ApplyResult:
+def _apply(db, recs: list[tuple[dict, dict]], service: str, catalog, label: str, changes_fn,
+           confirm_col: str | None = None) -> ApplyResult:
+    """``confirm_col``: the service's received flag; a QSO it turns to Y for the first time is listed in
+    ``confirmed`` (not upload states or filled-in details)."""
     res = ApplyResult(total=len(recs))
     with db.batch(label):
         for rec, q in recs:
@@ -87,6 +93,8 @@ def _apply(db, recs: list[tuple[dict, dict]], service: str, catalog, label: str,
             ch = {k: v for k, v in ch.items() if existing.get(k) != v}
             if ch and db.update(mid, ch, track_service=False):
                 res.changed += 1
+                if confirm_col and ch.get(confirm_col) in CONFIRMED and existing.get(confirm_col) not in CONFIRMED:
+                    res.confirmed.append(mid)
     return res
 
 
@@ -106,7 +114,7 @@ def apply_lotw_qsls(db, records: list[dict[str, str]], catalog) -> ApplyResult:
         ch.update(_fill(ex, q, DETAIL_FILL))
         return ch
 
-    return _apply(db, pairs, "lotw", catalog, "LoTW download", changes)
+    return _apply(db, pairs, "lotw", catalog, "LoTW download", changes, "lotw_qsl_rcvd")
 
 
 def apply_lotw_uploads(db, records: list[dict[str, str]], catalog) -> ApplyResult:
@@ -137,7 +145,7 @@ def apply_eqsl(db, records: list[dict[str, str]], catalog) -> ApplyResult:
         ch.update(_fill(ex, q, ["gridsquare"]))
         return ch
 
-    return _apply(db, pairs, "eqsl", catalog, "eQSL download", changes)
+    return _apply(db, pairs, "eqsl", catalog, "eQSL download", changes, "eqsl_qsl_rcvd")
 
 
 def apply_qrz(db, records: list[dict[str, str]], catalog) -> ApplyResult:
@@ -157,4 +165,4 @@ def apply_qrz(db, records: list[dict[str, str]], catalog) -> ApplyResult:
             ch["qrzcom_qso_upload_status"] = "Y"
         return ch
 
-    return _apply(db, pairs, "qrz", catalog, "QRZ.com download", changes)
+    return _apply(db, pairs, "qrz", catalog, "QRZ.com download", changes, "qrz_qsl_rcvd")

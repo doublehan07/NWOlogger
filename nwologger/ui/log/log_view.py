@@ -138,8 +138,12 @@ class LogView(QTableView):
         self._top_id = self.m.id_at(idx.row()) if idx.isValid() else None
 
     def _restore(self) -> None:
+        """After new data the same QSO stays at the top, so the table doesn't jump while you read. A new sort order
+        (a header click) shows its first row; the selection stays highlighted wherever it is."""
         if self._saved_selection:
             self.select_ids(self._saved_selection, scroll=False)
         top = getattr(self, "_top_id", None)
-        if top is not None and top in self.m.row_of:
+        if self.m.resorted:
+            self.scrollToTop()
+        elif top is not None and top in self.m.row_of:
             self.scrollTo(self.m.index(self.m.row_of[top], 0), QAbstractItemView.ScrollHint.PositionAtTop)
