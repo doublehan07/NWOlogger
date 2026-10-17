@@ -14,6 +14,7 @@ OutputDir=..\dist
 OutputBaseFilename=NWOlogger-{#AppVersion}-windows-setup
 Compression=lzma2
 SolidCompression=yes
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 LicenseFile=..\LICENSE
 WizardStyle=modern

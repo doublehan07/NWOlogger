@@ -353,6 +353,7 @@
 "grid": "网格",
 "Grid (4 characters)": "网格（4 位）",
 "Grid only: no imagery (Preferences → Map)": "仅网格：没有影像（偏好设置 → 地图）",
+"Grid-map visualization inspired by {gridmaster} and {gridtracker}.": "网格地图的可视化参考了 {gridmaster} 和 {gridtracker}。",
 "GridMaster:": "GridMaster：",
 "Grids": "网格",
 "Ground wave": "地波",

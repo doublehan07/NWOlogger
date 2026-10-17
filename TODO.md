@@ -21,7 +21,7 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [x] Password by POST: QRZ.com XML accepts it (login and lookups now use POST); LoTW (HTTP 405) and eQSL do not, so they keep the GET query their APIs document
 - [ ] eQSL error text: with a wrong password or QTH nickname, the Sync results row shows eQSL's own `Error…` line (and the log the page text)
 - [ ] TQSL with a passphrase-protected certificate: TQSL asks in its own window; *Cancel* stops it; quitting during the upload asks and stops it
-- [ ] TQSL station locations on Windows (`%APPDATA%\TrustedQSL\station_data`) fill the Preferences dropdown
+- [x] TQSL station locations on Windows (`%APPDATA%\TrustedQSL\station_data`) fill the Preferences dropdown
 
 ## Next
 
@@ -30,6 +30,7 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
 - [ ] Check the release build (PyInstaller) uses the macOS Keychain / Windows Credential Manager backend
+- [ ] Further reduce globe rendering time for dense views: 1,000 nearby squares still take about 106–242 ms per scene on the Windows test machine (details in PLAN §15)
 
 ## M9 — Integrations (later)
 
@@ -43,10 +44,19 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] Club Log
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
 
-## Done in v0.1.7 (2026-10-17)
+## Done in v0.1.7 testing (2026-10-17–18)
 
-- [x] **Grid map** (Statistics tab, Ctrl+4), GridMaster / GridTracker style: every 4-character square on satellite imagery; confirmed squares green with their grid and the first call that confirmed them (LoTW, eQSL, QRZ.com, paper: any mix you tick), worked-only squares amber with the first call worked; satellite / band / all, mode group, only QSOs made within 200 km of your grid (VUCC, GridMaster); region presets incl. CONUS 488; zoom, pan, click to show the square's QSOs, Save as PNG
+- [x] **Grid map** (Statistics tab, Ctrl+4), GridMaster / GridTracker style: every 4-character square on satellite imagery; confirmed squares green with their grid and the first call that confirmed them (LoTW, eQSL, QRZ.com, paper: any mix you tick), worked-only squares amber with the first call worked; satellite / band / all, mode group, only QSOs made within 200 km of your grid (VUCC, GridMaster); region presets incl. CONUS 488; zoom, rotate, click to show the square's QSOs, Save as PNG
 - [x] **Map imagery** (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (free key, kept in the keychain); tiles fetched in the background and kept in the system cache folder (up to 300 MB), so views seen before open offline
+- [x] **Windows display scaling:** fit the main window and Preferences to the available desktop, with scrolling to reach clipped controls; checked in English and Chinese up to 250% scaling
+- [x] **Download retries and imports:** failed LoTW, eQSL and QRZ.com downloads do not start the download wait; adding downloaded QSOs to an empty log preserves their service confirmations; overlapping import dialogs merge contacts already added by another service
+- [x] **First LoTW download:** reuse the full accepted-QSO report for confirmations when its timestamps are complete, with a separate confirmation query when needed; skip matching against an empty log
+- [x] **Frequencies:** all 33 ADIF bands in TX/RX and custom contests; explicit Hz/kHz/MHz/GHz units and decimal commas; bare values use MHz in DX entry and kHz in contests
+- [x] **Unsaved station profiles:** Preferences Save, Cancel, Esc and window close offer Save / Discard / Cancel; failed profile validation keeps the editor open
+- [x] **Spherical grid map:** drag or arrow keys rotate the globe; centered two-letter field names at 8% opacity; current UTC day/night boundary and night shading with a remembered on/off button; PNG export and valid legacy-view migration
+- [x] **Globe crash and rendering:** exact sampled latitude endpoints avoid rounding beyond ±90°; reduced-resolution satellite imagery, batched and cached geometry, cached native-font labels, and hidden square/call labels during dragging reduce render work
+- [x] **Documentation and credits:** English and Chinese READMEs with pre-release notices, installation instructions moved to INSTALLATION.md, and GridmasterMap / GridTracker credits in About and the READMEs
+- [x] **Windows x64 distribution:** rebuilt and checked executable architecture, English/Chinese startup and shutdown, and ZIP integrity; latest focused globe regression run passed 235 tests (PLAN §15)
 
 ## Done in v0.1.6 (2026-10-17)
 

@@ -46,7 +46,8 @@ class AboutDialog(QDialog):
         about.setOpenExternalLinks(True)
         about.setHtml(
             f"<h3>{tr('Authors')}</h3>"
-            "<p>Han Zhang (BI1NWO)<br>Claude Opus 5.5 Extra High (Anthropic)</p>"
+            "<p>Han Zhang (BI1NWO)<br>Claude Opus 5.5 Extra High (Anthropic)<br>"
+            "GPT-6.1 Sol Ultra (OpenAI)</p>"
             f"<h3>{tr('Copyright')}</h3>"
             f"<p>© 2026 Han Zhang. {tr('Released under the MIT License.')}</p>"
             f"<h3>{tr('Special thanks')}</h3>"
@@ -66,6 +67,9 @@ class AboutDialog(QDialog):
             "<li><a href='https://lucide.dev/'>Lucide</a> " + tr("icons (ISC License)") + "</li>"
             "<li><a href='https://www.qt.io/qt-for-python'>Qt for Python (PySide6)</a> (LGPL)</li>"
             "<li>httpx, keyring</li>"
+            "<li>" + tr("Grid-map visualization inspired by {gridmaster} and {gridtracker}.").format(
+                gridmaster="<a href='https://gridmaster.fr/'>GridmasterMap (FG8OJ)</a>",
+                gridtracker="<a href='https://gridtracker.org/'>GridTracker</a>") + "</li>"
             "<li>" + tr("Reference programs: MacLoggerDX, N1MM Logger+, BBLogger, Wavelog, Club Log") + "</li>"
             "</ul>")
         tabs.addTab(credits, tr("Credits"))

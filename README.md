@@ -1,6 +1,10 @@
 # NWOlogger
 
-A minimal, cross-platform amateur radio logger for macOS and Windows. It is modelled on
+> **Pre-release testing — not yet officially released.**
+
+English · [简体中文](README.zh-CN.md)
+
+A minimal, cross-platform amateur radio logger for macOS, Ubuntu and Windows. It is modelled on
 **MacLoggerDX** for everyday logging and on **N1MM Logger+** for contesting, with its own
 modern UI, and built with Python and Qt (PySide6).
 
@@ -26,55 +30,9 @@ modern UI, and built with Python and Qt (PySide6).
 
 All screenshots use made-up QSOs. To regenerate them, run `uv run python tools/screenshots.py`.
 
-## Try it
+## Installation
 
-You need [uv](https://docs.astral.sh/uv/). It fetches the right Python (3.12) by itself.
-
-| | Install uv |
-|---|---|
-| macOS | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Windows (PowerShell) | `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
-
-```sh
-git clone https://github.com/doublehan07/NWOlogger.git
-cd NWOlogger
-uv sync                                       # install dependencies (first run takes a minute)
-uv run nwologger --db ~/nwologger-test.sqlite   # use a throw-away log file for testing
-```
-
-Without `--db`, NWOlogger uses `~/Documents/NWOlogger/nwolog.sqlite`. Other options: `--lang zh_CN`, `--theme dark|light`, `--debug` (more detail in the diagnostic log), `--version`.
-
-**A first test, step by step:**
-
-1. **Create a station profile** when asked. Choose *Club station* if several people operate the call; the Operator field in the entry form must then be filled in. Double-click a profile to make it the default.
-2. **Import the sample log:** File → Import, then pick [`tests/fixtures/sample.adi`](tests/fixtures/sample.adi). These are 17 made-up QSOs: a satellite pass, HF FT8/SSB/CW, one strict dupe and one suspicious dupe. When asked, review the dupes side by side.
-3. **Log a QSO.**
-   - Type a call. Country, zones and Chinese provinces fill in by themselves (tinted).
-   - Try TX/RX MHz with the **= TX** toggle, the Mode, Propagation and Satellite dropdowns (choose what they list in Preferences → Modes / Satellites), and Enter to log.
-   - **Device:** add your rigs, antennas and setups in Preferences → Devices. Picking a setup fills rig, antenna and power at once; change any of them for the QSO if needed.
-   - **Comment (upload)** goes to eQSL, QRZ.com and HRDLog with the QSO (your name, a thank-you). **Notes (local)** are only for you: the repeater you used, their rig, antenna and power, where you operated from.
-   - Change Time On and see Time Off move to Time On + 1 min. **Now** next to Time On puts both back on the clock.
-   - Type part of a call: **Worked before** lists similar calls, your log first, then calls QRZ.com / HamQTH know, then LoTW users and eQSL AG members, then [MASTER.SCP](https://www.supercheckpartial.com/) (File → Update MASTER.SCP). Try a call with a letter or the digit missing, e.g. `BINWO`, or a pattern with `*` and `?`, e.g. `BA*K`. Click one to use it.
-   - **Clear** (Esc) empties the contact: frequency, mode, reports, propagation and satellite included. Your Device section (rig, antenna, power) stays. The *Keep* boxes only apply after Log QSO.
-4. **Search:** `BA*` or `B?1*` in the call box; mode `SSB` (finds USB/LSB) with and without *Exact*; presets such as *Suspicious dupes* and *Paper to send*.
-5. **Edit many QSOs:** select several rows → right-click → Bulk edit. There is no undo: a backup of the log is saved before every bulk edit, import, delete and merge (Preferences → Database → Show backups folder).
-6. **Contest mode:** toolbar → Contest → New contest. Pick CQ WW, log with Space / Enter, watch the score and the Check Partial pane, then Export Cabrillo.
-7. **Your own data:** File → Import accepts ADIF files and MacLoggerDX databases (`MacLoggerDX.sql`).
-8. **Services (optional):** Preferences → Lookup / Services for QRZ.com, HamQTH, LoTW (needs [TQSL](https://www.arrl.org/tqsl-download)), eQSL and HRDLog.
-   - Passwords are kept in the system keychain and never shown again; *Forget* removes one.
-   - Reports from real accounts are especially welcome.
-
-**Reporting a problem:** open an issue on GitHub. Include what you did, the text from Help → About → System → *Copy system info*, and the diagnostic log: Help → *Show log folder*, then attach `nwologger.log`. The log never contains a password, API key or upload code, and the *ref* shown with a sync result points to that run in the log.
-
-**For developers:**
-
-```sh
-uv run pytest      # tests (Qt runs off-screen; they never reach the network or your keychain)
-uv run ruff check  # lint
-uv run --with pyinstaller --with pillow pyinstaller packaging/nwologger.spec --noconfirm   # stand-alone app in dist/
-```
-
-Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Actions build a macOS `.dmg` and a Windows installer.
+See [INSTALLATION.md](INSTALLATION.md) for setup, first-run steps, troubleshooting, and macOS / Windows build instructions.
 
 ## Features
 
@@ -87,7 +45,7 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
 - **Search** across several criteria at once, with `?` / `*` wildcards on callsigns. Mode search is vague by default (`SSB` finds USB/LSB, `DIGI` finds FT8), with an *Exact* option. Searches can be saved.
 - **Sorting** by any column, including satellite name, time on and time off. Columns can be shown, hidden and moved.
 - **Entry form:**
-  - TX / RX MHz, with an *= TX* sync toggle.
+  - TX / RX frequencies cover all 33 ADIF bands, including 30 m, 17 m and 12 m, with an *= TX* sync toggle. Enter MHz directly or add Hz, kHz, MHz or GHz units; contest entry uses kHz for bare numbers.
   - Dropdowns for mode, propagation (TQSL's list) and satellite.
     - You choose which modes and satellites are listed; *Other…* reaches the rest.
     - You can add your own satellites.
@@ -97,9 +55,11 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - Time Off follows Time On + 1 min. A Time Off earlier than Time On is refused. *Now* next to Time On goes back to the live clock.
   - Fields stay set for a whole satellite pass (*Keep*). *Clear* empties the contact and keeps your Device section.
   - An empty rig, antenna or power uses the station profile's, shown in grey.
-- **Grid map** (Statistics tab, Ctrl+4), GridMaster / GridTracker style: every 4-character Maidenhead square on satellite imagery. A confirmed square is green with its grid and the first call that confirmed it, by the sources you tick (LoTW by default; any mix of eQSL, QRZ.com and paper); a square only worked is amber with the first call worked, in italics. Filter by satellite / band / all and mode group; by default only QSOs made within 200 km of your grid count (VUCC, GridMaster). Region presets: around my grid, China & around, CONUS 488 (GridMaster's squares outlined, with the count), Europe, Japan, World. Wheel or +/− zooms, drag pans, a click shows the square's QSOs in the log; Save as PNG. Imagery (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (a free developer key).
+- **Grid map** (Statistics tab, Ctrl+4), GridMaster / GridTracker style: a rotatable spherical globe with curved Maidenhead grids and satellite imagery. Two-letter field names are centered over their groups of 100 squares at 8% opacity. A confirmed square is green with its grid and the first call that confirmed it, by the sources you tick (LoTW by default; any mix of eQSL, QRZ.com and paper); a square only worked is amber with the first call worked, in italics. Filter by satellite / band / all and mode group; by default only QSOs made within 200 km of your grid count (VUCC, GridMaster). Region presets: around my grid, China & around, CONUS 488 (GridMaster's squares outlined, with the count), Europe, Japan, World. Wheel or +/− zooms, drag rotates the globe, and a click shows the square's QSOs in the log. The **Day/night** button toggles the current UTC day/night boundary and night shading, updates automatically, and remembers your choice (on by default). Save as PNG includes the current globe view. Imagery (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (a free developer key); imagery is warped onto the sphere beneath the grid.
+  - Imagery uses reduced resolution for faster rendering. Square names and calls hide while dragging and return when you stop.
 - **Similar calls** in Worked before, while you type: the same call, calls that start with or contain what you typed, and calls one character away (a typo, or a missing letter or digit). Your log comes first (most recent first), then calls QRZ.com / HamQTH know, then the calls of ARRL's [LoTW user list](https://lotw.arrl.org/lotw-user-activity.csv) and eQSL's AG member list (about 320,000 calls, with the date of each call's last LoTW upload), then MASTER.SCP. When a call is not found on QRZ.com / HamQTH, up to three MASTER.SCP calls one letter away are looked up there. With `*` or `?` the call field searches every source like the log's search box (`BA*K` → BA1PK, BA8BLK).
   - QRZ.com and HamQTH can only look up a complete call, so the lists are downloaded instead (next to the log file, refreshed weekly; File → Update LoTW and eQSL call lists) and searched on your computer while you type.
+- **Station profiles:** closing Preferences with unsaved station changes offers Save, Discard or Cancel, including when you use the window's close button or Esc.
 - **Operators:** an Operator field in the entry form.
   - Personal stations fill in your call.
   - Club stations must enter the operator, which then stays for the session.
@@ -113,6 +73,8 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - A call is **green** when LoTW confirmed the QSO (eQSL, QRZ.com and paper cards don't make it green).
   - **Uploads are always your choice.** *Sync everything* only downloads. QSOs not yet uploaded to all four services are shown in grey (the tooltip names the missing services); the preset *Not uploaded to every service* lists them, and *Upload selected* sends them.
   - Downloads also record what is already uploaded: LoTW's report of accepted QSOs and the QRZ.com logbook mark those QSOs as uploaded. eQSL (it only offers your inbox) and HRDLog (no download) can't tell NWOlogger what you uploaded there before.
+  - Adding downloaded QSOs to an empty log keeps their LoTW, eQSL or QRZ.com confirmations. Failed downloads can be retried immediately; only a successfully applied download starts the wait between downloads.
+  - The first LoTW download reuses its full QSO report for confirmations when the report provides the required timestamps, avoiding a second full download.
   - Every outcome goes to one **Sync results** window that never blocks the app (QSL → Show sync results). A row that a setting can fix has *Open Preferences*.
   - **Sync history** keeps every run; *Clear history…* (or QSL → Clear sync history…) deletes it for the services you choose, e.g. only QRZ.com. Your QSOs and their upload and confirmation status are not touched.
   - Checked before anything is sent: the TQSL station location (Preferences offers the locations TQSL has) and the eQSL QTH nickname of each station profile.
@@ -123,7 +85,7 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
   - Contest picked from a dropdown: CQ WW, CQ WPX, IARU HF, ARRL DX, ARRL 10 m, All Asian, CQ WW VHF, generic templates, and your own.
   - Live dupe check, Check Partial / N+1, and live score / multipliers / rate.
   - Cabrillo export.
-- **Modern UI** with light and dark themes, keyboard-first (command palette ⌘K / Ctrl+K), in **English and 简体中文**.
+- **Modern UI** with light and dark themes, keyboard-first (command palette ⌘K / Ctrl+K), in **English and 简体中文**. Windows and Preferences fit the available desktop and scroll when needed, including at 250% display scaling.
 
 No rig control, by design: NWOlogger never talks to a radio.
 
@@ -161,6 +123,7 @@ NWOlogger/
 │   │   ├── search.py          filters → SQL (wildcards, vague / exact mode)
 │   │   ├── dupes.py, modes.py, bands.py           dupe rules, mode relations, band plan
 │   │   ├── callsign.py, dxcc.py, regions.py, geo.py   calls, country file, China provinces, grids
+│   │   ├── grids.py, globe.py, solar.py              grid statistics, spherical projection, solar position
 │   │   ├── similar.py         similar calls for Worked before (log, QRZ.com / HamQTH cache, call lists, MASTER.SCP)
 │   │   ├── calllists.py       LoTW user and eQSL AG member lists: download and fast search
 │   │   ├── net.py, secrets.py HTTPS to the services only, no secrets in messages; keychain access
@@ -175,6 +138,7 @@ NWOlogger/
 │   │   ├── entry/dx_panel.py  the DX entry form
 │   │   ├── log/               log table model / view, filter bar, advanced search
 │   │   ├── contest/           contest entry line and panes, setup, user-defined contests
+│   │   ├── stats/             globe view, batched geometry (globegeometry.py), imagery (globeraster.py)
 │   │   ├── dupe_dialog.py     side-by-side dupe groups: compare, edit, merge field by field
 │   │   ├── operator_field.py  the Operator field (personal / club station rules)
 │   │   ├── list_picker.py     "Other mode… / Other satellite…" search
@@ -204,12 +168,12 @@ NWOlogger/
 
 ## Credits
 
-- **Authors:** Han Zhang (BI1NWO) and Claude Opus 5.5 Extra High (Anthropic). Copyright © 2026 Han Zhang.
+- **Authors:** Han Zhang (BI1NWO), Claude Opus 5.5 Extra High (Anthropic), and GPT-6.1 Sol Ultra (OpenAI). Copyright © 2026 Han Zhang.
 - **Special thanks** to the [BY1QH](https://www.qrz.com/db/BY1QH) club station.
 - **Data:** AD1C country files ([country-files.com](https://www.country-files.com/)), ARRL LoTW / TQSL lists, Super Check Partial.
 - **Software:** icons by [Lucide](https://lucide.dev/) (ISC); Qt for Python (PySide6).
+- **Grid-map visualization** inspired by [GridmasterMap (FG8OJ)](https://gridmaster.fr/) and [GridTracker](https://gridtracker.org/).
 
-Every commit message is a single brief sentence.
 
 ## License
 

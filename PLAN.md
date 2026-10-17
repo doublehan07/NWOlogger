@@ -257,6 +257,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+- **Display scaling.** The main window and Preferences fit the screen's available logical geometry; entry forms and tab contents scroll when the desktop is small. Moving the main window between screens or changing available screen geometry refits it. Native English and Chinese checks cover Windows scaling up to 250%.
 - **Entry panel (DX).** The field set follows MacLoggerDX, without rig control. Name is split into First and Last, as in MLDX.
   - **Location** is kept to what is needed: Country, Province, Address (street, city → ADIF `ADDRESS` / `QTH`), CQ zone, ITU zone. County, lat/lon and other location fields are not on the form; they are kept if an import brings them.
   - A summary line under the call shows the last confirmation (e.g. "Confirmed 2025-08-18 on 70CM FM"), plus bearing and distance computed from the two grids.
@@ -268,6 +269,8 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
     - Changing only Time Off never touches Time On.
     - A Time Off earlier than Time On turns red, and logging is refused with a warning.
   - **Frequencies:** the field is labelled **TX MHz**; RX MHz sits below it.
+    - TX and RX use all 33 ADIF bands from 2190 m through submm, including 30 m, 17 m and 12 m. `core/bands.py` provides one parser for the live labels, normalization and contest entry: positive finite values, decimal point or comma, optional Hz/kHz/MHz/GHz units. DX entry and stored ADIF values default to MHz; contest entry defaults to kHz. Decimal conversion preserves band-edge values before conversion to float.
+    - Invalid RX input is rejected rather than silently dropped. Contest frequencies must belong to a band allowed by the contest; invalid input is kept for correction rather than replaced by the band's lower edge. Custom contest forms list all 33 bands and scroll on small displays.
     - An **= TX** toggle keeps RX equal to TX, for simplex.
     - Picking a satellite turns it off, because satellites are split; clearing the satellite turns it back on.
   - **Mode** is a plain dropdown of *your* modes (Preferences → Modes: tick and drag to order; default = the common ones), then *Other mode…*, which searches every ADIF mode and submode and can add the choice to your list.
@@ -302,12 +305,15 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
   - Double-clicking a row loads that QSO into the panel for editing (Save / Cancel).
 - **Log table.** A `QAbstractTableModel` over SQL with lazy loading (`fetchMore`), so 100k+ QSOs stay fast.
   - Clicking any header sorts with SQL `ORDER BY`. `time_on` breaks ties (latest first). A header click shows the first row of the new order; the selection stays highlighted. New data (an edit, a sync) keeps the row you were looking at on top.
-  - **Grid map** (Statistics tab, Ctrl+4; `core/grids.py`, `core/maptiles.py`, `ui/stats/`): every 4-character Maidenhead square on satellite imagery, GridMaster / GridTracker style.
+  - **Grid map** (Statistics tab, Ctrl+4; `core/grids.py`, `core/globe.py`, `core/maptiles.py`, `ui/stats/`): a rotatable spherical globe with curved 4-character Maidenhead squares over satellite imagery, GridMaster / GridTracker style.
     - A square counts the QSOs whose `gridsquare` (or one of whose `vucc_grids`) is in it. Confirmed (green): the first QSO, by Time On, confirmed by one of the sources you tick (LoTW by default; any mix of eQSL, QRZ.com, paper; remembered); the square shows its grid and that call. Worked only (amber): the first call worked, in italics. The tooltip has the date, satellite or band, source, and how many QSOs and calls.
     - Filters: satellite / one band without satellites / all, mode group, and *From within 200 km of* a grid (default on, from the station profile's grid): VUCC and GridMaster count only QSOs made within 200 km of one place; a QSO without your grid counts as made there. The count line gives confirmed / worked, VUCC progress for the band, and for CONUS GridMaster's 488 (outlined).
-    - Region presets: around my grid, China & around, CONUS 488, Europe, Japan, World. Wheel or +/− zooms around the cursor, drag or the arrow keys pan, a double-click zooms in, a click shows the square's QSOs in the log (a Grid "starts with" condition). Fields are labelled when zoomed out, then squares get lines, grid names and calls (a long call shrinks to fit). *Save as PNG*.
-    - Imagery (Preferences → Map): *Automatic*, NASA Blue Marble (GIBS, no key, zoom 1–8), Tianditu 天地图 (the official national service, which loads reliably in China and uses the same coordinates as Maidenhead; needs a free developer key, kept in the keychain), or none. Automatic picks Tianditu when NWOlogger runs in Chinese or the system region is China and a key is set, else NASA. Only imagery layers are used; the grid is drawn on top.
-    - Tiles (Web Mercator) are fetched on daemon threads, 6 at a time, newest first, only the ones in view and only from the provider's hosts (`net.HOSTS`); a coarser tile stands in while a finer one loads. They are kept in the system cache folder (up to 300 MB, least recently used removed first), so a view seen before opens offline. After 12 failures in a row a provider is no longer asked for the session, and the map says why. The log file gets one line per map session (loaded, from the cache, failed); `NWOLOGGER_OFFLINE` fetches nothing.
+    - Region presets: around my grid, China & around, CONUS 488, Europe, Japan, World. Wheel or +/− zooms, drag or the arrow keys rotate the globe, a double-click zooms in, a click shows the square's QSOs in the log (a Grid "starts with" condition). Large two-letter field names are centered on their groups of 100 squares at 8% opacity, hidden when too small. Square lines, grid names and calls appear as space allows (a long call shrinks to fit). The checkable *Day/night* button shows the current UTC terminator and night shading, updates automatically, and persists as `map/terminator` (default on); it does not change the QSO filters or counts. *Save as PNG* preserves the current spherical view. Globe orientation is saved separately from the old planar map state; existing valid map centres are migrated to longitude and latitude.
+    - Imagery (Preferences → Map): *Automatic*, NASA Blue Marble (GIBS, no key, zoom 1–8), Tianditu 天地图 (requires a developer key, kept in the keychain), or none. Automatic picks Tianditu when a key is set and either NWOlogger runs in Chinese or the system region is `CN`; otherwise it picks NASA. Only imagery layers are used; the grid is drawn on top.
+    - Tiles (Web Mercator) are inverse-projected onto the visible sphere using NumPy in `ui/stats/globeraster.py`. Imagery favors speed: the output's longest side is capped at 320 pixels while idle and 256 while dragging, the globe frame uses at most device-pixel ratio 1, and requested tile zoom is capped at 5. The grid, cell selection and geographic calculations keep the orthographic camera's precision (`core/globe.py`); surrounding controls retain native display resolution.
+    - Tile downloads run on daemon threads, 6 at a time, newest first, only the ones in view and only from the provider's hosts (`net.HOSTS`); a cached coarser tile stands in while a finer one loads. Visible tiles form a cached atlas. They are kept in the system cache folder (up to 300 MB, least recently used removed first), so a view seen before opens offline. After 12 failures in a row a provider is no longer asked for the session, and the map says why. The log file gets one line per map session (loaded, from the cache, failed); `NWOLOGGER_OFFLINE` fetches nothing.
+    - `ui/stats/globegeometry.py` batches cell projection and caches spherical geometry; the view caches geometry and completed frames. Two-letter field labels reuse glyph paths and use projected mid-edge extents without constructing whole field polygons. Square names and calls use cached native-font images and hide during dragging, returning on release. Sampled line endpoints are exact to avoid floating-point overshoot beyond latitude ±90°. See §15 for measured performance and the remaining dense-view limit.
+    - The terminator uses the Sun's geometric position for the current UTC time (`core/solar.py`), with a one-minute update while the view is visible and enabled; it refreshes when shown and for PNG export. Night shading sits under QSO colors, and the boundary is drawn above the grid. Turning it off or hiding the view stops its timer.
   - After a download, the QSOs it confirmed for the first time (LoTW, eQSL or QRZ.com received flag turned to Y; not upload states or filled-in details) become the log's selection and the table scrolls to the first; one click clears it. With Sync everything, each download that finishes adds its own, unless you clicked in the log in between. Rows hidden by the filter are counted in the status bar.
   - Columns can be shown, hidden and reordered from the header context menu.
   - Confirmation columns: LoTW ↑/↓, eQSL ↑/↓, QRZ ↑/↓, HRDLog ↑, Paper sent/rcvd. Each shows a date; an empty cell means not done.
@@ -474,7 +480,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 - **Adapter interface:** each service implements `test_credentials()`, `upload(qsos)` and `download(since)`.
   - Work runs in background workers, with a progress dialog and a row in `sync_log`.
   - Nothing is uploaded automatically unless enabled per service. "Upload on log" is offered for QRZ, eQSL and HRDLog (off by default).
-  - **Wait between syncs:** after a download (or an upload) that reached a service, the next one in the same direction waits N minutes (Preferences → Services, whole minutes, default 5, at least 1). A click inside the wait gives a Sync results row saying when it can run; a run skipped before any request (e.g. no password) doesn't start a wait; the times are kept in the log file, so a restart doesn't shorten it. QSOs uploaded when logged are never dropped: inside the wait (or while an upload runs) they wait and go out together when it ends. Lookups, call lists, cty.csv and MASTER.SCP are not paced by it.
+  - **Wait between syncs:** the next run in the same direction waits N minutes (Preferences → Services, whole minutes, default 5, at least 1). Downloads start this wait only after their downloaded states and resume positions are successfully committed together; a network or local-apply failure leaves the previous timestamp and cursors unchanged, so the failed run can be retried immediately. Uploads keep the existing start-of-run wait. A click inside the wait gives a Sync results row saying when it can run; a run skipped before any request (e.g. no password) doesn't start a wait. Times are kept in the log file, so a restart doesn't shorten it. QSOs uploaded when logged are never dropped: inside the wait (or while an upload runs) they wait and go out together when it ends. Lookups, call lists, cty.csv and MASTER.SCP are not paced by it.
   - **Summaries lead with what is new:** "2 new confirmations · 1 already in your log · 6 not in your log". LoTW sends its newest confirmation again (its "since" is inclusive, so nothing recorded in the same second is missed), eQSL starts a day early, QRZ.com sends the whole logbook: those records are only "already in your log". The QRZ.com download date is set once, when a QSO first appears there. A Sync results row with new confirmations has *Select them*.
   - *Sync everything* only downloads (LoTW, eQSL, QRZ.com). Uploads are always started by you: Upload pending (asks first) or Upload selected, because a LoTW or eQSL upload can't be taken back and eQSL sends a card to the other station.
   - **Outcomes** go to one non-modal **Sync results** window (QSL → Show sync results), a row per run: Done / Note / Skipped / Failed / Stopped, the details and a short *ref*; a row that a setting fixes has *Open Preferences*. No message box is opened from a finished background job: three downloads finishing together used to stack three app-modal boxes, where only the top one takes a click and the app looked hung. Upload on log only brings the window up for a failure, without taking the keyboard. Records that don't match open the Unmatched list without blocking either.
@@ -483,7 +489,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 - **Matching downloaded confirmations:**
   - Key: same call + band, with `sat_name` when the QSO was via satellite. An exact mode match is preferred; the same mode group is accepted.
   - Time within ±30 min (LoTW's own window). Among candidates, an exact mode match wins, then the nearest time.
-  - Records that don't match go to an **Unmatched** list, where they can be added as new QSOs.
+  - Records that don't match go to an **Unmatched** list, where they can be added as new QSOs. Import candidates carry the service's downloaded confirmation and upload states, so importing into an empty log preserves LoTW, eQSL and QRZ.com confirmations. An empty log skips per-record matching. Before adding a selection, contacts already added by another service's open import dialog are merged; distinct missing contacts are classified before insertion so nearby QSOs remain separate.
 - **Satellite names per service.** NWOlogger stores one name per satellite and translates it on upload and when matching downloads.
   - The table is editable in Prefs.
   - LoTW defaults come from the TQSL satellite list.
@@ -505,7 +511,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 - **Download:** `GET https://lotw.arrl.org/lotwuser/lotwreport.adi`
   - Parameters: `login`, `password`, `qso_query=1`, `qso_qsl=yes`, `qso_qslsince=<APP_LoTW_LASTQSL>`, `qso_qsldetail=yes`, `qso_mydetail=yes`, `qso_withown=yes`.
   - The response sets `lotw_qsl_rcvd=Y` and `lotw_qslrdate`, and can optionally fill an empty grid, zone or state from the QSL details.
-  - A second pass with `qso_qsl=no` and `qso_qsorxsince` marks QSOs that another program uploaded as `lotw_qsl_sent=Y`.
+  - The accepted-QSO report (`qso_qsl=no`, with `qso_qsorxsince` for incremental downloads) marks QSOs that another program uploaded as `lotw_qsl_sent=Y`. On the first full download, `lotw_sync_download` reuses that report's confirmed subset and its confirmation timestamps instead of downloading the confirmed subset again. If any confirmed record lacks a usable `APP_LOTW_RXQSL` timestamp, it falls back to the separate confirmation report; incremental syncs retain both queries because an old upload can gain a new confirmation.
   - A missing `<EOH>` means the query failed.
 - **Upload:** LoTW only accepts logs signed by **TQSL**. NWOlogger exports pending QSOs for each station profile to a temp ADIF and runs `tqsl -x -d -u -a compliant -l "<station location>" file.adi`.
   - It then parses the exit code and stderr, and sets `lotw_qsl_sent=Y` and `lotw_qslsdate`.
@@ -667,6 +673,8 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 | Secrets (Lookup, Services) | Saved passwords, codes and keys are never loaded into the form: a blank field keeps the saved one, *Forget* removes it on Save. QRZ API keys are typed in a password field and shown as dots. Renaming an account deletes the old account's entry (moved instead when only the case changed) |
 | Database | Path, backup count |
 
+The station profile editor tracks changes to its trimmed fields, station type and default flag. Preferences Save, Cancel, Esc and window close offer **Save / Discard / Cancel** while a profile has unsaved changes. Save validates and saves that profile; a failed validation or Cancel keeps Preferences open on the station page. Choosing Save while cancelling Preferences saves the station profile without applying the other pending Preferences edits. Loading, creating or explicitly saving a profile resets the tracked baseline.
+
 ## 12. Milestones
 
 | # | Milestone | Done when |
@@ -708,7 +716,7 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | Dropdown lists | Modes and satellites listed in the entry form are chosen in Preferences; *Other…* reaches the rest | §6, §11 |
 | Satellite vs propagation | A satellite with non-SAT propagation is kept, with a warning and a confirmation | §6 |
 | Dupe groups | The compare window shows every QSO of a dupe group, is editable, and merges them field by field (also any 2–5 selected QSOs with the same call); *Not dupes: all…* asks twice | §6.2 |
-| Logo and About | The BY1QH logo is the app icon; About lists authors Han Zhang (BI1NWO) and Claude, copyright Han Zhang, credit BY1QH | §14 |
+| Logo and About | The BY1QH logo is the app icon; About lists Han Zhang (BI1NWO), Claude Opus 5.5 Extra High and GPT-6.1 Sol Ultra; copyright Han Zhang; credits include BY1QH, GridmasterMap (FG8OJ) and GridTracker | §14 |
 | License | MIT | `LICENSE` |
 | Secrets in errors | Errors carry the HTTP status, never the URL; every message is redacted before it is shown, stored or logged; provider reasons are kept | §8.2 |
 | Account renamed | Its old keychain entry is deleted (moved when only the case changed) | §11 |
@@ -749,3 +757,23 @@ Where the code differs from, or adds to, the plan above:
 - **Branding:** the BY1QH logo (`resources/brand/by1qh.png`) is the window and app icon; PyInstaller converts it to `.icns` / `.ico` with Pillow at build time. Help → About (or the version button in the toolbar) shows the authors (Han Zhang BI1NWO, Claude Opus 5.5 Extra High), copyright (Han Zhang), the BY1QH credit, data and software credits, and system info that can be copied into bug reports.
 - **Tester sample:** `tests/fixtures/sample.adi` is a synthetic 17-QSO log (satellite pass, HF, one strict and one suspicious dupe) for trying the app; a test keeps it importable.
 - **TQSL data:** the propagation list and five extra satellites come from TQSL's current configuration (`config.tq6` v11.34, lotw.arrl.org). RS95S is on LoTW's FAQ list but not yet in that configuration; both sources are kept.
+
+## 15. v0.1.7 testing and rendering checks (2026-10-18)
+
+The latitude crash came from sampled line interpolation producing `90.00000000000001` instead of exactly `90`. `_samples` now returns exact endpoints and bounds its interior samples; `core/globe.py` retains strict latitude validation. Painter lifetimes and saved state use `try/finally` so a paint failure still releases Qt painting resources.
+
+The globe renderer uses the lower-resolution imagery and caches described in §6. Native Windows measurements on the test machine, with a 1,000 × 720 view and synthetic grid data, were:
+
+| Scene | Render time |
+|---|---:|
+| Empty world view | 38 ms |
+| World view with 1,000 distributed squares | 62 ms |
+| Dense view with 1,000 squares, zoom 5, first scene | 242 ms |
+| Same dense view, warm caches | 144 ms |
+| Same dense view while dragging, square/call labels hidden | 106 ms |
+
+These are scene timings on one machine, excluding network downloads, PNG encoding and native display upscaling. Dense views remain a performance limitation tracked in TODO.
+
+The latest focused globe regression run passed **235 tests**, covering projection and clipping, exact latitude endpoints, raster sampling, cached cell geometry and labels, view settings, field watermarks, solar calculations, the day/night control and timer, and PNG rendering. Earlier focused checks covered display scaling, downloaded confirmations and retries, frequency parsing and unsaved station profiles.
+
+The Windows x64 distribution was rebuilt after the rendering fixes. The executable's PE architecture, English and Chinese startup/shutdown, and ZIP integrity were checked. Source setup and build instructions are in [INSTALLATION.md](INSTALLATION.md); [README.md](README.md) and [README.zh-CN.md](README.zh-CN.md) carry the pre-release notice and user-facing feature descriptions.
