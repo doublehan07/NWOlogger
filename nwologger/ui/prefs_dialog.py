@@ -39,7 +39,7 @@ from ..core import secrets as keychain
 from ..core.sync import tqsl
 from . import theme
 from .prefs import DEFAULTS, SECRET_KEYS
-from .widgets import MODE_FIRST, all_modes, mode_list, sat_list
+from .widgets import MODE_FIRST, ScrollArea, all_modes, fit_to_screen, mode_list, sat_list
 
 tr = i18n.tr
 log = logging.getLogger("nwologger.prefs")
@@ -524,13 +524,13 @@ class PrefsDialog(QDialog):
         lang_hint.setObjectName("Hint")
         f.addRow("", lang_hint)
         f.addRow(tr("Theme"), self.theme)
-        self.tabs.addTab(g, tr("General"))
+        self.tabs.addTab(ScrollArea(g), tr("General"))
 
         # Station profiles
         self.profiles_page = ProfilesPage(db, prefs)
-        self.tabs.addTab(self.profiles_page, tr("Station profiles"))
+        self.tabs.addTab(ScrollArea(self.profiles_page), tr("Station profiles"))
         self.devices_page = DevicesPage(db, prefs)
-        self.tabs.addTab(self.devices_page, tr("Devices"))
+        self.tabs.addTab(ScrollArea(self.devices_page), tr("Devices"))
 
         # Logging
         lg = QWidget()
@@ -555,7 +555,7 @@ class PrefsDialog(QDialog):
                                    "within this time: a warning only.")))
         f.addRow("", self.allow)
         f.addRow("", self.auto_lookup)
-        self.tabs.addTab(lg, tr("Logging"))
+        self.tabs.addTab(ScrollArea(lg), tr("Logging"))
 
         # Lookup
         lk = QWidget()
@@ -577,7 +577,7 @@ class PrefsDialog(QDialog):
         f.addRow(tr("User"), self.ham_user)
         f.addRow(tr("Password"), self.ham_pass)
         f.addRow(tr("Cache lookups for"), self.ttl)
-        self.tabs.addTab(lk, tr("Lookup"))
+        self.tabs.addTab(ScrollArea(lk), tr("Lookup"))
 
         # Services
         sv = QWidget()
@@ -638,7 +638,7 @@ class PrefsDialog(QDialog):
         f.addRow(tr("Wait between syncs with the same service"), self.gap)
         f.addRow("", self._hint(tr("Whole minutes, at least 1: a download (or upload) that comes sooner is refused "
                                    "and says when it can run. QSOs uploaded when logged wait and go together.")))
-        self.tabs.addTab(sv, tr("Services"))
+        self.tabs.addTab(ScrollArea(sv), tr("Services"))
 
         # Modes shown in the entry form
         mw = QWidget()
@@ -659,7 +659,7 @@ class PrefsDialog(QDialog):
         self.mode_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         ml.addWidget(self.mode_list, 1)
         self._fill_modes(mode_list(prefs))
-        self.tabs.addTab(mw, tr("Modes"))
+        self.tabs.addTab(ScrollArea(mw), tr("Modes"))
 
         # Satellite names
         st = QWidget()
@@ -690,7 +690,7 @@ class PrefsDialog(QDialog):
         self.satmap.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._fill_satmap()
         sl.addWidget(self.satmap, 1)
-        self.tabs.addTab(st, tr("Satellites"))
+        self.tabs.addTab(ScrollArea(st), tr("Satellites"))
 
         # Database
         dbw = QWidget()
@@ -715,7 +715,7 @@ class PrefsDialog(QDialog):
         b.addWidget(show)
         b.addStretch(1)
         f.addRow("", b)
-        self.tabs.addTab(dbw, tr("Database"))
+        self.tabs.addTab(ScrollArea(dbw), tr("Database"))
 
         # Map (the grid map's imagery)
         mp = QWidget()
@@ -738,7 +738,7 @@ class PrefsDialog(QDialog):
         clear_tiles.setToolTip(tr("Remove the imagery tiles kept for views you have seen"))
         clear_tiles.clicked.connect(self._clear_tiles)
         f.addRow(tr("Map cache"), clear_tiles)
-        self.tabs.addTab(mp, tr("Map"))
+        self.tabs.addTab(ScrollArea(mp), tr("Map"))
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         bb.button(QDialogButtonBox.StandardButton.Save).setProperty("primary", True)
@@ -749,6 +749,10 @@ class PrefsDialog(QDialog):
             for i in range(self.tabs.count()):
                 if self.tabs.tabText(i) == tr(page):
                     self.tabs.setCurrentIndex(i)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        fit_to_screen(self)
 
     def _fill_modes(self, chosen: list[str]) -> None:
         self.mode_list.clear()

@@ -8,7 +8,7 @@ import traceback
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QDateTime, QObject, Qt, QTimeZone, Signal
+from PySide6.QtCore import QDateTime, QObject, QSize, Qt, QTimeZone, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDateTimeEdit,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -68,6 +69,41 @@ def province_text(q: dict) -> str:
 
 
 # ------------------------------------------------------------------ widgets
+
+class ScrollArea(QScrollArea):
+    """Keep a form's minimum size inside a viewport, rather than forcing its window off-screen."""
+
+    def __init__(self, widget: QWidget, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setWidget(widget)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        return self.widget().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        return QSize(100, 100)
+
+
+def fit_to_screen(window: QWidget) -> None:
+    """Fit a normal window, including its native frame, to its screen's logical work area."""
+    if window.isMaximized() or window.isFullScreen() or window.isMinimized():
+        return
+    screen = window.screen()
+    if screen is None:
+        return
+    bounds = screen.availableGeometry()
+    handle = window.windowHandle()
+    if handle is not None:
+        bounds = bounds.marginsRemoved(handle.frameMargins())
+    rect = window.geometry()
+    rect.setSize(rect.size().boundedTo(bounds.size()))
+    rect.moveLeft(max(bounds.left(), min(rect.left(), bounds.right() - rect.width() + 1)))
+    rect.moveTop(max(bounds.top(), min(rect.top(), bounds.bottom() - rect.height() + 1)))
+    if rect != window.geometry():
+        window.setGeometry(rect)
+
 
 class Section(QFrame):
     """A rounded card with a small title and a grid layout."""

@@ -53,7 +53,7 @@ from .prefs_dialog import PrefsDialog
 from .qsl_paper import PaperQslTab, mark_paper
 from .stats.statistics_tab import StatisticsTab
 from .sync_controller import SyncController, clear_history
-from .widgets import fmt, run_async
+from .widgets import ScrollArea, fit_to_screen, fmt, run_async
 
 tr = i18n.tr
 
@@ -78,6 +78,7 @@ class MainWindow(QMainWindow):
         self.sync.select_requested.connect(self._show_ids)
         self._confirmed_sel: set[int] | None = None  # what the last download selected, while you haven't clicked
         self._lookup_clients: list | None = None
+        self._screen = None
         self.resize(1480, 920)
         self._build()
         self._update_title()
@@ -313,7 +314,10 @@ class MainWindow(QMainWindow):
             ph = QLabel(tr("Contest mode is not available in this build."))
             ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.entry_stack.addWidget(ph)
-        self.splitter.addWidget(self.entry_stack)
+        # Keep the forms' minimum sizes inside a viewport: display scaling
+        # reduces the logical desktop available to the window.
+        self.entry_scroll = ScrollArea(self.entry_stack)
+        self.splitter.addWidget(self.entry_scroll)
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -335,9 +339,9 @@ class MainWindow(QMainWindow):
         self.filter.advanced_requested.connect(self.advanced_search)
         ll.addWidget(self.filter)
         ll.addWidget(self.view, 1)
-        self.tabs.addTab(log_tab, theme.icon("list"), tr("Log"))
+        self.tabs.addTab(ScrollArea(log_tab), theme.icon("list"), tr("Log"))
         self.paper = PaperQslTab(self.db)
-        self.tabs.addTab(self.paper, theme.icon("mail"), tr("Paper QSL"))
+        self.tabs.addTab(ScrollArea(self.paper), theme.icon("mail"), tr("Paper QSL"))
         self.history = QTableWidget(0, 9)
         self.history.setHorizontalHeaderLabels([tr("Service"), tr("Direction"), tr("Started"), tr("Finished"),
                                                 tr("Sent"), tr("Received"), tr("Matched"), tr("Errors"),
@@ -358,10 +362,10 @@ class MainWindow(QMainWindow):
         hbar.addWidget(clear_hist)
         hl.addLayout(hbar)
         hl.addWidget(self.history, 1)
-        self.tabs.addTab(hist_tab, theme.icon("history"), tr("Sync history"))
+        self.tabs.addTab(ScrollArea(hist_tab), theme.icon("history"), tr("Sync history"))
         self.stats = StatisticsTab(self.db, self.prefs)
         self.stats.show_square.connect(self._show_square)
-        self.tabs.addTab(self.stats, theme.icon("map-pin"), tr("Statistics"))
+        self.tabs.addTab(ScrollArea(self.stats), theme.icon("map-pin"), tr("Statistics"))
         self.tabs.currentChanged.connect(lambda i: self._refresh_history() if i == 2 else None)
         self.splitter.addWidget(self.tabs)
         self.splitter.setStretchFactor(0, 0)
@@ -382,6 +386,26 @@ class MainWindow(QMainWindow):
         self.model.counts_changed.connect(lambda *_: self._update_status())
         self.filter.emit()
         self._update_actions()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        if self._screen is None:
+            self.windowHandle().screenChanged.connect(self._screen_changed)
+        self._screen_changed(self.screen())
+
+    def _screen_changed(self, screen) -> None:
+        if self._screen is not screen:
+            if self._screen is not None:
+                self._screen.availableGeometryChanged.disconnect(self._fit_to_screen)
+            self._screen = screen
+            if screen is not None:
+                screen.availableGeometryChanged.connect(self._fit_to_screen)
+        self._fit_to_screen()
+        QTimer.singleShot(0, self, self._fit_to_screen)
+
+    def _fit_to_screen(self, *_args) -> None:
+        if not getattr(self, "_shut", False):
+            fit_to_screen(self)
 
     # ------------------------------------------------------------------ status / title
     def _tick(self) -> None:
