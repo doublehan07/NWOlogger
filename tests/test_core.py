@@ -232,6 +232,33 @@ def test_backups_skip_an_unchanged_log_and_keep_the_copies_before_imports(tmp_pa
     assert labels[-dbm.SAFETY_KEEP - 3:-3][-1] == "bulk-edit"
 
 
+def test_merge_rules():
+    from nwologger.core import merge, qso
+
+    a = {"id": 1, "call": "BA1PK", "band": "2m", "mode": "FM", "time_on": "2024-05-12T13:21:00Z", "gridsquare": "ON80",
+         "first_name": None, "comment": None, "notes": "HT + Arrow", "rst_sent": "59",
+         "lotw_qsl_sent": "Y", "lotw_qslsdate": "2024-05-12", "lotw_qsl_rcvd": "Y", "lotw_qslrdate": "2024-05-20",
+         "qrzcom_qso_upload_status": "Y", "qrz_logid": "1188", "eqsl_qsl_sent": None,
+         "extra": qso.dump_extra({"APP_A": "1"})}
+    b = {"id": 2, "call": "BA1PK", "band": "2m", "mode": "FM", "time_on": "2024-05-12T13:22:00Z",
+         "gridsquare": "ON80da", "first_name": "Ming", "comment": "first QSO", "notes": "rain", "rst_sent": "55",
+         "lotw_qsl_sent": None, "lotw_qsl_rcvd": None, "qrzcom_qso_upload_status": "Y", "qrz_logid": "2071",
+         "eqsl_qsl_sent": "Y", "eqsl_qslsdate": "2024-05-12", "extra": qso.dump_extra({"APP_B": "2"})}
+    # Defaults: the kept QSO's value, or the only one there is.
+    m = merge.merged([a, b], 0)
+    assert (m["gridsquare"], m["first_name"], m["rst_sent"], m["comment"]) == ("ON80", "Ming", "59", "first QSO")
+    # Picks win; "both" keeps the two texts.
+    m = merge.merged([a, b], 0, {"gridsquare": 1, "notes": merge.BOTH})
+    assert m["gridsquare"] == "ON80da" and m["notes"] == "HT + Arrow · rain"
+    # Service states move with their dates and log id from the QSO with the best state (the kept one on a tie).
+    assert (m["lotw_qsl_rcvd"], m["lotw_qslrdate"], m["qrz_logid"]) == ("Y", "2024-05-20", "1188")
+    assert (m["eqsl_qsl_sent"], m["eqsl_qslsdate"]) == ("Y", "2024-05-12")
+    assert qso.load_extra(m) == {"APP_A": "1", "APP_B": "2"}
+    assert merge.changes([a, b], 0) and "id" not in merge.changes([a, b], 0)
+    assert merge.problems(dict(m, time_off="2024-05-12T13:00:00Z")) == ["Time Off is earlier than Time On."]
+    assert merge.remote_copies(b) == ["QRZ.com (log id 2071)"]
+
+
 # ------------------------------------------------------------------ callsigns / DXCC / provinces
 
 def test_callsigns_and_dxcc():

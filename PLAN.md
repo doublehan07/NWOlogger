@@ -344,8 +344,9 @@ A QSO can collide with more than one other QSO, so the window shows a **group**.
   - The top lists each QSO against the earlier ones, e.g. "#2 dupe of #1: same mode and submode, 15 s apart; #3 possible dupe of #2: related modes, 12 min apart".
 - **Editing in the window:** double-click a cell and type, then *Save edits*. All edits are saved in one transaction and the group's marks are recomputed. A Time Off earlier than Time On is refused.
 - **Actions** (click a column header to select a QSO):
-  - *Not dupes*: marks every QSO in the group `OK`, so later scans leave them alone.
-  - *Keep #n, merge others*: copies the fields and confirmations #n is missing from the others, then deletes the others.
+  - *Not dupes*: marks every QSO in the group `OK`, so later scans leave them alone. *Not dupes: all…* (also Edit → Ignore all marked dupes…) does it for every marked QSO in the log, after a warning and a second question, with a `dupes` backup.
+  - *Merge…*: a Result column appears. On each row where the QSOs differ, click the value the merged QSO keeps (Comment / Notes can keep both texts); a column header chooses the QSO that stays. Defaults are the old merge: the kept QSO's value, or the only one there is. Each service's state (uploaded, confirmed) moves with its date and log id from the QSO with the best state; other programs' `APP_…` fields are kept from all (`core/merge.py`). The result is checked like the entry form, a `merge` backup is saved, the others are deleted, and an uploaded QSO whose fields changed is marked for re-upload. The confirmation lists deleted QSOs that are also on QRZ.com / HRDLog, to delete there by hand.
+  - *Edit → Merge selected…* opens the same merge for 2–5 selected QSOs with the same call, even when they aren't marked as dupes.
   - *Delete selected*.
   - *Open in entry form*.
   - Merge and delete save a backup first.
@@ -700,7 +701,7 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | Operators | Personal or club station; an Operator field in the form (no pop-up); club must fill it, checked again on a new UTC day or after a 3-hour break | §6.3 |
 | Dropdown lists | Modes and satellites listed in the entry form are chosen in Preferences; *Other…* reaches the rest | §6, §11 |
 | Satellite vs propagation | A satellite with non-SAT propagation is kept, with a warning and a confirmation | §6 |
-| Dupe groups | The compare window shows every QSO of a dupe group, is editable, and can keep one and merge the others | §6.2 |
+| Dupe groups | The compare window shows every QSO of a dupe group, is editable, and merges them field by field (also any 2–5 selected QSOs with the same call); *Not dupes: all…* asks twice | §6.2 |
 | Logo and About | The BY1QH logo is the app icon; About lists authors Han Zhang (BI1NWO) and Claude, copyright Han Zhang, credit BY1QH | §14 |
 | License | MIT | `LICENSE` |
 | Secrets in errors | Errors carry the HTTP status, never the URL; every message is redacted before it is shown, stored or logged; provider reasons are kept | §8.2 |

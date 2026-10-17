@@ -249,6 +249,65 @@ def test_dupe_group_of_three(win, qtbot, monkeypatch):
     assert kept["lotw_qsl_rcvd"] == "Y" and kept["dupe_flag"] is None
 
 
+def test_merge_field_by_field(win, qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from nwologger.core import dupes, qso
+    from nwologger.ui.dupe_dialog import ROWS, DupeCompareDialog, flagged_ids
+
+    db = win.db
+    a = db.insert(qso.normalize({"call": "BA1PK", "time_on": "2026-10-10T10:00:00Z", "mode": "FM", "band": "2m",
+                                 "gridsquare": "ON80", "rst_sent": "59", "qrzcom_qso_upload_status": "Y",
+                                 "qrz_logid": "1188"}))
+    b = db.insert(qso.normalize({"call": "BA1PK", "time_on": "2026-10-10T10:01:00Z", "mode": "FM", "band": "2m",
+                                 "gridsquare": "ON80DA", "rst_sent": "55", "comment": "first QSO",
+                                 "qrzcom_qso_upload_status": "Y", "qrz_logid": "2071"}))
+    dupes.mark(db, [a, b])
+    dlg = DupeCompareDialog(db, win.prefs, groups=dupes.groups_for(db, flagged_ids(db)), parent=win)
+    qtbot.addWidget(dlg)
+    dlg._start_merge()
+    assert dlg.merging and dlg.table.columnCount() == 3 and "#2" in dlg.merge_note.text()
+    dlg._cell_clicked(ROWS.index("gridsquare"), 1)  # take #2's grid
+    assert dlg.table.item(ROWS.index("gridsquare"), 2).text().upper() == "ON80DA"
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda _p, _t, text, *a, **k: asked.append(text) or
+                                                              QMessageBox.StandardButton.Yes))
+    assert dlg._do_merge()
+    kept = db.get(a)
+    assert db.count() == 1 and kept["gridsquare"].upper() == "ON80DA" and kept["rst_sent"] == "59"
+    assert kept["comment"] == "first QSO" and kept["qrz_logid"] == "1188"
+    assert kept["qrzcom_qso_upload_status"] == "M"  # changed after upload: marked for re-upload
+    assert "log id 2071" in asked[0] and "merge" in [db._label(p) for p in db.backups()]
+
+
+def test_merge_selected_and_ignore_all(win, qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from nwologger.core import dupes, qso
+    from nwologger.ui.dupe_dialog import DupeCompareDialog
+
+    db = win.db
+    ids = [db.insert(qso.normalize({"call": "BA1PK", "time_on": t, "mode": "FM", "band": b}))
+           for t, b in (("2026-10-10T10:00:00Z", "2m"), ("2026-10-10T10:00:30Z", "70cm"))]
+    win.model.refresh()
+    win.view.select_ids(ids)
+    monkeypatch.setattr(DupeCompareDialog, "exec", lambda self: self._do_merge(confirm=False))
+    win.merge_selected()  # different bands, so not dupes: merged anyway because you chose to
+    assert db.count() == 1
+    for i in range(3):
+        db.insert(qso.normalize({"call": "BG1ZZ", "time_on": f"2026-10-11T10:00:{i}0Z", "mode": "FM", "band": "2m"}))
+    dupes.rescan(db)
+    assert db.count("dupe_flag IN ('DUPE', 'SUSPECT')") == 2
+    answers = [QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No]
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: answers.pop(0)))
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: answers.pop(0)))
+    win.ignore_all_dupes()  # yes, then no at the second question: nothing changes
+    assert db.count("dupe_flag = 'OK'") == 0 and not answers
+    answers += [QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.Yes]
+    win.ignore_all_dupes()
+    assert db.count("dupe_flag = 'OK'") == 2 and "dupes" in [db._label(p) for p in db.backups()]
+
+
 def test_sat_name_without_sat_propagation(win, qtbot, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 

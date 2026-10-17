@@ -41,7 +41,7 @@ from . import theme
 from .about_dialog import AboutDialog
 from .bulk_edit import BulkEditDialog
 from .command_palette import CommandPalette
-from .dupe_dialog import show_review
+from .dupe_dialog import DupeCompareDialog, ignore_all, show_review
 from .entry.dx_panel import DXPanel
 from .import_dialog import ImportDialog
 from .log.filter_bar import FilterBar
@@ -123,6 +123,8 @@ class MainWindow(QMainWindow):
         self.a_not_dupe = A("Not a dupe", self.not_dupe)
         self.a_show_dupe = A("Compare with the original…", self.show_dupe_partner)
         self.a_review = A("Review suspicious dupes…", self.review_dupes, "Ctrl+Shift+D", "copy-check")
+        self.a_merge_sel = A("Merge selected…", self.merge_selected)
+        self.a_ignore_all = A("Ignore all marked dupes…", self.ignore_all_dupes)
         self.a_operator = A("Change operator…", self.change_operator, "Ctrl+Shift+O", "user-round")
         self.a_paper_sent = A("Mark paper QSL sent…", lambda: mark_paper(self, self.db, self.view.selected_ids(),
                                                                         "sent"))
@@ -190,7 +192,8 @@ class MainWindow(QMainWindow):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
         for a in (self.a_edit, self.a_bulk, self.a_delete, self.a_select_all, None,
-                  self.a_dupes, self.a_review, self.a_not_dupe, self.a_show_dupe, None, self.a_operator,
+                  self.a_dupes, self.a_review, self.a_not_dupe, self.a_show_dupe, self.a_merge_sel,
+                  self.a_ignore_all, None, self.a_operator,
                   self.a_recompute, self.a_lookup_fill,
                   None, self.a_prefs):
             m.addSeparator() if a is None else m.addAction(a)
@@ -416,6 +419,7 @@ class MainWindow(QMainWindow):
                   self.a_paper_queue, self.a_recompute, self.a_lookup_fill, self.a_not_dupe):
             a.setEnabled(n > 0)
         self.a_edit.setEnabled(n == 1)
+        self.a_merge_sel.setEnabled(2 <= n <= 5)
         self.a_show_dupe.setEnabled(n == 1)
         for k, a in self.sync_acts.items():
             if k.endswith("_up_sel"):
@@ -505,6 +509,7 @@ class MainWindow(QMainWindow):
         m.addAction(self.a_recompute)
         m.addSeparator()
         m.addAction(self.a_show_dupe)
+        m.addAction(self.a_merge_sel)
         m.addAction(self.a_not_dupe)
         m.addSeparator()
         m.addAction(self.a_delete)
@@ -584,6 +589,23 @@ class MainWindow(QMainWindow):
 
     def review_dupes(self) -> None:
         show_review(self, self.db, self.prefs, on_edit=self.edit_qso)
+
+    def merge_selected(self) -> None:
+        """Merge 2–5 selected QSOs with the same call field by field, even when they aren't marked as dupes."""
+        ids = self.view.selected_ids()
+        rows = self.db.get_many(ids)
+        calls = {(q.get("call") or "").upper() for q in rows.values()}
+        if not 2 <= len(rows) <= 5 or len(calls) != 1:
+            QMessageBox.information(self, tr("Merge selected"), tr("Select 2 to 5 QSOs with the same call."))
+            return
+        dlg = DupeCompareDialog(self.db, self.prefs, groups=[ids], fixed=True, start_merge=True, parent=self)
+        dlg.edit_requested.connect(self.edit_qso)
+        dlg.exec()
+
+    def ignore_all_dupes(self) -> None:
+        n = ignore_all(self, self.db)
+        if n:
+            self.flash(f"{n} " + tr("QSOs marked as not dupes"))
 
     def recompute_dxcc(self) -> None:
         ids = self.view.selected_ids()
