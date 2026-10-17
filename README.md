@@ -28,7 +28,26 @@ modern UI, and built with Python and Qt (PySide6).
 | ![Preferences: modes](docs/screenshots/prefs-modes.png) | ![Preferences: devices](docs/screenshots/prefs-devices.png) |
 | *Preferences → Modes: choose and order the modes in the dropdown* | *Preferences → Devices: your rigs, antennas and setups* |
 
-All screenshots use made-up QSOs. To regenerate them, run `uv run python tools/screenshots.py`.
+All screenshots use made-up QSOs. To regenerate them, run `uv run python tools/screenshots.py` (the grid map shots fetch NASA imagery; `--offline` leaves it out).
+
+## Grid map
+
+The grid map (Statistics tab, Ctrl+4) shows every 4-character Maidenhead square you have worked on a globe you can spin, over satellite imagery, in the style of GridMaster and GridTracker.
+
+![Grid map, China & around: satellite squares worked from ON80, each with its name and first call; the evening twilight darkens the east.](docs/screenshots/gridmap.jpg)
+*China & around, half a zoom step in: every square shows its name and the first call that confirmed it. Green squares are confirmed (here by LoTW), amber ones only worked. The count line keeps the VUCC tally.*
+
+| | |
+|---|---|
+| ![Zoomed in on ON80 and around](docs/screenshots/gridmap-detail.jpg) | ![The whole globe, all bands](docs/screenshots/gridmap-world.jpg) |
+| *Zoomed in: names and calls at full size. A worked-only square's call is in italics. Your square is outlined, and the dashed circle marks 200 km around it.* | *All bands on the whole globe. The night side for the current UTC time fades in through twilight.* |
+
+- **Squares:** green when confirmed by the sources you tick (LoTW by default; any mix of eQSL, QRZ.com and paper), amber when only worked, each with the first call. Names and calls appear about half a zoom step inside a whole-country view and grow as you zoom in. Worked squares get a light edge once they are big enough, so neighbours stay apart. Two-letter field names sit at 8% opacity over their 100 squares.
+- **Filters:** satellite, one band or all bands, and mode group. By default only QSOs made within 200 km of your grid count (VUCC, GridMaster). The count line shows confirmed and worked squares and VUCC progress.
+- **Regions:** around my grid, China & around, CONUS 488 (GridMaster's squares outlined, with the count), Europe, Japan, World.
+- **Moving around:** drag or the arrow keys rotate the globe. The wheel, a double-click or +/− zoom. A click shows the square's QSOs in the log, and *Save as PNG* keeps the current view.
+- **Day/night:** shades the night side for the current UTC time, fading from day to night through twilight. It updates by itself and remembers whether it is on (on by default).
+- **Imagery** (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (a free developer key). Imagery, squares and the night side are drawn at your display's own resolution, Retina included. Tiles load in the background and are kept in the system cache folder (up to 300 MB), so views seen before open offline.
 
 ## Installation
 
@@ -55,8 +74,7 @@ See [INSTALLATION.md](INSTALLATION.md) for setup, first-run steps, troubleshooti
   - Time Off follows Time On + 1 min. A Time Off earlier than Time On is refused. *Now* next to Time On goes back to the live clock.
   - Fields stay set for a whole satellite pass (*Keep*). *Clear* empties the contact and keeps your Device section.
   - An empty rig, antenna or power uses the station profile's, shown in grey.
-- **Grid map** (Statistics tab, Ctrl+4), GridMaster / GridTracker style: a rotatable spherical globe with curved Maidenhead grids and satellite imagery. Two-letter field names are centered over their groups of 100 squares at 8% opacity. A confirmed square is green with its grid and the first call that confirmed it, by the sources you tick (LoTW by default; any mix of eQSL, QRZ.com and paper); a square only worked is amber with the first call worked, in italics. Filter by satellite / band / all and mode group; by default only QSOs made within 200 km of your grid count (VUCC, GridMaster). Region presets: around my grid, China & around, CONUS 488 (GridMaster's squares outlined, with the count), Europe, Japan, World. Wheel or +/− zooms, drag rotates the globe, and a click shows the square's QSOs in the log. The **Day/night** button toggles the current UTC day/night boundary and night shading, updates automatically, and remembers your choice (on by default). Save as PNG includes the current globe view. Imagery (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (a free developer key); imagery is warped onto the sphere beneath the grid.
-  - Imagery uses reduced resolution for faster rendering. Square names and calls hide while dragging and return when you stop.
+- **Grid map** (Statistics tab, Ctrl+4): every square you worked on a rotatable globe over satellite imagery, confirmed in green and worked in amber, with the first call in each square. See [Grid map](#grid-map) above.
 - **Similar calls** in Worked before, while you type: the same call, calls that start with or contain what you typed, and calls one character away (a typo, or a missing letter or digit). Your log comes first (most recent first), then calls QRZ.com / HamQTH know, then the calls of ARRL's [LoTW user list](https://lotw.arrl.org/lotw-user-activity.csv) and eQSL's AG member list (about 320,000 calls, with the date of each call's last LoTW upload), then MASTER.SCP. When a call is not found on QRZ.com / HamQTH, up to three MASTER.SCP calls one letter away are looked up there. With `*` or `?` the call field searches every source like the log's search box (`BA*K` → BA1PK, BA8BLK).
   - QRZ.com and HamQTH can only look up a complete call, so the lists are downloaded instead (next to the log file, refreshed weekly; File → Update LoTW and eQSL call lists) and searched on your computer while you type.
 - **Station profiles:** closing Preferences with unsaved station changes offers Save, Discard or Cancel, including when you use the window's close button or Esc.
@@ -68,9 +86,9 @@ See [INSTALLATION.md](INSTALLATION.md) for setup, first-run steps, troubleshooti
   - Only the same call, band and exact mode within 30 seconds blocks logging.
   - The same mode later, or a related mode (SSB vs USB, USB vs LSB, FT8 vs FT4), only warns.
   - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, merge them field by field (click the value to keep on each row that differs; confirmations and upload states are combined), delete one, or mark them as not dupes, also all of them at once (asks twice). Edit → Merge selected… merges 2–5 selected QSOs with the same call.
-- **Bulk edit** of a selection, with a preview; a backup is saved first.
+- **Bulk edit** of a selection, with a preview that keeps up while you type, even for thousands of QSOs. A time or date it can't read is refused, never written. A backup is saved first.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
-  - A call is **green** when LoTW confirmed the QSO (eQSL, QRZ.com and paper cards don't make it green).
+  - A call is **green** when LoTW confirmed the QSO (eQSL, QRZ.com and paper cards don't make it green). It stays green, and a dupe red, when the row is selected.
   - **Uploads are always your choice.** *Sync everything* only downloads. QSOs not yet uploaded to all four services are shown in grey (the tooltip names the missing services); the preset *Not uploaded to every service* lists them, and *Upload selected* sends them.
   - Downloads also record what is already uploaded: LoTW's report of accepted QSOs and the QRZ.com logbook mark those QSOs as uploaded. eQSL (it only offers your inbox) and HRDLog (no download) can't tell NWOlogger what you uploaded there before.
   - Adding downloaded QSOs to an empty log keeps their LoTW, eQSL or QRZ.com confirmations. Failed downloads can be retried immediately; only a successfully applied download starts the wait between downloads.
@@ -138,7 +156,7 @@ NWOlogger/
 │   │   ├── entry/dx_panel.py  the DX entry form
 │   │   ├── log/               log table model / view, filter bar, advanced search
 │   │   ├── contest/           contest entry line and panes, setup, user-defined contests
-│   │   ├── stats/             globe view, batched geometry (globegeometry.py), imagery (globeraster.py)
+│   │   ├── stats/             globe view (gridmap.py); imagery, squares and night per pixel (globeraster.py); outlines (globegeometry.py)
 │   │   ├── dupe_dialog.py     side-by-side dupe groups: compare, edit, merge field by field
 │   │   ├── operator_field.py  the Operator field (personal / club station rules)
 │   │   ├── list_picker.py     "Other mode… / Other satellite…" search

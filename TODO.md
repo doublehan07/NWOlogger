@@ -30,7 +30,7 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
 - [ ] Check the release build (PyInstaller) uses the macOS Keychain / Windows Credential Manager backend
-- [ ] Further reduce globe rendering time for dense views: 1,000 nearby squares still take about 106–242 ms per scene on the Windows test machine (details in PLAN §15)
+- [ ] Measure the per-pixel globe renderer on the Windows test machine at 100% and 250% scaling (it took 106–242 ms per dense scene before; PLAN §15)
 
 ## M9 — Integrations (later)
 
@@ -53,8 +53,14 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [x] **First LoTW download:** reuse the full accepted-QSO report for confirmations when its timestamps are complete, with a separate confirmation query when needed; skip matching against an empty log
 - [x] **Frequencies:** all 33 ADIF bands in TX/RX and custom contests; explicit Hz/kHz/MHz/GHz units and decimal commas; bare values use MHz in DX entry and kHz in contests
 - [x] **Unsaved station profiles:** Preferences Save, Cancel, Esc and window close offer Save / Discard / Cancel; failed profile validation keeps the editor open
-- [x] **Spherical grid map:** drag or arrow keys rotate the globe; centered two-letter field names at 8% opacity; current UTC day/night boundary and night shading with a remembered on/off button; PNG export and valid legacy-view migration
-- [x] **Globe crash and rendering:** exact sampled latitude endpoints avoid rounding beyond ±90°; reduced-resolution satellite imagery, batched and cached geometry, cached native-font labels, and hidden square/call labels during dragging reduce render work
+- [x] **Spherical grid map:** drag or arrow keys rotate the globe; centered two-letter field names at 8% opacity; current UTC night shading with a remembered on/off button; PNG export and valid legacy-view migration
+- [x] **Globe crash and rendering:** exact sampled latitude endpoints avoid rounding beyond ±90°; batched and cached geometry, cached native-font labels, and hidden square/call labels during dragging reduce render work
+- [x] **Globe at the display's resolution:** imagery, squares and the night side are computed per pixel on a thread pool, with antialiased square edges; the frame follows the display up to 2× (Retina), the tile level follows the zoom up to the provider's deepest, and lines are one-device-pixel hairlines. A dense view with 1,000 squares takes 16 ms instead of 25 ms on an Apple M4, with full-resolution imagery, and 34 ms at 2× (PLAN §15)
+- [x] **Twilight instead of a line:** the night shade fades in from +3° to −12° solar altitude; the orange boundary line is gone
+- [x] **Names and calls like GridMaster:** a square's name and first call appear together about half a zoom step inside a whole-country view (none with China fitted) and grow to 11 / 14 pt; no text shadow; worked squares get a light edge so neighbours stay apart
+- [x] **Selected rows keep their colour:** a call LoTW confirmed stays green when selected (dupes red, not-yet-uploaded grey)
+- [x] **Bulk edit while typing:** the preview for 5,000 QSOs takes 9 ms instead of 135 ms (typing a date no longer stalls); a date it can't read, such as `2026`, is refused instead of written as typed
+- [x] **README grid map section** (English and Chinese) with three screenshots; `tools/screenshots.py` renders at 1480 × 900 again (a larger off-screen desktop) and fetches NASA imagery for the map shots
 - [x] **Documentation and credits:** English and Chinese READMEs with pre-release notices, installation instructions moved to INSTALLATION.md, and GridmasterMap / GridTracker credits in About and the READMEs
 - [x] **Windows x64 distribution:** rebuilt and checked executable architecture, English/Chinese startup and shutdown, and ZIP integrity; latest focused globe regression run passed 235 tests (PLAN §15)
 
