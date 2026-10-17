@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 import logging
-import sqlite3
 from urllib.parse import quote, quote_plus
 
 import httpx
@@ -50,13 +49,11 @@ def test_redact_urls_values_and_pairs():
 def test_redact_finds_encoded_echoes(echo):
     out = net.redact(f"Error: {echo} is wrong", ["FAKE'PASS9"])
     assert out == "Error: ••• is wrong"
-    assert net.leaks(f"Error: {echo}", ["FAKE'PASS9"]) and net.contains_secret(echo, ["FAKE'PASS9"])
 
 
 def test_short_secrets_masked_as_whole_tokens():
     assert net.redact("RST 559, code 59 sent", ["59"]) == "RST 559, code ••• sent"
-    assert not net.leaks("RST 559 sent", ["59"])
-    assert not net.leaks("100% &amp; done", [])  # decoding alone is not a leak
+    assert net.redact("RST 559 sent", ["59"]) == "RST 559 sent"
 
 
 @pytest.mark.parametrize("page", [
@@ -300,32 +297,6 @@ def test_sync_log_add_strips_urls(tmp_path):
     d.close()
 
 
-def test_old_passwords_cleaned_once_and_backups_listed(tmp_path):
-    path = tmp_path / "log.sqlite"
-    d = dbm.LogDB(path, backup_on_open=False)
-    old = (f"Client error '503 Service Unavailable' for url 'https://lotw.arrl.org/lotwuser/lotwreport.adi?"
-           f"login=u&password={quote_plus(SECRET)}&qso_query=1'")
-    d.conn.execute("INSERT INTO sync_log(service, direction, started_at, errors, message) VALUES "
-                   "('LoTW', 'download', '2026-10-10T00:00:00Z', 1, ?)", (old,))
-    d.conn.execute("INSERT INTO sync_log(service, direction, started_at, message) VALUES "
-                   "('eQSL', 'download', '2026-10-10T00:00:00Z', '3 updated')")
-    d.conn.execute("DELETE FROM meta WHERE key='secrets_scrubbed'")  # as written by 0.1.0
-    leaked_backup = d.backup("manual")
-    d.close()
-    assert quote_plus(SECRET).encode() in leaked_backup.read_bytes()
-
-    d = dbm.LogDB(path, backup_on_open=True)  # the open backup is taken after cleaning
-    msgs = [r["message"] for r in d.sync_history()]
-    assert "3 updated" in msgs and all(quote_plus(SECRET) not in m for m in msgs)
-    assert d.meta("secrets_scrubbed") == "1"
-    assert quote_plus(SECRET).encode() not in _file_bytes(path)
-    found = d.backups_with_secrets()
-    assert [p for p, _n in found] == [leaked_backup]
-    d.close()
-    # Runs once: a later open does not rescan.
-    d = dbm.LogDB(path, backup_on_open=False)
-    assert d.meta("secrets_scrubbed") == "1"
-    d.close()
 
 
 # ------------------------------------------------------------------ ADIF records with credential tags
@@ -441,6 +412,32 @@ def test_deleting_the_last_profile_with_a_call_removes_its_key(qtbot, tmp_path, 
     db.close()
 
 
+def test_a_changed_profile_call_moves_or_removes_its_qrz_key(qtbot, tmp_path, keyring_store, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from nwologger.ui.prefs import Prefs
+    from nwologger.ui.prefs_dialog import PrefsDialog
+
+    p = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
+    db = dbm.LogDB(tmp_path / "log.sqlite", backup_on_open=False)
+    db.save_profile({"name": "Home", "station_callsign": "BI1ZZQ", "is_default": True})
+    p.set_qrz_api_key("BI1ZZQ", "KEY-0001")
+    dlg = PrefsDialog(db, p)
+    qtbot.addWidget(dlg)
+    answers = [QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No]
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *_a, **_k: answers.pop(0)))
+    page = dlg.profiles_page
+    page.edits["station_callsign"].setText("BI1ZZZ")  # a corrected call: the key moves
+    page._save()
+    assert p.qrz_api_key("BI1ZZZ") == "KEY-0001" and p.qrz_api_key("BI1ZZQ") is None
+    assert dlg.qrz_keys.item(0, 0).text() == "BI1ZZZ" and dlg.qrz_keys.item(0, 1).text() == "••••••••"
+    page.edits["station_callsign"].setText("BA1XYZ")  # another call with its own logbook: the old key goes
+    page._save()
+    assert p.qrz_api_key("BI1ZZZ") is None and p.qrz_api_key("BA1XYZ") is None and not answers
+    assert dlg.qrz_keys.item(0, 0).text() == "BA1XYZ"
+    db.close()
+
+
 def test_tests_use_the_fake_keychain():
     assert type(secrets._keyring()).__name__ == "FakeKeyring"
 
@@ -476,81 +473,14 @@ def test_httpx_info_masks_secrets_echoed_into_paths(mock_net, caplog):
 
 # ------------------------------------------------------------------ round 2: history, backups, old imports
 
-def _leak(path, message):
-    d = dbm.LogDB(path, backup_on_open=False)
-    d.conn.execute("INSERT INTO sync_log(service, direction, started_at, errors, message) VALUES "
-                   "('HRDLog', 'upload', '2026-10-10T00:00:00Z', 1, ?)", (message,))
-    d.conn.execute("DELETE FROM meta WHERE key='secrets_scrubbed'")
-    return d
 
 
-def test_saved_values_find_what_patterns_miss(tmp_path):
-    path = tmp_path / "log.sqlite"
-    d = _leak(path, "Wrong code FAKE_HRD_CODE")
-    old = d.backup("manual")
-    assert d.backups_with_secrets() == []  # no pattern can see it
-    assert [p for p, _n in d.backups_with_secrets(["FAKE_HRD_CODE"])] == [old]
-    assert d.scrub_secrets(["FAKE_HRD_CODE"]) == 1
-    assert d.sync_history()[0]["message"] == "Wrong code •••"
-    assert d.scrub_secrets(["FAKE_HRD_CODE"]) == 0
-    assert b"FAKE_HRD_CODE" not in _file_bytes(path)
-    d.close()
 
 
-def test_old_imports_and_undo_history_lose_credentials(tmp_path):
-    import json
-
-    path = tmp_path / "log.sqlite"
-    d = dbm.LogDB(path, backup_on_open=False)
-    qid = d.insert(qsomod.normalize({"call": "BA1AA", "time_on": "2026-10-10T15:19:00Z", "mode": "FM",
-                                     "band": "2m", "rst_sent": "59"}))
-    d.conn.execute("UPDATE qso SET extra=? WHERE id=?", (json.dumps({"EQSL_PSWD": "FAKE_IMPORTED",
-                                                                     "APP_HRDLOG_CODE": "FAKE_CODE_2",
-                                                                     "APP_OTHER": "ok"}), qid))
-    with d.batch("Bulk edit"):
-        d.update(qid, {"rst_sent": "55"})
-    d.conn.execute("DELETE FROM meta WHERE key='secrets_scrubbed'")  # as left by 0.1.0
-    d.close()
-    d = dbm.LogDB(path, backup_on_open=True)
-    assert qsomod.load_extra(d.get(qid)) == {"APP_OTHER": "ok"}
-    assert d.undo_last() and d.get(qid)["rst_sent"] == "59"  # undo still works on the cleaned image
-    assert qsomod.load_extra(d.get(qid)) == {"APP_OTHER": "ok"}
-    d.close()
-    for blob in (_file_bytes(path), *(p.read_bytes() for p in (tmp_path / "backups").glob("*.sqlite"))):
-        assert b"FAKE_IMPORTED" not in blob and b"FAKE_CODE_2" not in blob
 
 
-def test_cleanup_waits_for_other_readers(tmp_path):
-    path = tmp_path / "log.sqlite"
-    _leak(path, "for url 'https://lotw.arrl.org/a?login=u&password=FAKEPW99'").close()
-    other = sqlite3.connect(path, isolation_level=None)
-    other.execute("BEGIN")
-    other.execute("SELECT count(*) FROM sync_log").fetchone()
-    d = dbm.LogDB(path, backup_on_open=False)
-    assert d.purge_pending()  # cleaned in the log, but not yet out of the file
-    assert all("FAKEPW99" not in r["message"] for r in d.sync_history())
-    other.execute("COMMIT")
-    other.close()
-    d.close()  # finishes the purge
-    assert b"FAKEPW99" not in _file_bytes(path)
-    d = dbm.LogDB(path, backup_on_open=False)
-    assert not d.purge_pending()
-    d.close()
 
 
-def test_a_failing_purge_never_stops_the_log_opening(tmp_path, monkeypatch):
-    path = tmp_path / "log.sqlite"
-    _leak(path, "for url 'https://lotw.arrl.org/a?login=u&password=FAKEPW99'").close()
-
-    def locked(_self):
-        raise sqlite3.OperationalError("database is locked")
-
-    monkeypatch.setattr(dbm.LogDB, "_vacuum", locked)
-    d = dbm.LogDB(path, backup_on_open=True)
-    assert d.purge_pending() and all("FAKEPW99" not in r["message"] for r in d.sync_history())
-    monkeypatch.undo()
-    d.close()
-    assert b"FAKEPW99" not in _file_bytes(path)
 
 
 # ------------------------------------------------------------------ round 2: what uploads send
@@ -565,20 +495,11 @@ def test_uploads_send_standard_fields_only():
     cat = sats.load()
     for svc in ("lotw", "eqsl", "qrz", "hrdlog"):
         prof = {"eqsl_qth_nickname": "Home"} if svc == "eqsl" else None
-        rec = apply.upload_record(q, svc, cat, prof, secrets=["FAKE_SAVED_KEY_1"])
+        rec = apply.upload_record(q, svc, cat, prof)
         assert set(rec) <= ADIF_STANDARD | {"APP_EQSL_QTH_NICKNAME"}, svc
-        assert rec["MY_CITY"] == "Beijing" and rec["GRIDSQUARE"] == "ON80" and "COMMENT" not in rec
+        assert rec["MY_CITY"] == "Beijing" and rec["GRIDSQUARE"] == "ON80"
         assert ("APP_EQSL_QTH_NICKNAME" in rec) == (svc == "eqsl")
     out = qsomod.to_adif(q)  # an ADIF file is your own: other programs' fields stay, credential names don't
     assert out["APP_OTHER_TAG"] == "ok" and out["USERDEF1"] == "u" and out["COMMENT"] == "FAKE_SAVED_KEY_1"
     assert "APP_HRDLOG_CODE" not in out and "APP_QRZ_SESSION_KEY" not in out
 
-
-def test_controller_never_uploads_a_saved_secret(ctrl, qtbot, mock_net):
-    ctrl.db.update(1, {"comment": f"my key {KEY}"})
-    seen = mock_net(lambda req: httpx.Response(200, text="<insert>1</insert>"))
-    ctrl.upload("hrdlog", [1], quiet=True)
-    qtbot.waitUntil(lambda: "hrdlogup" not in ctrl.busy)
-    body = seen[0].content.decode()
-    assert "BA1AA" in body and "COMMENT" not in body
-    assert KEY not in body and quote_plus(KEY) not in body

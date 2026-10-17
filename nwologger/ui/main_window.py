@@ -124,7 +124,6 @@ class MainWindow(QMainWindow):
         self.a_cty = A("Update country file (cty.csv)", lambda: self.update_cty(quiet=False))
         self.a_scp = A("Update MASTER.SCP (similar calls)", self.update_scp)
         self.a_lists = A("Update LoTW and eQSL call lists (similar calls)", lambda: self.update_call_lists(quiet=False))
-        self.a_check_backups = A("Check backups for saved passwords…", lambda: self.check_secrets("menu"))
         self.a_lookup_fill = A("Look up and fill missing fields", self.lookup_fill_selected)
         self.a_select_all = A("Select all shown", lambda: self.view.selectAll(), QKeySequence.StandardKey.SelectAll)
         self.a_prefs = A("Preferences…", self.open_prefs, QKeySequence.StandardKey.Preferences, "settings")
@@ -173,7 +172,7 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
         for a in (self.a_new_log, self.a_open_log, None, self.a_import, self.a_export_all, self.a_export_sel,
-                  self.a_export_flt, None, self.a_backup, self.a_check_backups, self.a_cty, self.a_scp, self.a_lists, None,
+                  self.a_export_flt, None, self.a_backup, self.a_cty, self.a_scp, self.a_lists, None,
                   self.a_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
@@ -807,7 +806,6 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             theme.apply(self.app, self.prefs.get("theme"))
             self._lookup_clients = None
-            self.check_secrets("prefs")
             self.dx.reload_profiles()
             self.dx.reload_lists()
             self.dx.clear_form()
@@ -882,56 +880,7 @@ class MainWindow(QMainWindow):
 
         run_async(calllists.download, folder, on_done=done, on_error=fail)
 
-    SECRET_CHECK = "2"  # bump to run the check once more after an update
-
-    def check_secrets(self, reason: str = "start") -> None:
-        """Look for saved passwords and keys left in this log and its backups, and clean the log.
-
-        NWOlogger 0.1.0 could save a LoTW / eQSL password in sync history after an HTTP error, and kept credential
-        fields of imported ADIF records. Patterns are cleaned when the log opens; this check also uses the saved
-        secrets, so it reads the keychain: once after an update (``start``), after each Preferences save
-        (``prefs``, quiet unless something is found) and from File → Check backups for saved passwords (``menu``).
-        Backups are only listed, for you to delete."""
-        if reason == "start" and self.db.meta("secret_check") == self.SECRET_CHECK:
-            return
-        values = self.prefs.saved_secrets({p.get("station_callsign") for p in self.db.profiles()})
-        cleaned = self.db.scrub_secrets(values)
-        if reason == "start":
-            cleaned += int(self.db.meta("secrets_scrubbed") or 0)
-        if cleaned and reason == "start":
-            self.db.renew_open_backup()  # nothing changed since open but the cleanup: retake that copy clean
-        found = self.db.backups_with_secrets(values)
-        pending = self.db.purge_pending()
-        self.db.set_meta("secret_check", self.SECRET_CHECK)
-        if not cleaned and not found and not pending:
-            if reason == "menu":
-                QMessageBox.information(self, tr("Saved passwords"), tr(
-                    "No backup holds any of your saved passwords or keys, or a password in a web address. "
-                    "Passwords you have changed since can't be recognised."))
-            return
-        text = []
-        if cleaned:
-            text.append(tr("Items that held a password or key were cleaned in this log (sync history, imported "
-                           "fields, undo history):") + f" {cleaned}.")
-        if pending:
-            text.append(tr("Another program has this log file open. The cleanup finishes when it closes the file."))
-        if found:
-            text.append(tr("These backups still hold one. Delete them (Show in Finder / Explorer):") + "\n• " +
-                        "\n• ".join(f"{p.name} ({n})" for p, n in found))
-        text.append(tr("Change those passwords and keys at LoTW, eQSL, QRZ.com or HRDLog: copies may also be in "
-                       "Time Machine or cloud backups."))
-        box = QMessageBox(QMessageBox.Icon.Warning, tr("Saved passwords"), "\n\n".join(text), parent=self)
-        show = box.addButton(tr("Show backups"), QMessageBox.ButtonRole.ActionRole) if found else None
-        box.addButton(QMessageBox.StandardButton.Close)
-        box.exec()
-        if show is not None and box.clickedButton() is show:
-            from PySide6.QtCore import QUrl  # noqa: PLC0415
-            from PySide6.QtGui import QDesktopServices  # noqa: PLC0415
-
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.db.backup_dir)))
-
     def _first_run(self) -> None:
-        self.check_secrets("start")
         age = dxcc.user_copy_age_days()
         if (age is None or age > 7) and not os.environ.get("NWOLOGGER_OFFLINE"):
             QTimer.singleShot(3000, lambda: self.update_cty(quiet=True))

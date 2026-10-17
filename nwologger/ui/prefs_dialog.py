@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -141,6 +141,8 @@ class ApiKeyDelegate(QStyledItemDelegate):
 
 
 class ProfilesPage(QWidget):
+    changed = Signal()  # a profile was saved or deleted (its callsign may have changed)
+
     def __init__(self, db, prefs=None):
         super().__init__()
         self.db, self.prefs = db, prefs
@@ -288,8 +290,33 @@ class ProfilesPage(QWidget):
             data["operator"] = data["operator"].upper()
         data["id"] = self.current_id
         data["is_default"] = self.default.isChecked()
+        old = ((self.db.profile(self.current_id) or {}).get("station_callsign") or "").upper() \
+            if self.current_id is not None else ""
         pid = self.db.save_profile(data)
+        self._call_changed(old, data["station_callsign"])
         self._reload(select=pid)
+        self.changed.emit()
+
+    def _call_used(self, call: str) -> bool:
+        return any((p.get("station_callsign") or "").upper() == call for p in self.db.profiles())
+
+    def _call_changed(self, old: str, new: str) -> None:
+        """A QRZ.com Logbook key belongs to a callsign. Once no profile uses the old call, its key would be left in
+        the keychain where nothing can reach it: it moves to the new call (a corrected callsign) or is removed (a
+        callsign with its own logbook), as you choose."""
+        if self.prefs is None or not old or old == new or self._call_used(old):
+            return
+        key = self.prefs.qrz_api_key(old)
+        if not key:
+            return
+        if not self.prefs.qrz_api_key(new) and QMessageBox.question(
+                self, tr("QRZ.com Logbook key"),
+                tr("No station profile uses this callsign now:") + f" {old}\n\n" +
+                tr("Use its QRZ.com Logbook API key for") + f" {new}?\n\n" +
+                tr("Choose No when the new callsign has its own logbook: the old key is then removed.")
+        ) == QMessageBox.StandardButton.Yes:
+            self.prefs.set_qrz_api_key(new, key)
+        self.prefs.set_qrz_api_key(old, None)
 
     def _make_default(self, item) -> None:
         pid = item.data(Qt.ItemDataRole.UserRole)
@@ -305,10 +332,10 @@ class ProfilesPage(QWidget):
         call = ((self.db.profile(self.current_id) or {}).get("station_callsign") or "").upper()
         self.db.delete_profile(self.current_id)
         # The QRZ Logbook key belongs to the callsign: remove it once no profile uses that callsign.
-        if self.prefs is not None and call and not any(
-                (p.get("station_callsign") or "").upper() == call for p in self.db.profiles()):
+        if self.prefs is not None and call and not self._call_used(call):
             self.prefs.set_qrz_api_key(call, None)
         self._reload()
+        self.changed.emit()
 
 
 class ChoiceDelegate(QStyledItemDelegate):
@@ -553,21 +580,8 @@ class PrefsDialog(QDialog):
         self.qrz_keys.setMaximumHeight(110)
         self.qrz_keys.setItemDelegateForColumn(1, ApiKeyDelegate(self.qrz_keys))
         self.qrz_keys.setToolTip(tr("Double-click a key cell to type a new key. Saved keys are never shown."))
-        calls = sorted({p.get("station_callsign") for p in db.profiles() if p.get("station_callsign")})
-        for c in calls:
-            r = self.qrz_keys.rowCount()
-            self.qrz_keys.insertRow(r)
-            it = QTableWidgetItem(c)
-            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.qrz_keys.setItem(r, 0, it)
-            stored = bool(prefs.qrz_api_key(c))
-            key = QTableWidgetItem(MASKED if stored else "")
-            key.setData(STATE_ROLE, "stored" if stored else "")
-            self.qrz_keys.setItem(r, 1, key)
-            btn = QPushButton(tr("Forget"))
-            btn.setToolTip(tr("Remove this key from the system keychain when you save"))
-            btn.clicked.connect(lambda _=False, item=key: self._forget_key(item))
-            self.qrz_keys.setCellWidget(r, 2, btn)
+        self._fill_qrz_keys()
+        self.profiles_page.changed.connect(self._fill_qrz_keys)
         upl = prefs.get("upload_on_log")
         self.up_qrz = QCheckBox("QRZ.com")
         self.up_qrz.setChecked(upl.get("qrz", False))
@@ -658,6 +672,9 @@ class PrefsDialog(QDialog):
         self.keep.setRange(1, 500)
         self.keep.setValue(prefs.get("backup_keep"))
         f.addRow(tr("Backups to keep"), self.keep)
+        f.addRow("", self._hint(tr("A copy is made each time NWOlogger opens the log (skipped when nothing changed "
+                                   "since the last copy) and when you choose Back up now. The last 5 copies made "
+                                   "before an import or a bulk edit are kept as well.")))
         b = QHBoxLayout()
         now = QPushButton(tr("Back up now"))
         now.clicked.connect(self._backup)
@@ -767,6 +784,35 @@ class PrefsDialog(QDialog):
             QMessageBox.information(self, tr("Satellites"), tr("Only satellites you added (★) can be removed."))
             return
         self._fill_satmap()
+
+    def _fill_qrz_keys(self) -> None:
+        """One row per station callsign in your profiles; a key typed or forgotten but not yet saved stays."""
+        pending = {}
+        for r in range(self.qrz_keys.rowCount()):
+            item = self.qrz_keys.item(r, 1)
+            if item is not None and item.data(STATE_ROLE) in ("new", "forget"):
+                pending[self.qrz_keys.item(r, 0).text()] = (item.text(), item.data(STATE_ROLE), item.data(KEY_ROLE))
+        self.qrz_keys.setRowCount(0)
+        calls = sorted({p.get("station_callsign") for p in self.db.profiles() if p.get("station_callsign")})
+        for c in calls:
+            r = self.qrz_keys.rowCount()
+            self.qrz_keys.insertRow(r)
+            it = QTableWidgetItem(c)
+            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.qrz_keys.setItem(r, 0, it)
+            stored = bool(self.prefs.qrz_api_key(c))
+            key = QTableWidgetItem(MASKED if stored else "")
+            key.setData(STATE_ROLE, "stored" if stored else "")
+            if c in pending:
+                text, state, value = pending[c]
+                key.setText(text)
+                key.setData(STATE_ROLE, state)
+                key.setData(KEY_ROLE, value)
+            self.qrz_keys.setItem(r, 1, key)
+            btn = QPushButton(tr("Forget"))
+            btn.setToolTip(tr("Remove this key from the system keychain when you save"))
+            btn.clicked.connect(lambda _=False, item=key: self._forget_key(item))
+            self.qrz_keys.setCellWidget(r, 2, btn)
 
     def _keychain_warning(self) -> QLabel:
         lab = QLabel(tr("No secure system keychain is available, so passwords and keys cannot be saved.") +

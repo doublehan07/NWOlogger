@@ -385,26 +385,20 @@ def test_unknown_call_checks_one_edit_candidates_online(win, qtbot, monkeypatch)
     assert asked.count("BA1PQ") == 1
 
 
-def test_saved_password_check(win, qtbot, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
 
-    info, boxes = [], []
-    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda _p, _t, text, *a, **k: info.append(text)))
-    monkeypatch.setattr(QMessageBox, "exec", lambda self: boxes.append(self.text()) or 0)
-    win.check_secrets("menu")
-    assert info and "changed since can't be recognised" in info[-1] and not boxes
-    # A saved HRDLog code in an old history message and in a backup: patterns can't see it, the value can.
-    win.prefs.set("hrdlog_call", "BI1ZZZ")
-    win.prefs.set_secret("hrdlog_code", "FAKE_HRD_CODE")
-    win.db.conn.execute("INSERT INTO sync_log(service, direction, started_at, errors, message) VALUES "
-                        "('HRDLog', 'upload', '2026-10-10T00:00:00Z', 1, 'Wrong code FAKE_HRD_CODE')")
-    old = win.db.backup("manual")
-    win.check_secrets("prefs")
-    assert boxes and old.name in boxes[0] and ": 1." in boxes[0]
-    assert win.db.sync_history()[0]["message"] == "Wrong code •••"
-    # After that, a start does not read the keychain again.
-    monkeypatch.setattr(win.prefs, "saved_secrets", lambda *_a: pytest.fail("keychain read at start"))
-    win.check_secrets("start")
+
+def test_preferences_ok_opens_no_backup(win, monkeypatch):
+    import sqlite3
+
+    from nwologger.ui import prefs_dialog
+
+    win.db.backup("manual")
+    monkeypatch.setattr(prefs_dialog.PrefsDialog, "exec", lambda self: 1)
+    opened = []
+    real = sqlite3.connect
+    monkeypatch.setattr(sqlite3, "connect", lambda *a, **k: opened.append(a) or real(*a, **k))
+    win.open_prefs()
+    assert not opened
 
 
 def test_sync_everything_never_uploads(win, monkeypatch):

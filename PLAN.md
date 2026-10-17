@@ -157,8 +157,11 @@ Notes on the model:
 
 ### 4.3 Safety
 
-- Automatic backup on open (rotating, keeps N copies), plus a backup before every import and bulk edit.
-  - The one-time sync history cleanup (§8.2) runs before the open backup, so a new backup never holds an old password.
+- Backups go to `backups/` next to the log as `<log>-<UTC time>-<reason>.sqlite`, copied with SQLite's online backup while the log stays open:
+  - `open` each time an existing log is opened, skipped when the log is unchanged since the newest backup (the copies are compared page by page, past the 100-byte file header);
+  - `import` and `bulk-edit` right before those changes, the newest 5 kept apart so launches can't push them out;
+  - `manual` from File → Back up now and Preferences → Database.
+  - Of `open` and `manual`, the newest N are kept (Preferences, default 20). Restoring is opening a backup with File → Open log file.
 - All writes happen in transactions.
 - Schema migrations are versioned.
 - Undo is available for bulk edit, delete and import.
@@ -481,12 +484,8 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - **Redaction** (`net.redact`) runs on every message before a dialog, the status bar, `sync_log` or a log record. URL queries are removed and `password=…`-style pairs are masked. The text is decoded first (HTML entities twice, then %-escapes), so the secrets of that request become `•••` however a server echoed them (`&#39;`, `&apos;`, `%27`, double encoding); the decoded text is what is shown. Secrets under 4 characters are masked as whole tokens only. `sync_log_add` applies it again. Text redaction cannot catch every transformation (a truncated or base64 echo); the real protection is that errors no longer contain the request.
   - **Diagnostic log** (`nwologger/applog.py`): a rotating file (1 MB × 6) in `~/Library/Logs/NWOlogger/` (macOS), `%LOCALAPPDATA%\NWOlogger\Logs` (Windows) or `~/.local/state/nwologger/` (Linux); `NWOLOGGER_LOG_DIR` overrides it, `--debug` adds detail. It records the start (versions, OS), each sync run with its ref, each request as service, method, host + path, status, size and time (never the query), TQSL's flags, location, exit code and last lines, Qt warnings, uncaught exceptions with tracebacks (GUI and worker threads), and, from a watchdog, every thread's stack once when the window has not responded for 15 s. Every line goes through `net.redact` with every secret and account user name read this session (`applog.remember_secrets`) and the secrets in flight, after formatting, so tracebacks and echoed error pages are masked too. The home folder shows as `~`. Help → Show log folder opens it; About → System names the file.
   - **Logs:** `httpx` and `httpcore` are set to WARNING, so an app-wide DEBUG or INFO setup prints no request URLs or header traces. Every one of their loggers, children included (a parent's filter does not see its children's records), masks URL queries, the `Set-Cookie` / `Cookie` / `Authorization` / `Location` headers of httpcore's trace, and the secrets of the requests in flight (`net.request(secrets=…)` registers them while it runs).
-  - **v0.1.0 leftovers:** an HTTP error during a LoTW / eQSL download stored the full URL, password included, in `sync_log`, and imported records could keep credential tags in `qso.extra` and in undo before-images.
-    - On open (once, before the open backup), URL queries, `password=` pairs and credential-named tags are removed from `sync_log`, `qso.extra` and `undo_log`.
-    - With your saved secrets (`db.scrub_secrets`), any text holding one is cleaned too, e.g. `Wrong code <your HRDLog code>`. This reads the keychain, so it runs once after an update, after each Preferences save, and from File → Check backups for saved passwords…, not at every start (macOS may ask for Keychain access after the app changes). At start, the open backup is then retaken clean.
-    - Rewrites use `secure_delete`, `VACUUM` and a WAL checkpoint whose result is checked: while another program has the file open the checkpoint cannot finish, so `purge_pending` is kept and the purge is retried on close and at the next open, with a short busy timeout so the app never hangs. A failing purge never stops the log opening.
-    - Backups are only scanned (patterns and saved secrets) and listed for you to delete, with a reminder to change the passwords. A password you have changed since can't be recognised; the message says so.
-  - **Uploads** send only the standard ADIF 3.1.5 fields (`fields.ADIF_STANDARD`) plus the service's own tags (`APP_EQSL_QTH_NICKNAME` for eQSL), and no field holding a saved secret. Other programs' `APP_*` and `USERDEF` fields stay in the log and in your ADIF exports.
+  - **The log file never holds a credential.** This is a rule of the write paths, not something checked afterwards: error text is redacted before `sync_log` stores it, and credential-named ADIF tags are dropped on import (below). v0.1.0 (never released) stored an LoTW / eQSL URL with its password in `sync_log` after an HTTP error; 0.1.1–0.1.3 cleaned such files on open and re-scanned the log and every backup with the saved secrets after each Preferences save. 0.1.4 removed that cleanup: it found nothing in real logs, and scanning every backup froze the window for 20–30 s after each Preferences → OK.
+  - **Uploads** send only the standard ADIF 3.1.5 fields (`fields.ADIF_STANDARD`) plus the service's own tags (`APP_EQSL_QTH_NICKNAME` for eQSL). Other programs' `APP_*` and `USERDEF` fields stay in the log and in your ADIF exports.
   - **ADIF records** never carry credentials: tags that look like one (`PASSWORD`, `PSWD`, `PASSCODE`, `API_KEY`, `SECRET`, `TOKEN`, `SESSION`, `AUTH`, `EQSL_USER`, `APP_…_CODE`, `APP_…_KEY`) are dropped on import (the preview lists them) and never exported.
   - **Password in the URL:** QRZ.com XML takes the login and lookups by POST, so the password and session key travel in the encrypted body. LoTW (`lotwreport.adi` answers POST with HTTP 405) and eQSL (`DownloadInBox.cfm` rejects a POST login) need the GET query their APIs document: HTTPS encrypts it, but it reaches the services' own logs. Checked with real accounts on 2026-10-16. HamQTH is not checked yet (no account).
 
@@ -700,7 +699,8 @@ Every milestone ships tests for its core logic. UI milestones are checked by run
 | License | MIT | `LICENSE` |
 | Secrets in errors | Errors carry the HTTP status, never the URL; every message is redacted before it is shown, stored or logged; provider reasons are kept | §8.2 |
 | Account renamed | Its old keychain entry is deleted (moved when only the case changed) | §11 |
-| v0.1.0 leaked passwords | Cleaned once in the open log; backups are listed for you to delete; change the LoTW / eQSL passwords | §8.2 |
+| v0.1.0 leaked passwords | 0.1.1–0.1.3 cleaned them; 0.1.4 removed the cleanup, since nothing writes a credential into the log | §8.2 |
+| Profile callsign changed | Once no profile uses the old call, its QRZ.com Logbook key moves to the new call or is removed, as you choose | §11 |
 | Similar calls | Log, then QRZ.com / HamQTH cache, then MASTER.SCP; a "not found" call checks up to three one-character-away MASTER.SCP calls online | §6, §9 |
 | Clear | Empties the whole form and ignores *Keep*; Power shows the profile default and logs it when left empty | §6 |
 | Time On *Now* | Back to the default: both times now, Time Off follows the clock | §6 |

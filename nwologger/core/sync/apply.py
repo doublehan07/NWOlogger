@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .. import exporter, importer, net, propagation, timeutil, uploads
+from .. import exporter, importer, propagation, timeutil, uploads
 from .. import qso as qsomod
 from ..fields import ADIF_STANDARD
 from ..uploads import SENT_COL, SENT_DATE, SERVICES  # noqa: F401 - re-exported for callers
@@ -34,16 +34,14 @@ def pending(db, service: str, ids: list[int] | None = None) -> list[dict]:
     return out
 
 
-def upload_record(q: dict, service: str, catalog, profile: dict | None = None, secrets=()) -> dict[str, str]:
+def upload_record(q: dict, service: str, catalog, profile: dict | None = None) -> dict[str, str]:
     """The ADIF record sent to a service: standard ADIF fields only (another program's APP_* or USERDEF fields
-    stay in the log), and no field holding one of your saved ``secrets``."""
+    stay in the log)."""
     rec = exporter.records([q], include_private=False, service=service, sat_catalog=catalog,
                            include_service_status=False)[0]
     for tag in ("QSL_SENT", "QSL_RCVD", "QSLSDATE", "QSLRDATE", "QSL_SENT_VIA", "QSL_RCVD_VIA", "DUPE"):
         rec.pop(tag, None)
     rec = {k: v for k, v in rec.items() if k in ADIF_STANDARD}
-    if secrets:
-        rec = {k: v for k, v in rec.items() if not net.contains_secret(v, secrets)}
     if service == "lotw" and "PROP_MODE" in rec and not propagation.lotw_value(rec["PROP_MODE"]):
         rec.pop("PROP_MODE")
     if service == "eqsl" and profile and profile.get("eqsl_qth_nickname"):

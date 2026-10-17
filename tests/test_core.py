@@ -189,6 +189,35 @@ def test_partial_update_recomputes_band_and_mode(db):
     assert (row["band"], row["mode"], row["submode"], row["mode_group"]) == ("40m", "CW", None, "CW")
 
 
+def test_backups_skip_an_unchanged_log_and_keep_the_copies_before_imports(tmp_path):
+    path = tmp_path / "log.sqlite"
+
+    def launch(change: str | None = None) -> dbm.LogDB:
+        d = dbm.LogDB(path, backup_keep=3)
+        if change:
+            d.insert(make(change))
+        d.close()
+        return d
+
+    launch("BA1AA")  # a new file: nothing to copy yet
+    d = launch()
+    assert [d._label(p) for p in d.backups()] == ["open"]
+    first = d.backups()[0]
+    d = launch()  # nothing changed since that copy: no second one
+    assert d.backups() == [first]
+    d = dbm.LogDB(path, backup_keep=3)
+    for _ in range(7):
+        d.backup("import")
+    d.backup("bulk-edit")
+    d.insert(make("BA1BB"))
+    d.close()
+    for i in range(6):  # launches with changes push out old launch copies, never the import ones
+        d = launch(f"BA1C{chr(65 + i)}")
+    labels = [d._label(p) for p in d.backups()]
+    assert labels.count("open") == 3 and labels.count("import") + labels.count("bulk-edit") == dbm.SAFETY_KEEP
+    assert labels[-dbm.SAFETY_KEEP - 3:-3][-1] == "bulk-edit"
+
+
 # ------------------------------------------------------------------ callsigns / DXCC / provinces
 
 def test_callsigns_and_dxcc():

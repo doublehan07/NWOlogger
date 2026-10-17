@@ -88,20 +88,6 @@ def redact(text: str | None, secrets: Iterable[str | None] = ()) -> str:
     return _PAIRS.sub(lambda m: f"{m.group(1)}={MASK}", out)
 
 
-def leaks(text: str | None, secrets: Iterable[str | None] = ()) -> bool:
-    """True when :func:`redact` would hide something in ``text`` (not merely decode it)."""
-    return bool(text) and redact(text, secrets) != decode(str(text))
-
-
-def contains_secret(text: str | None, secrets: Iterable[str | None]) -> bool:
-    """True when ``text`` holds one of ``secrets`` in any of the forms :func:`redact` recognises."""
-    vals = sorted({s for s in secrets if s}, key=len, reverse=True)
-    if not text or not vals:
-        return False
-    t = str(text)
-    return _mask(t, vals) != t or _mask(decode(t), vals) != decode(t)
-
-
 # Secrets of the requests running right now, so log records written during a request can be masked too.
 _active: Counter[str] = Counter()
 _active_lock = threading.Lock()

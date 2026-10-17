@@ -94,11 +94,6 @@ class Prefs:
         service, user_key = SECRET_KEYS[key]
         return secrets.set(service, self.get(user_key) or "", value)
 
-    def saved_secrets(self, station_calls=()) -> list[str]:
-        """Every password, code and key in the keychain for the current accounts and these station calls."""
-        vals = [self.secret(k) for k in SECRET_KEYS] + [self.qrz_api_key(c) for c in station_calls if c]
-        return [v for v in vals if v]
-
     def has_secret(self, key: str) -> bool:
         return bool(self.secret(key))
 
