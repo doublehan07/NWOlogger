@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QLocale, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -19,7 +21,7 @@ from PySide6.QtWidgets import (
 from ... import i18n
 from ...core import bands, grids, maptiles
 from ...core.grids import SOURCE_NAMES
-from .gridmap import GridMapView
+from .gridmap import MAX_ZOOM, MIN_ZOOM, GridMapView
 
 tr = i18n.tr
 
@@ -31,6 +33,23 @@ MODE_GROUPS = [("", "Mixed"), ("PHONE", "Phone"), ("CW", "CW"), ("DATA", "Data")
 def system_region() -> str:
     """Two-letter code of the system's region (``CN``), for choosing the map provider."""
     return QLocale.territoryToCode(QLocale.system().territory()) if hasattr(QLocale, "territoryToCode") else ""
+
+
+def _saved_view(value, *, planar: bool = False) -> tuple[float, float, float] | None:
+    """Read a globe view, converting the previous map's zoom-zero pixel centre when needed."""
+    try:
+        zoom, x, y = (float(part) for part in str(value).split(","))
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(part) for part in (zoom, x, y)) or not MIN_ZOOM <= zoom <= MAX_ZOOM:
+        return None
+    if planar:
+        if not (0 <= x <= 256 and 0 <= y <= 256):
+            return None
+        x, y = grids.from_world(x, y, 0)
+    elif not (-180 <= x <= 180 and -90 <= y <= 90):
+        return None
+    return zoom, x, y
 
 
 class StatisticsTab(QWidget):
@@ -82,14 +101,22 @@ class StatisticsTab(QWidget):
             row2.addWidget(b)
         self.count = QLabel()
         self.count.setProperty("muted", True)
+        self.count.setWordWrap(True)
         row2.addSpacing(12)
         row2.addWidget(self.count, 1)
+        self.terminator_btn = QPushButton(tr("Day/night"))
+        self.terminator_btn.setCheckable(True)
+        self.terminator_btn.setObjectName("TerminatorBtn")
+        self.terminator_btn.setToolTip(tr(
+            "Show the day/night boundary and night shading for the current UTC time; updates automatically."))
+        row2.insertWidget(row2.count() - 1, self.terminator_btn)
         lay.addLayout(row2)
         self.map = GridMapView(self)
         self.map.square_clicked.connect(self.show_square)
         lay.addWidget(self.map, 1)
-        hint = QLabel(tr("Wheel or +/− to zoom, drag to move, double-click to zoom in, click a square to show its "
-                         "QSOs. Green: confirmed, with the first call that confirmed it; amber: worked only, with "
+        hint = QLabel(tr("Drag to rotate · Scroll to zoom") + ". " +
+                      tr("Double-click or +/− to zoom, arrow keys to rotate, click a square to show its QSOs. "
+                         "Green: confirmed, with the first call that confirmed it; amber: worked only, with "
                          "the first call worked (italics)."))
         hint.setObjectName("Hint")
         hint.setWordWrap(True)
@@ -101,6 +128,7 @@ class StatisticsTab(QWidget):
         self._timer.setInterval(800)
         self._timer.timeout.connect(self.refresh)
         self._load_settings()
+        self.terminator_btn.toggled.connect(self._terminator_changed)
         for w in (self.band, self.mode, self.region):
             w.currentIndexChanged.connect(self._changed)
         self.region.currentIndexChanged.connect(self._region_changed)
@@ -138,9 +166,13 @@ class StatisticsTab(QWidget):
             b.blockSignals(True)
             b.setChecked(key in chosen)
             b.blockSignals(False)
-        state = v("map/view")
-        if state:
-            self.map.set_view_state(str(state).split(","))
+        terminator = str(v("map/terminator", True)).strip().lower() not in ("false", "0", "off", "no")
+        self.terminator_btn.setChecked(terminator)
+        self.map.set_terminator_enabled(terminator)
+        saved = v("map/globe_view")
+        state = _saved_view(saved) if saved is not None else _saved_view(v("map/view"), planar=True)
+        if state is not None:
+            self.map.set_view_state(state)
         else:
             QTimer.singleShot(0, lambda: self.map.fit(grids.region_box(self.region.currentData(), self.home.text())))
         self.apply_provider()
@@ -154,7 +186,8 @@ class StatisticsTab(QWidget):
         s("map/home", self.home.text().strip().upper())
         s("map/region", self.region.currentData())
         s("map/sources", ",".join(self.sources()))
-        s("map/view", ",".join(f"{x:.6f}" for x in self.map.view_state()))
+        s("map/terminator", self.terminator_btn.isChecked())
+        s("map/globe_view", ",".join(f"{x:.6f}" for x in self.map.view_state()))
 
     def sources(self) -> list[str]:
         return [k for k, b in self.source_btns.items() if b.isChecked()]
@@ -177,6 +210,10 @@ class StatisticsTab(QWidget):
         self._dirty = True
         self.refresh()
         self.save_settings()
+
+    def _terminator_changed(self, enabled: bool) -> None:
+        self.map.set_terminator_enabled(enabled)
+        self.prefs.set_value("map/terminator", enabled)
 
     def _region_changed(self, *_a) -> None:
         name = self.region.currentData()

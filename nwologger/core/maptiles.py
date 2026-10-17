@@ -59,9 +59,11 @@ PROVIDERS = {p.key: p for p in (NASA, TIANDITU)}
 
 
 def choose(setting: str, *, language: str, region: str, has_key: bool) -> Provider | None:
-    """The provider for the Map setting: ``auto``, ``nasa``, ``tianditu`` or ``none``. ``auto`` uses Tianditu (the
-    official national service, which loads reliably there) when NWOlogger runs in Chinese or the system region is
-    China and a key is set, else NASA, which needs no key."""
+    """The provider for the Map setting: ``auto``, ``nasa``, ``tianditu`` or ``none``.
+
+    ``auto`` uses Tianditu when a key is set and either the UI language starts with ``zh`` or the system region is
+    ``CN``; otherwise it uses NASA, which needs no key.
+    """
     if setting == "none":
         return None
     if setting in PROVIDERS:
