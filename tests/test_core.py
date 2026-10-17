@@ -343,13 +343,19 @@ def test_similar_calls_wildcards_search_every_source():
     found = idx.find("ba*k")
     assert [m.call for m in found] == ["BA1PK", "BA8BLK", "BA1PK/P", "BA4K", "BA3ABK", "BA5QK", "VK/BA9ZK", "BA7XK"]
     assert [m.tier for m in found] == [similar.WORKED] * 3 + [similar.KNOWN] + [similar.LISTED] * 3 + [similar.SCP]
-    assert all(m.kind == similar.PATTERN for m in found)
+    # BA1PK/P and VK/BA9ZK match only through their base call (BA*K must end in K): ranked last in their source.
+    assert [m.call for m in found if m.kind == similar.PORTABLE] == ["BA1PK/P", "VK/BA9ZK"]
     assert [m.call for m in idx.find("*1PK")] == ["BA1PK", "BA1PK/P", "W1PK"]
     assert [m.call for m in idx.find("B?1*K")] == ["BA1PK", "BA1PK/P"]
     assert [m.call for m in idx.find("B*/P")] == ["BA1PK/P"]
     assert idx.find("*") == [] and idx.find("**") == []  # nothing to match on
     # Without a wildcard nothing changes: BA*PK only matched before as a one-character typo.
     assert [m.call for m in idx.find("BA1PK")][:2] == ["BA1PK", "BA1PK/P"]
+    # A match through a portable part ranks after the whole-call matches of its source.
+    lists = similar.CallIndex({}, {}, [])
+    lists.set_lists(CallLists({"4W/JI1AVY": "", "JI1AVY": "", "JI1AVY/P": "", "JI1AAB": ""}, []))
+    assert [m.call for m in lists.find("JI1*")] == ["JI1AAB", "JI1AVY", "JI1AVY/P", "4W/JI1AVY"]
+    assert lists.find("JI1*")[-1].kind == similar.PORTABLE
     many = similar.CallIndex({}, {}, [f"BA{i}K" for i in range(10)])
     calls, more = many.find_pattern("BA*K", cap=4)
     assert len(calls) == 4 and more

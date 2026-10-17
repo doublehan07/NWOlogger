@@ -814,8 +814,9 @@ class MainWindow(QMainWindow):
         dlg = PrefsDialog(self.db, self.prefs, self, page=page)
         if dlg.exec():
             with applog.timed("Preferences OK") as t:
-                theme.apply(self.app, self.prefs.get("theme"))
-                t.step("theme")
+                if self.prefs.get("theme") != theme.mode():  # the dialog's preview has usually applied it already
+                    theme.apply(self.app, self.prefs.get("theme"))
+                    t.step("theme")
                 self._lookup_clients = None
                 self.dx.reload_profiles()
                 self.dx.reload_lists()

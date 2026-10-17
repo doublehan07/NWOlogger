@@ -68,6 +68,11 @@ def tokens() -> Tokens:
     return _current
 
 
+def mode() -> str:
+    """The theme setting in use: 'system', 'light' or 'dark'."""
+    return _mode
+
+
 def mono_font(size: int | None = None, bold: bool = False) -> QFont:
     f = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
     for family in ("SF Mono", "Menlo", "Cascadia Mono", "Consolas"):

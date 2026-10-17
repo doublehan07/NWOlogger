@@ -423,6 +423,10 @@ def test_preferences_ok_opens_no_backup(win, monkeypatch):
     monkeypatch.setattr(sqlite3, "connect", lambda *a, **k: opened.append(a) or real(*a, **k))
     win.open_prefs()
     assert not opened
+    from nwologger.ui import theme
+
+    monkeypatch.setattr(theme, "apply", lambda *a, **k: pytest.fail("an unchanged theme was applied again"))
+    win.open_prefs()
 
 
 def _ink(icon) -> str:

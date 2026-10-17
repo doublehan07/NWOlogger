@@ -19,7 +19,7 @@ from . import callsign
 from .calllists import CallLists
 from .contest.scp import one_edit
 
-EXACT, PREFIX, CONTAINS, ONE_EDIT, PATTERN = range(5)
+EXACT, PREFIX, CONTAINS, ONE_EDIT, PATTERN, PORTABLE = range(6)  # PORTABLE: a pattern match via VK/…, …/P
 WORKED, KNOWN, LISTED, SCP = range(4)
 PATTERN_CAP = 500  # pattern matches kept per source; more are only counted as "more"
 
@@ -55,7 +55,7 @@ def match_kind(text: str, call: str) -> int | None:
 class Match:
     call: str
     tier: int  # WORKED, KNOWN, LISTED or SCP
-    kind: int  # EXACT … ONE_EDIT, or PATTERN
+    kind: int  # EXACT … ONE_EDIT, or PATTERN / PORTABLE
     source: str = ""  # QRZ.com / HamQTH for KNOWN
     lotw: str | None = None  # LISTED: date of the last LoTW upload ("" unknown); None: not a LoTW user
     ag: bool = False  # LISTED: an eQSL AG member
@@ -173,6 +173,10 @@ class CallIndex:
             base = self._base.get(call)
             return bool(portable and base and rx.match(base))
 
+        def kind(call: str) -> int:
+            """The whole call matches (JI1AVY/P for JI1*), or only its base call (4W/JI1AVY): ranked lower."""
+            return PATTERN if rx.match(call) else PORTABLE
+
         more = False
 
         def capped(calls: Iterable[str]) -> list[str]:
@@ -181,8 +185,8 @@ class CallIndex:
             more = more or len(got) > cap
             return got[:cap]
 
-        out = [Match(c, WORKED, PATTERN) for c in capped(c for c in self.worked if hit(c))]
-        out += [Match(c, KNOWN, PATTERN, self.known[c]) for c in
+        out = [Match(c, WORKED, kind(c)) for c in capped(c for c in self.worked if hit(c))]
+        out += [Match(c, KNOWN, kind(c), self.known[c]) for c in
                 capped(c for c in self.known if c not in self.worked and hit(c))]
         listed: set[str] = set()
         if self.lists is not None and len(self.lists):
@@ -190,9 +194,9 @@ class CallIndex:
             more = more or over
             for h in hits:
                 if h.call not in self.worked and h.call not in self.known:
-                    out.append(Match(h.call, LISTED, PATTERN, lotw=h.lotw, ag=h.ag))
+                    out.append(Match(h.call, LISTED, kind(h.call), lotw=h.lotw, ag=h.ag))
                     listed.add(h.call)
-        out += [Match(c, SCP, PATTERN) for c in capped(
+        out += [Match(c, SCP, kind(c)) for c in capped(
             c for c in self.scp if c not in self.worked and c not in self.known and c not in listed and hit(c) and
             (self.lists is None or c not in self.lists))]
         return self._sort(out), more
