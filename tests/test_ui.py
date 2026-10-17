@@ -947,3 +947,41 @@ def test_clear_sync_history_dialog_clears_only_the_chosen_service(win, monkeypat
     assert "QRZ.com (1)" in asked[0]
     assert [r["service"] for r in win.db.sync_history()] == ["LoTW"]
     assert win.history.rowCount() == 1
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_selected_confirmed_call_stays_green(qtbot, tmp_path, mode):
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QApplication
+
+    from nwologger.ui import theme
+    from nwologger.ui.log.log_model import LogModel
+    from nwologger.ui.log.log_view import LogView
+
+    app = QApplication.instance()
+    t = theme.apply(app, mode)
+    try:
+        db = dbm.LogDB(tmp_path / "log.sqlite", backup_on_open=False)
+        db.insert({"call": "BA1WWW", "time_on": "2026-10-10T15:00:00Z", "band": "20m", "mode": "SSB",
+                   "lotw_qsl_rcvd": "Y"})
+        model = LogModel(db, ["call", "time_on"])
+        model.refresh()
+        view = LogView(model)
+        qtbot.addWidget(view)
+        view.resize(400, 120)
+        view.show()
+        view.selectRow(0)
+        assert view.selectionModel().isRowSelected(0)
+        image = view.viewport().grab().toImage()
+        rect = view.visualRect(model.index(0, 0))
+        ok = QColor(t.ok)
+
+        def near(c: QColor) -> bool:
+            return abs(c.red() - ok.red()) + abs(c.green() - ok.green()) + abs(c.blue() - ok.blue()) < 60
+
+        pixels = [image.pixelColor(x, y) for x in range(rect.left(), rect.right()) for y in range(rect.top(), rect.bottom())]
+        assert any(near(c) for c in pixels)
+        model.detach()
+        db.close()
+    finally:
+        theme.apply(app, "light")

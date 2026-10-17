@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt, Signal
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QMenu, QTableView
+from PySide6.QtGui import QAction, QBrush, QPalette
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QMenu, QStyledItemDelegate, QTableView
 
 from ... import i18n
 from ...core.fields import BY_COL, DEFAULT_LOG_COLUMNS, GROUP_ORDER, user_fields
 from .log_model import LogModel
 
 tr = i18n.tr
+
+
+class KeepColourDelegate(QStyledItemDelegate):
+    """Selected cells keep their own text colour: a call LoTW confirmed stays green, a dupe red, a QSO not yet
+    uploaded everywhere grey (the selection only changes the background)."""
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt API
+        super().initStyleOption(option, index)
+        brush = index.data(Qt.ItemDataRole.ForegroundRole)
+        if brush is not None:
+            option.palette.setBrush(QPalette.ColorRole.HighlightedText, QBrush(brush))
 
 
 class LogView(QTableView):
@@ -22,6 +33,7 @@ class LogView(QTableView):
         super().__init__(parent)
         self.setModel(model)
         self.m = model
+        self.setItemDelegate(KeepColourDelegate(self))
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setAlternatingRowColors(True)
