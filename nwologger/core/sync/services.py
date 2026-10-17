@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urljoin
 import httpx
 
 from ... import __version__
-from .. import adif, net
+from .. import adif, net, timeutil
 
 TIMEOUT = 60.0
 log = logging.getLogger("nwologger.sync")
@@ -70,6 +70,36 @@ def lotw_download(user: str, password: str, *, qsl: bool = True, since: str | No
         msg = error_line(page) or " ".join(page.split())[:200]
         raise ServiceError("LoTW: query failed (check user and password). " + msg)
     return adif.parse(text)
+
+
+def lotw_sync_download(user: str, password: str, *, since_qsl: str | None = None,
+                       since_rx: str | None = None) -> tuple[dict, list[dict], dict, list[dict]]:
+    """Download confirmations and accepted uploads, sharing the full report on the first sync.
+
+    LoTW's qso_qsl=no report contains all accepted QSOs, including QSL_RCVD, QSLRDATE and
+    APP_LOTW_RXQSL for confirmed contacts. Its newest confirmation timestamp is therefore a safe,
+    inclusive resume point without downloading the confirmed subset again. Once either cursor exists,
+    keep the separate incremental queries: an old upload can gain a new confirmation at any time.
+    See https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/.
+    """
+    if since_qsl or since_rx:
+        h1, r1 = lotw_download(user, password, qsl=True, since=since_qsl)
+        h2, r2 = lotw_download(user, password, qsl=False, since=since_rx)
+        return h1, r1, h2, r2
+
+    h2, r2 = lotw_download(user, password, qsl=False)
+    r1 = [r for r in r2 if r.get("QSL_RCVD", "").upper() == "Y"]
+    if not r1:
+        # No confirmation cursor yet: the next sync can safely ask for all confirmations.
+        return {}, r1, h2, r2
+    received = [timeutil.parse_iso(r.get("APP_LOTW_RXQSL")) for r in r1]
+    if any(t is None for t in received):
+        # Do not guess from the local clock or advance past a confirmation with no timestamp.
+        h1, r1 = lotw_download(user, password, qsl=True)
+    else:
+        last = timeutil.parse_iso(h2.get("APP_LOTW_LASTQSL")) or max(t for t in received if t is not None)
+        h1 = {"APP_LOTW_LASTQSL": last.strftime("%Y-%m-%d %H:%M:%S")}
+    return h1, r1, h2, r2
 
 
 # ------------------------------------------------------------------ eQSL

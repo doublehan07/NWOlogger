@@ -421,7 +421,8 @@ class SyncController(QObject):
 
     def _start(self, service: str, direction: str, what: str) -> str:
         ref = applog.new_ref()
-        self.db.sync_set(service, f"last_{direction}", timeutil.now_iso())
+        if direction != "download":
+            self.db.sync_set(service, f"last_{direction}", timeutil.now_iso())
         self.busy.add(service + ("down" if direction == "download" else "up"))
         log.info("%s %s started (ref %s): %s", apply.SERVICES[service], direction, ref, what)
         return ref
@@ -443,6 +444,19 @@ class SyncController(QObject):
         fix = "Station profiles" if "nickname" in low or "station location" in low else \
             "Services" if any(w in low for w in ("password", "user", "http 401", "http 403", "key")) else None
         self.report(service, "failed", msg, fix=fix, ref=ref, quiet=quiet)
+
+    def _apply_download(self, service: str, started: str, dlg, save: Callable, *, ref: str, secrets=()):
+        """Commit downloaded states and resume positions before starting the successful-download guard."""
+        try:
+            with self.db.batch(f"{apply.SERVICES[service]} download"):
+                result = save()
+                self.db.sync_set(service, "last_download", started)
+        except Exception as e:  # noqa: BLE001 - a failed local apply must also be retryable
+            self._fail(service, "download", started, dlg, str(e), secrets, ref=ref)
+            return None
+        dlg.close()
+        self._end(service, "download")
+        return result
 
     def _profile_for(self, q: dict) -> dict | None:
         if q.get("station_profile_id"):
@@ -466,8 +480,24 @@ class SyncController(QObject):
 
     def _add_unmatched(self, service: str, chosen: list[dict]) -> None:
         if chosen:
-            r = importer.run(self.db, chosen, label=tr("Add from") + f" {apply.SERVICES[service]}")
-            self.message.emit(tr("Added") + f" {r.added} " + tr("QSOs"))
+            # Another service's open import dialog may have added the same QSO meanwhile.
+            # Resolve those matches before inserting anything: two distinct downloaded
+            # QSOs within the matcher's time tolerance must still be added separately.
+            existing, missing = [], []
+            for q in chosen:
+                (missing if importer.find_match(self.db, q) is None else existing).append(q)
+            label = tr("Add from") + f" {apply.SERVICES[service]}"
+            added = updated = 0
+            if existing:
+                r = importer.run(self.db, existing, merge=True, label=label)
+                updated = r.merged
+            if missing:
+                r = importer.run(self.db, missing, label=label)
+                added = r.added
+            text = tr("Added") + f" {added} " + tr("QSOs")
+            if updated:
+                text += f" · {updated} " + tr("QSOs updated")
+            self.message.emit(text)
 
     # ------------------------------------------------------------------ upload
     def upload(self, service: str, ids: list[int] | None = None, *, quiet: bool = False) -> None:
@@ -764,25 +794,31 @@ class SyncController(QObject):
         t0 = time.monotonic()
 
         def work():
-            h1, r1 = services.lotw_download(user, pw, qsl=True, since=since_qsl)
-            h2, r2 = services.lotw_download(user, pw, qsl=False, since=since_rx)
-            return h1, r1, h2, r2
+            return services.lotw_sync_download(user, pw, since_qsl=since_qsl, since_rx=since_rx)
 
         def done(res):
-            dlg.close()
-            self._end("lotw", "download")
             h1, r1, h2, r2 = res
             t1 = time.monotonic()
-            if not since_qsl and not since_rx:
-                self.db.sync_set("lotw", "full_seconds", str(round(t1 - t0)))
-            cat = self.catalog()
-            up = apply.apply_lotw_uploads(self.db, r2, cat)
-            a = apply.apply_lotw_qsls(self.db, r1, cat)
+
+            def save():
+                if not since_qsl and not since_rx:
+                    self.db.sync_set("lotw", "full_seconds", str(round(t1 - t0)))
+                cat = self.catalog()
+                # Upload states only update existing contacts. On an empty log the
+                # confirmation import candidates already carry their uploaded flag.
+                up = apply.apply_lotw_uploads(self.db, r2, cat) if self.db.count() else apply.ApplyResult()
+                a = apply.apply_lotw_qsls(self.db, r1, cat)
+                if h1.get("APP_LOTW_LASTQSL"):
+                    self.db.sync_set("lotw", "last_qsl", h1["APP_LOTW_LASTQSL"])
+                if h2.get("APP_LOTW_LASTQSORX"):
+                    self.db.sync_set("lotw", "last_qsorx", h2["APP_LOTW_LASTQSORX"])
+                return up, a
+
+            saved = self._apply_download("lotw", started, dlg, save, ref=ref, secrets=[pw])
+            if saved is None:
+                return
+            up, a = saved
             timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
-            if h1.get("APP_LOTW_LASTQSL"):
-                self.db.sync_set("lotw", "last_qsl", h1["APP_LOTW_LASTQSL"])
-            if h2.get("APP_LOTW_LASTQSORX"):
-                self.db.sync_set("lotw", "last_qsorx", h2["APP_LOTW_LASTQSORX"])
             self._log("lotw", "download", started, received=a.total, matched=a.matched,
                       message=apply.summary(_as_is, a, new_one="new confirmation", new_many="new confirmations",
                                             none="No new confirmations", uploaded=up))
@@ -822,16 +858,21 @@ class SyncController(QObject):
             return out
 
         def done(recs):
-            dlg.close()
-            self._end("eqsl", "download")
             t1 = time.monotonic()
-            if not since:
-                self.db.sync_set("eqsl", "full_seconds", str(round(t1 - t0)))
-            a = apply.apply_eqsl(self.db, recs, self.catalog())
+
+            def save():
+                if not since:
+                    self.db.sync_set("eqsl", "full_seconds", str(round(t1 - t0)))
+                a = apply.apply_eqsl(self.db, recs, self.catalog())
+                # RcvdSince is a date: overlap a day to include cards arriving later today.
+                self.db.sync_set("eqsl", "rcvd_since",
+                                 (timeutil.now_utc() - timedelta(days=1)).strftime("%Y%m%d"))
+                return a
+
+            a = self._apply_download("eqsl", started, dlg, save, ref=ref, secrets=[pw])
+            if a is None:
+                return
             timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
-            # RcvdSince is a date: start the next download a day early, so cards that arrive later today aren't
-            # missed (cards already applied just match again).
-            self.db.sync_set("eqsl", "rcvd_since", (timeutil.now_utc() - timedelta(days=1)).strftime("%Y%m%d"))
             self._log("eqsl", "download", started, received=a.total, matched=a.matched,
                       message=apply.summary(_as_is, a, new_one="new card", new_many="new cards", none="No new cards"))
             self.report("eqsl", "ok", lambda t: apply.summary(t, a, new_one="new card", new_many="new cards",
@@ -864,10 +905,11 @@ class SyncController(QObject):
             return out
 
         def done(recs):
-            dlg.close()
-            self._end("qrz", "download")
             t1 = time.monotonic()
-            a = apply.apply_qrz(self.db, recs, self.catalog())
+            a = self._apply_download("qrz", started, dlg, lambda: apply.apply_qrz(self.db, recs, self.catalog()),
+                                     ref=ref, secrets=list(keys.values()))
+            if a is None:
+                return
             timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
             self._log("qrz", "download", started, received=a.total, matched=a.matched,
                       message=apply.summary(_as_is, a, new_one="new confirmation", new_many="new confirmations",

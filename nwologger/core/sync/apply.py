@@ -109,9 +109,15 @@ def _apply(db, recs: list[tuple[dict, dict]], service: str, catalog, label: str,
     ``confirmed`` (not upload states or filled-in details)."""
     res = ApplyResult(total=len(recs))
     with db.batch(label):
+        # Applying a download never inserts contacts. An empty log cannot match
+        # any record, so avoid thousands of identical empty database lookups.
+        has_qsos = db.conn.execute("SELECT 1 FROM qso LIMIT 1").fetchone() is not None
         for rec, q in recs:
-            mid = importer.find_match(db, q)
+            mid = importer.find_match(db, q) if has_qsos else None
             if mid is None:
+                # The import dialog needs the same service status as a matched QSO. In particular,
+                # LoTW/eQSL's generic QSL fields were stripped to keep them out of paper QSL status.
+                q.update(changes_fn(rec, q, {}))
                 res.unmatched.append(q)
                 continue
             res.matched += 1
