@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from PySide6.QtCore import Qt, QUrl, Signal
@@ -36,10 +37,29 @@ from ..core import devices, dxcc, sats
 from ..core import secrets as keychain
 from ..core.sync import tqsl
 from . import theme
-from .prefs import SECRET_KEYS
+from .prefs import DEFAULTS, SECRET_KEYS
 from .widgets import MODE_FIRST, all_modes, mode_list, sat_list
 
 tr = i18n.tr
+log = logging.getLogger("nwologger.prefs")
+
+
+def describe_changes(before: dict, after: dict, secrets: list[str]) -> str:
+    """What a Preferences save changed, for the log file: theme, language, numbers and switches with their values;
+    lists (rigs, setups, modes…) as counts; account names and paths by name only; secrets as "changed"."""
+    out = []
+    for k, default in DEFAULTS.items():
+        a, b = before.get(k), after.get(k)
+        if a == b:
+            continue
+        if k in ("theme", "language") or isinstance(default, (bool, int)):
+            out.append(f"{k} {a}→{b}")
+        elif isinstance(default, list):
+            out.append(f"{k} {len(a or [])}→{len(b or [])}")
+        else:
+            out.append(k)
+    out += [f"{k} changed" for k in secrets]
+    return "; ".join(out) or "nothing changed"
 
 PROFILE_FIELDS = [
     ("name", "Profile name"), ("station_callsign", "Station callsign"), ("operator", "Operator (personal station)"),
@@ -843,6 +863,8 @@ class PrefsDialog(QDialog):
 
     def _save(self) -> None:
         p = self.prefs
+        before = {k: p.get(k) for k in DEFAULTS}
+        touched: list[str] = []  # secrets written or forgotten (never their values)
         p.set("language", self.lang.currentData())
         p.set("theme", self.theme.currentData())
         p.set("block_seconds", self.block.value())
@@ -867,15 +889,18 @@ class PrefsDialog(QDialog):
             what, value = field.action()
             if what == "forget" and not p.get(user_key):
                 continue  # the account name was cleared: its entry went with the rename above
-            if what != "keep" and not p.set_secret(key, value):
-                failed.append(key)
+            if what != "keep":
+                touched.append(key)
+                if not p.set_secret(key, value):
+                    failed.append(key)
         for r in range(self.qrz_keys.rowCount()):
             call = self.qrz_keys.item(r, 0).text()
             item = self.qrz_keys.item(r, 1)
             state = item.data(STATE_ROLE) if item else ""
-            if state in ("new", "forget") and not p.set_qrz_api_key(call, item.data(KEY_ROLE) if state == "new"
-                                                                    else None):
-                failed.append(f"QRZ key {call}")
+            if state in ("new", "forget"):
+                touched.append("qrz_logbook_key")
+                if not p.set_qrz_api_key(call, item.data(KEY_ROLE) if state == "new" else None):
+                    failed.append(f"QRZ key {call}")
         p.set("upload_on_log", {"qrz": self.up_qrz.isChecked(), "eqsl": self.up_eqsl.isChecked(),
                                 "hrdlog": self.up_hrd.isChecked()})
         p.set("user_sats", self.user_sats)
@@ -894,6 +919,7 @@ class PrefsDialog(QDialog):
                 if v and v != base.to_service(svc, name).upper():
                     over.setdefault(svc, {})[name] = v
         p.set("sat_names", over)
+        log.info("Preferences saved: %s", describe_changes(before, {k: p.get(k) for k in DEFAULTS}, touched))
         if failed:
             QMessageBox.warning(self, tr("Keychain"), tr("Could not store these secrets in the system keychain:")
                                 + "\n" + "\n".join(failed))

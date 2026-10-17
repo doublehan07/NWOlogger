@@ -7,7 +7,7 @@ from typing import Any
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 
-from ... import i18n
+from ... import applog, i18n
 from ...core import search, uploads
 from ...core.fields import BY_COL
 from .. import theme
@@ -60,6 +60,7 @@ class LogModel(QAbstractTableModel):
         parts = [x for x in (w, ew) if x]
         return " AND ".join(f"({x})" for x in parts), [*p, *ep]
 
+    @applog.timed("Log table refresh")
     def refresh(self) -> None:
         w, p = self.where()
         self.beginResetModel()
@@ -177,4 +178,5 @@ class LogModel(QAbstractTableModel):
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
         if 0 <= column < len(self.columns):
             self.order = [(self.columns[column], order == Qt.SortOrder.DescendingOrder)]
+            applog.log.debug("Log sorted by %s %s", self.columns[column], "↓" if self.order[0][1] else "↑")
             self.refresh()

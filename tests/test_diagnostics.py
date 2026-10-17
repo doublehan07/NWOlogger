@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -125,6 +126,67 @@ def test_watchdog_writes_thread_stacks_when_the_window_hangs(logfile, qtbot, mon
         assert "Timers ran 30 s late" in _text(logfile)
     finally:
         dog.stop()
+
+
+def test_a_shorter_freeze_is_logged_with_the_gui_threads_stack(logfile, monkeypatch):
+    dog = applog.Watchdog(after=30.0, blocked=2.0)
+    try:
+        dog.beat = time.monotonic() - 3.0  # 2.5 s past the next heartbeat
+        assert not dog.check()  # too short for the all-thread dump, but the GUI thread's place is noted
+        dog._beat()
+        text = _text(logfile)
+        assert "The window was blocked for 2." in text and "test_diagnostics.py" in text
+        assert str(Path.home()) + os.sep not in text  # the home folder shows as ~
+        # Idle in the event loop (App Nap): nothing to report.
+        monkeypatch.setattr(applog.Watchdog, "_main_thread_idle", staticmethod(lambda: True))
+        dog.beat = time.monotonic() - 3.0
+        dog.check()
+        dog._beat()
+        assert _text(logfile).count("was blocked") == 1
+    finally:
+        dog.stop()
+
+
+def test_timed_steps_are_logged_when_slow(logfile):
+    with applog.timed("Quick"):
+        pass
+    with applog.timed("Something", at_least=0) as t:
+        t.step("first")
+        t.step("second")
+    text = _text(logfile)
+    assert "Quick took" not in text
+    assert "Something took 0.00 s (first 0.00, second 0.00)" in text
+
+
+def test_preferences_save_is_logged_by_setting_name(logfile, qtbot, tmp_path, keyring_store):
+    from nwologger.ui.prefs import Prefs
+    from nwologger.ui.prefs_dialog import PrefsDialog
+
+    prefs = Prefs(QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
+    db = dbm.LogDB(tmp_path / "log.sqlite", backup_on_open=False)
+    dlg = PrefsDialog(db, prefs)
+    qtbot.addWidget(dlg)
+    dlg.theme.setCurrentIndex(dlg.theme.findData("dark"))
+    dlg.lotw_user.setText("FAKEUSER9")
+    dlg.lotw_pass.edit.setText(SECRET)
+    dlg.devices_page._add_item(dlg.devices_page.rigs, "IC-705")
+    dlg._save()
+    line = next(ln for ln in _text(logfile).splitlines() if "Preferences saved" in ln)
+    assert "theme system→dark" in line and "rigs 0→1" in line and "lotw_user" in line
+    assert "lotw_password changed" in line and "FAKEUSER9" not in line and SECRET not in line
+    db.close()
+
+
+def test_sync_summaries_are_logged_in_english(logfile, ctrl):
+    from nwologger import i18n
+
+    i18n.load("zh_CN")
+    try:
+        ctrl.report("lotw", "ok", lambda t: "1 " + t("confirmations received"), log_detail="download 2.0 s")
+    finally:
+        i18n.load("en")
+    assert "1 confirmations received; download 2.0 s" in _text(logfile)
+    assert ctrl.results.texts()[-1] != "1 confirmations received"  # the window shows it translated
 
 
 def test_tidy_path_hides_the_home_folder():

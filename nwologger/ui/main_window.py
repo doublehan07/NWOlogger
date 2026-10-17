@@ -804,12 +804,16 @@ class MainWindow(QMainWindow):
     def open_prefs(self, page: str | None = None) -> None:
         dlg = PrefsDialog(self.db, self.prefs, self, page=page)
         if dlg.exec():
-            theme.apply(self.app, self.prefs.get("theme"))
-            self._lookup_clients = None
-            self.dx.reload_profiles()
-            self.dx.reload_lists()
-            self.dx.clear_form()
-            self.model.refresh()
+            with applog.timed("Preferences OK") as t:
+                theme.apply(self.app, self.prefs.get("theme"))
+                t.step("theme")
+                self._lookup_clients = None
+                self.dx.reload_profiles()
+                self.dx.reload_lists()
+                self.dx.clear_form()
+                t.step("entry form")
+                self.model.refresh()
+                t.step("log table")
         else:
             self.dx.reload_profiles()
 

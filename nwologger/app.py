@@ -63,8 +63,9 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
             log.exception("Could not open the log file %s", applog.tidy_path(path))
             QMessageBox.critical(None, APP_NAME, f"Could not open the log file:\n{path}\n\n{e}")
             return 1
-        win = MainWindow(logdb, prefs, app)
-        win.show()
+        with applog.timed("Window ready", at_least=0):
+            win = MainWindow(logdb, prefs, app)
+            win.show()
         applog.start_watchdog()
         code = app.exec()
         applog.stop_watchdog()

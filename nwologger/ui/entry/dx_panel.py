@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ... import i18n
+from ... import applog, i18n
 from ...core import (
     bands,
     calllists,
@@ -925,6 +925,7 @@ class DXPanel(QWidget):
         return dupes.check(self.db, q, block_s=self.prefs.get("block_seconds"),
                            warn_s=self.prefs.get("warn_hours") * 3600, exclude_id=self.edit_id)
 
+    @applog.timed("Entry form checks")
     def _refresh_checks(self) -> None:
         c = callsign.clean(self.call.text())
         q = qsomod.normalize(self.values())

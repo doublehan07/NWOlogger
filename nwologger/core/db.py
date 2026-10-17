@@ -174,7 +174,9 @@ class LogDB:
                 src.close()
         if label == "open" and before and _same_content(before[-1], dest):
             dest.unlink(missing_ok=True)
+            log.info("No launch backup: the log is unchanged since %s", before[-1].name)
             return before[-1]
+        log.info("Backup made: %s", dest.name)
         safety, other = [], []
         for p in self.backups():
             (safety if self._label(p) in SAFETY_LABELS else other).append(p)

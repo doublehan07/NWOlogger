@@ -20,7 +20,8 @@ import threading
 import time
 import traceback
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import APP_NAME, __version__
@@ -31,7 +32,10 @@ log = logging.getLogger("nwologger")
 FILE_NAME = "nwologger.log"
 MAX_BYTES = 1_000_000
 BACKUPS = 5
-HANG_SECONDS = 15.0
+HANG_SECONDS = 15.0  # every thread's stack is written once the window has not responded this long
+BLOCKED_SECONDS = 2.0  # a shorter freeze of at least this long is written with the GUI thread's stack
+SLOW_SECONDS = 0.5  # timed() steps taking longer are written
+BEAT = 0.5  # the GUI thread's heartbeat (s)
 _EVENT_LOOP = ".exec("  # the source line where Qt's event loop runs (app.exec(), dialog.exec())
 
 _known: set[str] = set()
@@ -76,6 +80,36 @@ def tidy_path(p: str | os.PathLike | None) -> str:
         return ""
     s, home = str(p), str(Path.home())
     return "~" + s[len(home):] if s == home or s.startswith(home + os.sep) else s
+
+
+class _Steps:
+    def __init__(self) -> None:
+        self.start = self.last = time.monotonic()
+        self.parts: list[tuple[str, float]] = []
+
+    def step(self, name: str) -> None:
+        """The time since the previous step (or the start) was spent on ``name``."""
+        now = time.monotonic()
+        self.parts.append((name, now - self.last))
+        self.last = now
+
+
+@contextmanager
+def timed(label: str, *, at_least: float = SLOW_SECONDS, logger: logging.Logger | None = None) -> Iterator[_Steps]:
+    """Write how long ``label`` took, with its steps, when it took ``at_least`` seconds (0: always)::
+
+        with applog.timed("Preferences OK") as t:
+            apply_theme(); t.step("theme")
+            reload(); t.step("reload")
+    """
+    t = _Steps()
+    try:
+        yield t
+    finally:
+        total = time.monotonic() - t.start
+        if total >= at_least:
+            parts = ", ".join(f"{n} {d:.2f}" for n, d in t.parts)
+            (logger or log).info("%s took %.2f s%s", label, total, f" ({parts})" if parts else "")
 
 
 def new_ref() -> str:
@@ -179,29 +213,43 @@ def install_qt_messages() -> None:
     qInstallMessageHandler(handler)
 
 
+def _stack(frame, limit: int | None = None) -> str:
+    """Code lines only (no variable values), with the home folder shown as ~."""
+    home = str(Path.home())
+    return "".join(traceback.format_stack(frame, limit)).rstrip().replace(f'"{home}{os.sep}', f'"~{os.sep}')
+
+
 def thread_stacks() -> str:
-    """Where every thread is right now (code lines only, no variable values)."""
+    """Where every thread is right now."""
     names = {t.ident: t.name for t in threading.enumerate()}
     parts = []
     for ident, frame in sys._current_frames().items():  # noqa: SLF001 - the documented way to get them
-        parts.append(f"--- thread {names.get(ident, ident)}\n" + "".join(traceback.format_stack(frame)).rstrip())
+        parts.append(f"--- thread {names.get(ident, ident)}\n" + _stack(frame))
     return "\n".join(parts)
+
+
+def main_thread_stack(limit: int = 14) -> str | None:
+    frame = sys._current_frames().get(threading.main_thread().ident)  # noqa: SLF001
+    return _stack(frame, limit) if frame is not None else None
 
 
 class Watchdog:
     """Writes every thread's stack to the log once when the window stops responding: a hang someone may
-    force-quit leaves this behind, and it shows what the program was waiting for."""
+    force-quit leaves this behind, and it shows what the program was waiting for. A shorter freeze (from
+    :data:`BLOCKED_SECONDS`) is written when the window responds again, with where the GUI thread was."""
 
-    def __init__(self, after: float = HANG_SECONDS):
+    def __init__(self, after: float = HANG_SECONDS, blocked: float = BLOCKED_SECONDS):
         from PySide6.QtCore import QTimer  # noqa: PLC0415
 
-        self.after = after
+        self.after, self.blocked = after, blocked
         self.beat = time.monotonic()
         self.stuck_since: float | None = None
         self.late = False
+        # (heartbeat, stack): where the GUI thread was half a second into a freeze; "" while it idled
+        self.sample: tuple[float, str] | None = None
         self._stop = threading.Event()
         self.timer = QTimer()
-        self.timer.setInterval(1000)
+        self.timer.setInterval(int(BEAT * 1000))
         self.timer.timeout.connect(self._beat)
         self.timer.start()
         self.thread = threading.Thread(target=self._watch, name="watchdog", daemon=True)
@@ -209,11 +257,15 @@ class Watchdog:
 
     def _beat(self) -> None:
         now = time.monotonic()
+        last, self.beat = self.beat, now
+        gap = now - last - BEAT
+        sample, self.sample = self.sample, None
         if self.stuck_since is not None:
             log.warning("The window responds again after %.0f s", now - self.stuck_since)
             self.stuck_since = None
+        elif gap >= self.blocked and sample and sample[0] == last and sample[1] and not self.late:
+            log.warning("The window was blocked for %.1f s in:\n%s", gap, sample[1])
         self.late = False
-        self.beat = now
 
     @staticmethod
     def _main_thread_idle() -> bool:
@@ -226,7 +278,10 @@ class Watchdog:
 
     def check(self) -> bool:
         """True (and logged with every thread's stack) when the window has just been found not responding."""
-        gap = time.monotonic() - self.beat
+        beat = self.beat
+        gap = time.monotonic() - beat
+        if gap >= min(1.0, self.blocked) and self.sample is None and not self.late and self.stuck_since is None:
+            self.sample = (beat, "" if self._main_thread_idle() else main_thread_stack() or "")
         if gap < self.after or self.stuck_since is not None or self.late:
             return False
         if self._main_thread_idle():
@@ -239,7 +294,7 @@ class Watchdog:
         return True
 
     def _watch(self) -> None:
-        while not self._stop.wait(2.0):
+        while not self._stop.wait(BEAT):
             self.check()
 
     def stop(self) -> None:
