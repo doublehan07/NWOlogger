@@ -223,6 +223,7 @@ class DXPanel(QWidget):
         c.grid.addWidget(off_now, 1, 2)
         self.w["freq"] = AutoLineEdit(mono=True)
         self.w["freq"].setPlaceholderText(tr("TX MHz"))
+        self.w["freq"].setToolTip(tr("Bare values are MHz; Hz, kHz, MHz and GHz units are also accepted."))
         self.band_lab = QLabel("")
         self.band_lab.setObjectName("BandLabel")
         self.band_lab.setMinimumWidth(44)
@@ -230,6 +231,7 @@ class DXPanel(QWidget):
         c.grid.addWidget(self.band_lab, 2, 2)
         self.w["freq_rx"] = AutoLineEdit(mono=True)
         self.w["freq_rx"].setPlaceholderText(tr("RX MHz (split / sat)"))
+        self.w["freq_rx"].setToolTip(tr("Bare values are MHz; Hz, kHz, MHz and GHz units are also accepted."))
         self.band_rx_lab = QLabel("")
         self.band_rx_lab.setObjectName("BandLabel")
         self.rx_sync = QPushButton("= TX")
@@ -736,8 +738,9 @@ class DXPanel(QWidget):
             w.set_iso(v)
             return
         txt = fmt(col, v) if col in ("freq", "freq_rx", "tx_pwr") else ("" if v is None else str(v))
-        if col == "freq" or col == "freq_rx":
-            txt = txt.rstrip("0").rstrip(".") if txt else txt
+        if col in ("freq", "freq_rx"):
+            mhz = bands.parse_frequency(v)
+            txt = f"{mhz:.6f}".rstrip("0").rstrip(".") if mhz is not None else (str(v) if v else "")
         if auto:
             w.set_auto(txt, guess=guess, source=source)
         else:
@@ -848,10 +851,7 @@ class DXPanel(QWidget):
     # ------------------------------------------------------------------ live checks
     def _freq_changed(self) -> None:
         for col, lab in (("freq", self.band_lab), ("freq_rx", self.band_rx_lab)):
-            try:
-                b = bands.band_for_freq(float(self._get(col) or ""))
-            except ValueError:
-                b = None
+            b = bands.band_for_freq(bands.parse_frequency(self._get(col)))
             lab.setText(bands.display_band(b) if b else "")
         self._check_timer.start()
 
@@ -1340,6 +1340,11 @@ class DXPanel(QWidget):
         if self.edit_id is None and self.time_off_mode == "live":
             q["time_off"] = max(timeutil.now_iso(), q["time_on"])
         nq = qsomod.normalize(q)
+        if q.get("freq_rx") and nq.get("freq_rx") is None:
+            QMessageBox.warning(self, tr("Missing frequency"),
+                                tr("Enter a valid RX frequency, or leave it empty."))
+            self.w["freq_rx"].setFocus()
+            return
         if not nq.get("band") and nq.get("freq") is None:
             QMessageBox.warning(self, tr("Missing frequency"), tr("Enter the frequency (MHz) so the band is known."))
             self.w["freq"].setFocus()

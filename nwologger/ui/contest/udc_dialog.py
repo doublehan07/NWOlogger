@@ -29,12 +29,14 @@ from PySide6.QtWidgets import (
 )
 
 from ... import i18n
+from ...core.bands import BAND_NAMES
 from ...core.contest.engine import ContestDef, save_user_def, validate_def
 from .. import theme
+from ..widgets import ScrollArea, fit_to_screen
 
 tr = i18n.tr
 
-BANDS = ["160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m", "2m", "70cm"]
+BANDS = BAND_NAMES
 EXCH = {
     "serial": ("Serial number", {"key": "serial", "label": "Nr", "kind": "serial"}),
     "cqz": ("CQ zone", {"key": "zone", "label": "CQ zone", "kind": "int", "min": 1, "max": 40, "prefill": "cqz",
@@ -141,7 +143,7 @@ class UdcDialog(QDialog):
         gen = QPushButton(tr("Update JSON from the form"))
         gen.clicked.connect(self._form_to_json)
         f.addRow("", gen)
-        self.tabs.addTab(form_w, tr("Simple"))
+        self.tabs.addTab(ScrollArea(form_w), tr("Simple"))
         jw = QWidget()
         jl = QVBoxLayout(jw)
         self.json = QPlainTextEdit()
@@ -151,7 +153,7 @@ class UdcDialog(QDialog):
         h.setObjectName("Hint")
         h.setWordWrap(True)
         jl.addWidget(h)
-        self.tabs.addTab(jw, tr("JSON (advanced)"))
+        self.tabs.addTab(ScrollArea(jw), tr("JSON (advanced)"))
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close)
         self.save_btn = bb.button(QDialogButtonBox.StandardButton.Save)
         self.save_btn.setProperty("primary", True)
@@ -160,6 +162,10 @@ class UdcDialog(QDialog):
         right.addWidget(bb)
         lay.addLayout(right, 3)
         self._reload()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        fit_to_screen(self)
 
     def _reload(self, select: str | None = None) -> None:
         self.list.blockSignals(True)

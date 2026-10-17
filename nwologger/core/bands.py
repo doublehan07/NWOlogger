@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import math
+import re
+from decimal import Decimal, DecimalException
+
+_FREQUENCY_RE = re.compile(r"([+]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:e[+-]?\d+)?)\s*(hz|khz|mhz|ghz)?", re.I)
+_UNIT_EXPONENT = {"hz": -6, "khz": -3, "mhz": 0, "ghz": 3}
+
 # (band, lower MHz, upper MHz), in frequency order.
 BANDS: list[tuple[str, float, float]] = [
     ("2190m", 0.1357, 0.1378),
@@ -44,6 +51,30 @@ _ORDER = {name: i for i, name in enumerate(BAND_NAMES)}
 
 # Bands commonly used in contests (HF, no WARC).
 CONTEST_BANDS = ["160m", "80m", "40m", "20m", "15m", "10m"]
+
+
+def parse_frequency(value: object, *, default_unit: str = "MHz") -> float | None:
+    """Return a positive, finite frequency in MHz; bare values use ``default_unit``.
+
+    A decimal comma is accepted alongside a decimal point. Units are explicit rather than guessed from
+    magnitude, so e.g. a bare 10000 MHz microwave frequency remains 10000 MHz.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    match = _FREQUENCY_RE.fullmatch(str(value).strip())
+    if not match:
+        return None
+    unit = (match[2] or default_unit).lower()
+    exponent = _UNIT_EXPONENT.get(unit)
+    if exponent is None:
+        return None
+    try:
+        # Convert in decimal before producing the float, so e.g. 479 kHz stays exactly the same
+        # float as the 0.479 MHz band edge instead of landing a binary rounding step above it.
+        mhz = float(Decimal(match[1].replace(",", ".")).scaleb(exponent))
+    except (ValueError, OverflowError, DecimalException):
+        return None
+    return mhz if math.isfinite(mhz) and mhz > 0 else None
 
 
 def normalize_band(band: str | None) -> str | None:

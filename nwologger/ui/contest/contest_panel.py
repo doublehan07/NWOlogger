@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
@@ -51,7 +50,6 @@ from ..widgets import Chip, Section, primary, run_async
 tr = i18n.tr
 
 MODE_WORDS = {"CW", "SSB", "USB", "LSB", "FM", "AM", "RTTY", "RY", "FT8", "FT4", "PSK31", "DIGI", "DATA", "PH"}
-FREQ_RE = re.compile(r"^\d{3,6}(\.\d{1,3})?$")
 
 
 def user_contest_dir(db) -> Path:
@@ -175,6 +173,7 @@ class ContestPanel(QWidget):
         self.freq = QLineEdit()
         self.freq.setObjectName("ContestField")
         self.freq.setPlaceholderText(tr("kHz"))
+        self.freq.setToolTip(tr("Bare values are kHz; Hz, kHz, MHz and GHz units are also accepted."))
         self.freq.setMaximumWidth(120)
         self.call = QLineEdit()
         self.call.setObjectName("ContestCall")
@@ -184,6 +183,7 @@ class ContestPanel(QWidget):
         self.call.installEventFilter(self._keys)
         self.band.currentIndexChanged.connect(self._band_changed)
         self.mode.currentTextChanged.connect(lambda *_: self._check.start())
+        self.freq.textChanged.connect(lambda *_: self._check.start())
         self.freq.editingFinished.connect(self._freq_set)
         sec.add(self._status_row())
         root.addWidget(sec)
@@ -394,8 +394,9 @@ class ContestPanel(QWidget):
         if last_mode:
             self.mode.setCurrentText(last_mode)
         self.mode.blockSignals(False)
-        last_freq = (self.session.get("data") or {}).get("freq")
-        self.freq.setText(last_freq or "")
+        self.freq.setText(self._restored_frequency(self.session.get("data") or {}))
+        if not self.freq.text():
+            self._band_changed()
         for f in cdef.exchange:
             e = QLineEdit()
             e.setObjectName("ContestField")
@@ -431,26 +432,32 @@ class ContestPanel(QWidget):
 
     def _band_changed(self) -> None:
         b = self.band.currentData()
-        try:
-            f = float(self.freq.text()) / 1000 if self.freq.text() else None
-        except ValueError:
-            f = None
+        f = self.freq_mhz()
         if b and (f is None or bands.band_for_freq(f) != b):
             lo = bands.default_freq(b)
-            self.freq.setText(str(int(lo * 1000)) if lo and lo < 100 else (f"{lo:g}" if lo else ""))
+            self.freq.setText(f"{lo * 1000:.12g}" if lo else "")
         self._remember()
         self._check.start()
 
-    def _freq_set(self) -> None:
-        t = self.freq.text().strip()
-        if not t:
-            return
+    def _restored_frequency(self, data: dict) -> str:
+        """Keep old sessions' mixed MHz/kHz entry values unambiguous after switching to bare kHz."""
+        text = str(data.get("freq") or "").strip()
+        if not text or data.get("freq_unit"):
+            return text
         try:
-            f = float(t)
+            value = float(text.replace(",", "."))
         except ValueError:
-            return
-        mhz = f / 1000 if f > 1000 else f
-        b = bands.band_for_freq(mhz)
+            return text  # already has a unit, or remains invalid for the user to correct
+        band = data.get("band") or self.band.currentData()
+        for unit in ("kHz", "MHz"):
+            if bands.band_for_freq(bands.parse_frequency(text, default_unit=unit)) == band:
+                return f"{text} {unit}"
+        # The old parser guessed bare values above 1000 were kHz. Preserve that interpretation visibly;
+        # validation will catch a mismatch instead of substituting the band's lower edge.
+        return f"{text} {'kHz' if value > 1000 else 'MHz'}"
+
+    def _freq_set(self) -> None:
+        b = bands.band_for_freq(self.freq_mhz())
         if b:
             i = self.band.findData(b)
             if i >= 0:
@@ -463,22 +470,17 @@ class ContestPanel(QWidget):
     def _remember(self) -> None:
         if self.session:
             data = dict(self.session.get("data") or {})
-            data.update(band=self.band.currentData(), mode=self.mode.currentText(), freq=self.freq.text())
+            data.update(band=self.band.currentData(), mode=self.mode.currentText(), freq=self.freq.text(),
+                        freq_unit="kHz")
             self.session["data"] = data
             self.db.update_contest_session(self.session["id"], data=data)
 
     def freq_mhz(self) -> float | None:
-        t = self.freq.text().strip()
-        try:
-            f = float(t)
-        except ValueError:
-            b = self.band.currentData()
-            return bands.default_freq(b) if b else None
-        mhz = f / 1000 if f > 1000 else f
-        b = self.band.currentData()
-        if bands.band_for_freq(mhz) != b:
-            return bands.default_freq(b) if b else mhz
-        return mhz
+        return bands.parse_frequency(self.freq.text(), default_unit="kHz")
+
+    def _frequency_valid(self) -> bool:
+        b = bands.band_for_freq(self.freq_mhz())
+        return bool(self.cdef and b in self.cdef.bands and b == self.band.currentData())
 
     def _call_edited(self, text: str) -> None:
         up = text.upper().replace(" ", "")
@@ -552,7 +554,7 @@ class ContestPanel(QWidget):
     def enter(self, current, force: bool = False) -> None:
         if current is self.call:
             t = self.call.text().strip().upper()
-            if FREQ_RE.match(t) and not callsign.looks_like_call(t):
+            if bands.parse_frequency(t, default_unit="kHz") is not None:
                 self.freq.setText(t)
                 self.call.clear()
                 self._freq_set()
@@ -644,7 +646,11 @@ class ContestPanel(QWidget):
         self.call.setProperty("dupe", "DUPE" if dupe else "")
         theme.repolish(self.call)
         blocked = dupe and not self.prefs.get("allow_dupes")
-        self.log_btn.setEnabled(bool(c) and not blocked and self.cdef is not None)
+        self.log_btn.setEnabled(bool(c) and not blocked and self._frequency_valid())
+        frequency_bad = bool(self.freq.text()) and not self._frequency_valid()
+        if self.freq.property("invalid") != frequency_bad:
+            self.freq.setProperty("invalid", frequency_bad)
+            theme.repolish(self.freq)
         for k, e in self.fields.items():
             f = self.cdef.field(k) if self.cdef else None
             bad = bool(e.text()) and f is not None and not validate_value(f, e.text())
@@ -687,6 +693,12 @@ class ContestPanel(QWidget):
             return
         c = callsign.clean(self.call.text())
         if not c:
+            return
+        self._freq_set()
+        if not self._frequency_valid():
+            self.freq.setFocus()
+            self.freq.selectAll()
+            self.message.emit(tr("Enter a valid frequency in a band allowed by this contest."))
             return
         bad = self._first_invalid()
         if bad is not None and not force:
@@ -780,6 +792,9 @@ class ContestPanel(QWidget):
         i = self.band.findData(q.get("band"))
         if i >= 0:
             self.band.setCurrentIndex(i)
+        f = bands.parse_frequency(q.get("freq"))
+        if f is not None:
+            self.freq.setText(f"{f * 1000:.12g}")
         self.mode.setCurrentText(modes.display(q.get("mode"), q.get("submode")))
         self.log_btn.setText(tr("Save"))
         self.refresh_checks()

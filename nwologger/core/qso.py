@@ -44,6 +44,11 @@ def clean(col: str, value: Any) -> Any:
             return int(value)
         return int(str(value).strip())
     if kind == "real":
+        if col in ("freq", "freq_rx"):
+            mhz = bands.parse_frequency(value)
+            if mhz is None:
+                raise ValueError(f"Invalid frequency: {value!r}")
+            return mhz
         if isinstance(value, (int, float)):
             return float(value)
         return float(str(value).strip().replace(",", "."))
