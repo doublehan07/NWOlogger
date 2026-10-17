@@ -39,6 +39,11 @@ tr = i18n.tr
 CTY_COLS = {"country", "dxcc", "cqz", "ituz", "cont", "state"}
 TIME_COLS = ("time_on", "time_off")
 OPS = [("set", "Set to"), ("clear", "Clear"), ("replace", "Replace text"), ("cty", "Fill from country file")]
+# Fields cleaned together by qso.normalize: a change to one may change the other.
+COMPANIONS = {"mode": ("submode",), "submode": ("mode",), "band": ("freq",), "freq": ("band",),
+              "band_rx": ("freq_rx",), "freq_rx": ("band_rx",), "sat_name": ("prop_mode",),
+              "prop_mode": ("sat_name",), "time_on": ("time_off",), "time_off": ("time_on",)}
+PREVIEW_ROWS = 300
 
 
 class FieldRow:
@@ -79,19 +84,32 @@ class FieldRow:
     def active(self) -> bool:
         return self.on.isChecked()
 
+    def edit(self) -> Edit:
+        """What this row does, read from its widgets once (not once per QSO)."""
+        return Edit(self.col, self.op.currentData(), self.value.text(), self.with_.text())
+
+
+class Edit:
+    """One field's change, independent of the widgets: computing it for thousands of QSOs stays fast."""
+
+    __slots__ = ("col", "op", "text", "with_")
+
+    def __init__(self, col: str, op: str, text: str, with_: str):
+        self.col, self.op, self.text, self.with_ = col, op, text, with_
+
     def apply(self, q: dict, cty) -> Any:
         """New value for this field on QSO q (or the old value if unchanged)."""
-        op = self.op.currentData()
+        op = self.op
         old = q.get(self.col)
         if op == "set":
-            return self.value.text().strip() or None
+            return self.text.strip() or None
         if op == "clear":
             return None
         if op == "replace":
-            find = self.value.text()
+            find = self.text
             if not find or old is None:
                 return old
-            return str(old).replace(find, self.with_.text()) or None
+            return str(old).replace(find, self.with_) or None
         if op == "cty":
             r = cty.resolve(q.get("call") or "")
             if self.col == "state":
@@ -198,7 +216,8 @@ class BulkEditDialog(QDialog):
         self._timer.timeout.connect(self._update_preview)
         self.changed_count = 0
         self.refused: list[int] = []  # QSOs that would end before they start
-        self.unreadable: list[tuple[str, str]] = []  # (field label, text) of times that can't be read
+        self.unreadable: list[tuple[str, str, str]] = []  # (field label, text, kind) of times and dates not read
+        self._edits: list[Edit] = []
         self._update_preview()
 
     def _schedule(self, *_a) -> None:
@@ -217,25 +236,45 @@ class BulkEditDialog(QDialog):
 
     def changes_for(self, q: dict) -> dict:
         ch = {}
-        for fr in self.fields:
-            if fr.active():
-                new = fr.apply(q, self.cty)
-                if (new if new is not None else None) != q.get(fr.col):
-                    ch[fr.col] = new
+        for edit in self._edits:
+            new = edit.apply(q, self.cty)
+            if new != q.get(edit.col):
+                ch[edit.col] = new
         return ch
 
-    def _time_fields(self) -> list[tuple[str, str]]:
-        """Times typed for "Set to" that can't be read: they are refused, never written as empty."""
+    def _snapshot(self) -> None:
+        self._edits = [fr.edit() for fr in self.fields if fr.active()]
+
+    def _unreadable_fields(self) -> list[tuple[str, str, str]]:
+        """Times and dates typed for "Set to" that can't be read: they are refused, never written as empty (a
+        time) or as the text typed (a date)."""
         bad = []
         for fr in self.fields:
-            if fr.col in TIME_COLS and fr.active() and fr.op.currentData() == "set":
-                text = fr.value.text().strip()
-                unreadable = bool(text) and timeutil.parse_iso(text) is None
+            kind = "time" if fr.col in TIME_COLS else "date" if BY_COL[fr.col].kind == "date" else None
+            if kind is None:
+                continue
+            text = fr.value.text().strip()
+            unreadable = fr.active() and fr.op.currentData() == "set" and bool(text) and (
+                timeutil.parse_iso(text) is None if kind == "time" else timeutil.adif_date_to_iso(text) is None)
+            if fr.value.property("opstate") != ("bad" if unreadable else ""):
                 fr.value.setProperty("opstate", "bad" if unreadable else "")
                 theme.repolish(fr.value)
-                if unreadable:
-                    bad.append((tr(BY_COL[fr.col].label), text))
+            if unreadable:
+                bad.append((tr(BY_COL[fr.col].label), text, kind))
         return bad
+
+    @staticmethod
+    def _normalized(q: dict, ch: dict, memo: dict) -> dict:
+        """The changed fields as qso.normalize would store them (and both times, when one changes). Only the
+        changed fields and the ones cleaned with them are normalised, and equal inputs once."""
+        cols = set(ch)
+        for col in ch:
+            cols.update(COMPANIONS.get(col, ()))
+        part = tuple(sorted((col, ch[col] if col in ch else q.get(col)) for col in cols))
+        norm = memo.get(part)
+        if norm is None:
+            norm = memo[part] = qsomod.normalize(dict(part))
+        return norm
 
     @staticmethod
     def _example(text: str, q: dict | None) -> str:
@@ -247,23 +286,25 @@ class BulkEditDialog(QDialog):
         rows, refused_rows = [], []
         n = 0
         self.refused = []
-        self.unreadable = self._time_fields()
+        self.unreadable = self._unreadable_fields()
+        self._snapshot()
+        memo: dict = {}
+        labels = {e.col: tr(BY_COL[e.col].label) for e in self._edits}
         for qid in self.ids:
             q = self.rows_data.get(qid)
             if not q:
                 continue
             ch = self.changes_for(q)
-            norm = {}
-            merged = q
-            if ch:
-                merged = qsomod.normalize({**q, **ch})
-                norm = {k: merged.get(k) for k in ch}
-            real = {k: v for k, v in norm.items() if v != q.get(k)}
+            if not ch:
+                continue
+            norm = self._normalized(q, ch, memo)
+            real = {k: norm.get(k) for k in ch if norm.get(k) != q.get(k)}
             if not real:
                 continue
-            on, off = merged.get("time_on"), merged.get("time_off")
+            times = any(k in TIME_COLS for k in ch)
+            on, off = (norm.get("time_on"), norm.get("time_off")) if times else (q.get("time_on"), q.get("time_off"))
             why = ""
-            if any(k in TIME_COLS and ch.get(k) not in (None, "") and merged.get(k) is None for k in real):
+            if any(k in TIME_COLS and ch.get(k) not in (None, "") and norm.get(k) is None for k in real):
                 why = tr("can't read the new time")
             elif on and off and off < on:
                 why = tr("ends before it starts") + f" ({tr('Time Off')} {fmt('time_off', off)[11:16]})"
@@ -271,20 +312,26 @@ class BulkEditDialog(QDialog):
                 self.refused.append(qid)
             else:
                 n += 1
+            shown = refused_rows if why else rows
             for k, v in real.items():
-                row = (q.get("call") or "", fmt("time_on", q.get("time_on")), tr(BY_COL[k].label),
-                       fmt(k, q.get(k)), fmt(k, v), why)
-                (refused_rows if why else rows).append(row)
-        rows = (refused_rows + rows)[:300]
+                if len(shown) >= PREVIEW_ROWS:
+                    break
+                shown.append((q.get("call") or "", fmt("time_on", q.get("time_on")), labels[k],
+                              fmt(k, q.get(k)), fmt(k, v), why))
+        rows = (refused_rows + rows)[:PREVIEW_ROWS]
         self.changed_count = n
         self.count.setText(f"<b>{n}</b> " + tr("of") + f" {len(self.ids)} " + tr("QSOs will change"))
         t = theme.tokens()
         problems = []
         if self.unreadable:
-            label, text = self.unreadable[0]
+            label, text, kind = self.unreadable[0]
             first = self.rows_data.get(self.ids[0]) if self.ids else None
-            problems.append(tr("Can't read") + f" “{text}” ({label}) " + tr("as a date and time. Type it as") +
-                            f" {self._example(text, first)}.")
+            if kind == "time":
+                problems.append(tr("Can't read") + f" “{text}” ({label}) " + tr("as a date and time. Type it as") +
+                                f" {self._example(text, first)}.")
+            else:
+                problems.append(tr("Can't read") + f" “{text}” ({label}) " + tr("as a date. Type it as") +
+                                f" {timeutil.today_iso()}.")
         if self.refused:
             problems.append(f"<b>{len(self.refused)} " + tr("of") + f" {len(self.ids)} " +
                             tr("QSOs would end before they start.") + "</b> " +
@@ -321,6 +368,7 @@ class BulkEditDialog(QDialog):
     def _apply(self) -> None:
         if not self.changed_count or self.refused or self.unreadable:
             return
+        self._snapshot()
         self.db.backup("bulk-edit")
         self.db.update_many(self.ids, self.changes_for, label=tr("Bulk edit") + f" ({self.changed_count})")
         self.accept()

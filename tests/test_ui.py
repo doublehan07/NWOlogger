@@ -103,6 +103,49 @@ def test_bulk_edit_refuses_bad_times(win):
     assert db.get(2)["time_on"] == "2026-10-10T15:30:00Z" and db.get(1)["time_on"] == "2026-10-10T15:19:00Z"
 
 
+def test_bulk_edit_reads_dates_and_previews_quickly(win):
+    from nwologger.core import qso as qsomod
+    from nwologger.ui.bulk_edit import BulkEditDialog
+
+    db = win.db
+    for i in range(3):
+        db.insert(qsomod.normalize({"call": f"BA{i}AA", "mode": "FT8", "band": "20m", "freq": 14.074,
+                                    "time_on": f"2026-10-10T15:{i:02d}:00Z", "lotw_qsl_rcvd": "Y"}))
+    dlg = BulkEditDialog(db, [1, 2, 3], win)
+    date = next(f for f in dlg.fields if f.col == "lotw_qslrdate")
+    for partial in ("2", "20", "202", "2026"):  # typing a year is not yet a date: refused, never stored as typed
+        date.value.setText(partial)
+        dlg._update_preview()
+        assert not dlg.apply_btn.isEnabled() and "as a date" in dlg.problem.text()
+    date.value.setText("20261017")
+    dlg._update_preview()
+    assert dlg.apply_btn.isEnabled() and dlg.changed_count == 3
+    assert dlg.preview.item(0, 4).text() == "2026-10-17"
+    dlg._apply()
+    assert db.get(1)["lotw_qslrdate"] == "2026-10-17"
+
+
+@pytest.mark.parametrize("changes", [
+    {"mode": "usb"}, {"submode": "FT4"}, {"mode": "SSB", "submode": None}, {"freq": "7,074"},
+    {"freq": "145.8 MHz", "band": None}, {"sat_name": "SO-50"}, {"prop_mode": None},
+    {"time_on": "2026-10-10 15:30"}, {"time_off": "2026-10-10 15:00"}, {"gridsquare": "on80DA"},
+    {"call": " ba1aa "}, {"lotw_qslrdate": "20261017"}, {"tx_pwr": "5"}, {"cqz": "24"},
+])
+def test_bulk_edit_preview_normalizes_changed_fields_like_the_whole_qso(changes):
+    from nwologger.core import qso as qsomod
+    from nwologger.ui.bulk_edit import BulkEditDialog
+
+    q = qsomod.normalize({"id": 7, "call": "BA1AA", "mode": "SSB", "submode": "LSB", "band": "40m", "freq": 7.1,
+                          "time_on": "2026-10-10T15:19:00Z", "time_off": "2026-10-10T15:21:00Z",
+                          "sat_name": "AO-91", "prop_mode": "SAT", "gridsquare": "ON80"})
+    whole = qsomod.normalize({**q, **changes})
+    part = BulkEditDialog._normalized(q, changes, {})
+    for col in changes:
+        assert part[col] == whole[col], col
+    if set(changes) & {"time_on", "time_off"}:
+        assert (part["time_on"], part["time_off"]) == (whole["time_on"], whole["time_off"])
+
+
 def test_filters_and_export(win, qtbot, tmp_path):
     for c in ("BA1AA", "BG8BB", "BA1CC"):
         log_one(win, qtbot, c, mode="FT8", freq="14.074")
