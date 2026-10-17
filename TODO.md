@@ -1,6 +1,6 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service. What is left is below.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found. What is left is below.
 
 ## Needs real accounts
 
@@ -50,6 +50,18 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
+
+## Done in v0.1.4 (2026-10-17)
+
+- [x] **Preferences → OK is quick again** (was 21–28 s in a real log, every time): the saved-password scan of the log and every backup is gone. It only cleaned up after v0.1.0, which was never released, and it parsed every undo record of every backup. Nothing writes a credential into the log: error text is redacted when stored, credential-named ADIF tags are dropped on import. Uploads no longer re-check each field against the saved secrets either (they send standard ADIF fields only)
+- [x] **Language without a restart:** OK builds the window again in the new language (about 0.1–0.3 s) with the same log file, operator, view, tab, filter, sort, selection, scroll position, entry form and Sync results rows; it waits while a sync runs
+- [x] **Theme:** previewed as you pick it, *Cancel* puts the old one back; icons are drawn in the current theme's colours, so they no longer stay dark on the dark toolbar after a switch
+- [x] **Wildcards in the call field:** `*` and `?` search Similar calls like the log's search box (`BA*K` → BA1PK, BA8BLK, BA1PK/P) in the log, the lookup cache, the LoTW / eQSL lists and MASTER.SCP; a pattern is never looked up, filled in or logged
+- [x] **Sorting:** a header click shows the first row of the new order (e.g. the latest QSO for Time On ↓) instead of keeping the old top row somewhere in the middle
+- [x] **New confirmations selected:** after a download, the QSOs it confirmed for the first time (LoTW, eQSL, QRZ.com) are selected and shown; one click clears them; Sync everything adds each download's
+- [x] **Backups:** no launch copy while the log is unchanged; the last 5 copies before an import or bulk edit are kept apart from the 20
+- [x] **QRZ.com key on a callsign change:** once no profile uses the old call, its Logbook key moves to the new call or is removed, as you choose (it was left in the keychain where nothing could reach it)
+- [x] **Diagnostic log:** freezes from 2 s with the GUI thread's stack (home folder as `~`), slow steps with their parts, one line per Preferences save naming what changed, sync summaries always in English with download and apply times and new confirmations, launch backups
 
 ## Done in v0.1.3 (2026-10-16)
 
