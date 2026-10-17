@@ -23,7 +23,7 @@ from pathlib import Path
 
 from . import callsign, net
 
-EXACT, PREFIX, CONTAINS, ONE_EDIT = range(4)  # the same order as similar.match_kind
+EXACT, PREFIX, CONTAINS, ONE_EDIT, PATTERN = range(5)  # the same order as similar.match_kind
 
 
 @dataclass(frozen=True)
@@ -160,6 +160,17 @@ class CallLists:
                 if i is not None:
                     out.setdefault(i, ONE_EDIT)
         return [self._hit(i, k) for i, k in out.items()]
+
+
+    def glob(self, regex: str, cap: int) -> tuple[list[Hit], bool]:
+        """Calls matching ``regex`` (:func:`similar.pattern_regex` with ``lines``), one search over the whole
+        index: at most ``cap``, and True when there were more."""
+        out: list[Hit] = []
+        for m in re.finditer(regex, self._blob, re.M):
+            if len(out) == cap:
+                return out, True
+            out.append(self._hit(bisect_right(self._starts, m.start()) - 1, PATTERN))
+        return out, False
 
 
 def _one_edit_variants(t: str) -> set[str]:

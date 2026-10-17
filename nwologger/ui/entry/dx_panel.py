@@ -78,6 +78,7 @@ PROFILE_COLS = ["station_callsign", "my_gridsquare", "my_vucc_grids", "my_dxcc",
 # The Device section; when empty, the station profile's rig, antenna and power are logged.
 DEVICE_COLS = {"rig": "my_rig", "antenna": "my_antenna", "power": "tx_pwr"}
 EDIT_SETUPS = "__edit__"
+PATTERN_ROWS = 50  # rows shown for a * / ? pattern in the call field (the header counts them all)
 
 
 def _side_by_side(*items: tuple[QWidget, int]) -> QWidget:
@@ -372,7 +373,8 @@ class DXPanel(QWidget):
         self.similar.setHorizontalHeaderLabels([tr("Similar calls"), tr("Last QSO or where it is known")])
         self.similar.setToolTip(tr("Your log first (most recent first), then calls QRZ.com / HamQTH know, then LoTW "
                                    "users and eQSL AG members (File → Update LoTW and eQSL call lists), then "
-                                   "MASTER.SCP. Click a call to use it."))
+                                   "MASTER.SCP. Click a call to use it. With * or ? the call field is a pattern, as "
+                                   "in the log's search: BA*K finds BA1PK and BA8BLK."))
         self.similar.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.similar.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.similar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -765,20 +767,26 @@ class DXPanel(QWidget):
             pos = self.call.cursorPosition()
             self.call.setText(up)
             self.call.setCursorPosition(pos)
-        if up and not self.time_on_locked and self.edit_id is None:
+        pattern = similar.has_wildcards(up)  # only searches Similar calls: no Time On, cty fill or lookup
+        if up and not pattern and not self.time_on_locked and self.edit_id is None:
             self.w["time_on"].set_iso(timeutil.now_iso())
             self.time_on_locked = True
-        if not up:
-            if self.edit_id is None:
+        if not up or pattern:
+            if self.edit_id is None and not up:
                 self.time_on_locked = False
             self._clear_auto()
-        self._resolve_call()
+        if not pattern:
+            self._resolve_call()
         self._check_timer.start()
-        if self.prefs.get("auto_lookup"):
+        if self.prefs.get("auto_lookup") and not pattern:
             self._lookup_timer.start()
 
+    def is_pattern(self) -> bool:
+        """The call field holds a * / ? pattern: it searches Similar calls and can't be logged."""
+        return similar.has_wildcards(self.call.text())
+
     def _call_finished(self) -> None:
-        if self.prefs.get("auto_lookup") and self.call.text().strip():
+        if self.prefs.get("auto_lookup") and self.call.text().strip() and not self.is_pattern():
             self._lookup_timer.stop()
             self.request_lookup()
 
@@ -788,7 +796,7 @@ class DXPanel(QWidget):
 
     def request_lookup(self, force: bool = False) -> None:
         c = callsign.clean(self.call.text())
-        if not c or (c == self._last_lookup_call and not force):
+        if not c or self.is_pattern() or (c == self._last_lookup_call and not force):
             return
         self._last_lookup_call = c
         self.lookup_requested.emit(c)
@@ -928,10 +936,13 @@ class DXPanel(QWidget):
     @applog.timed("Entry form checks")
     def _refresh_checks(self) -> None:
         c = callsign.clean(self.call.text())
+        pattern = similar.has_wildcards(c)
         q = qsomod.normalize(self.values())
         chips: list[tuple[str, str]] = []
-        hit = self.current_dupe() if c else None
-        blocked = False
+        hit = self.current_dupe() if c and not pattern else None
+        blocked = pattern
+        if pattern:
+            chips.append((tr("Wildcard search: pick a call below"), "info"))
         if hit:
             when = fmt("time_on", hit.other.get("time_on"))
             if hit.level == "DUPE":
@@ -947,7 +958,7 @@ class DXPanel(QWidget):
         theme.repolish(self.call)
         self.log_btn.setEnabled(bool(c) and not blocked)
         summary_parts: list[str] = []
-        if c:
+        if c and not pattern:
             dx = q.get("dxcc")
             band = q.get("band")
             group = q.get("mode_group")
@@ -985,7 +996,7 @@ class DXPanel(QWidget):
         self._set_chips(chips)
         self.compare_btn.setVisible(hit is not None)
         self.summary.setText("   —   ".join(summary_parts))
-        self._refresh_history(c, q.get("band"))
+        self._refresh_history("" if pattern else c, q.get("band"))
         self._refresh_similar(c)
 
     # ------------------------------------------------------------------ similar calls
@@ -998,7 +1009,14 @@ class DXPanel(QWidget):
         if key == self._similar_key:
             return
         self._similar_key = key
-        matches = self._index.find(text) if len(text) >= 2 else []
+        if similar.has_wildcards(text):
+            found, capped = self._index.find_pattern(text)
+            matches = found[:PATTERN_ROWS]
+            self.similar.setHorizontalHeaderItem(0, QTableWidgetItem(
+                tr("Matches") + f" ({len(found)}{'+' if capped else ''})" if found else tr("No matches")))
+        else:
+            matches = self._index.find(text) if len(text) >= 2 else []
+            self.similar.setHorizontalHeaderItem(0, QTableWidgetItem(tr("Similar calls")))
         info = self.db.call_summaries([m.call for m in matches if m.tier == similar.WORKED])
         t = theme.tokens()
         self.similar.setRowCount(len(matches))
@@ -1313,7 +1331,9 @@ class DXPanel(QWidget):
 
     def commit(self) -> None:
         c = callsign.clean(self.call.text())
-        if not c:
+        if not c or self.is_pattern():
+            if c:
+                self.message.emit(tr("* and ? only search Similar calls: pick a call to log."))
             self.call.setFocus()
             return
         q = self.values()

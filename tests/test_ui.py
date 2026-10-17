@@ -355,6 +355,30 @@ def test_similar_calls_in_worked_before(win, qtbot):
     assert p.call.text() == "BA1PX"
 
 
+def test_wildcards_in_the_call_field_only_search(win, qtbot):
+    for c in ("BA1PK", "BA8BLK", "BG1ZZ"):
+        log_one(win, qtbot, c)
+    p = win.dx
+    p.clear_form(full=True)
+    win.prefs.set("auto_lookup", True)
+    asked = []
+    p.lookup_requested.connect(asked.append)
+    p.call.setText("ba*k")
+    p._call_edited("ba*k")
+    p._call_finished()
+    p._refresh_checks()
+    rows = [p.similar.item(r, 0).text() for r in range(p.similar.rowCount())]
+    assert sorted(rows) == ["BA1PK", "BA8BLK"] and p.similar.horizontalHeaderItem(0).text() == "Matches (2)"
+    assert not p.log_btn.isEnabled() and not p._get("country") and not p.time_on_locked
+    p.commit()  # Enter: nothing is logged
+    assert win.db.count() == 3
+    qtbot.wait(1000)  # past the lookup delay
+    assert asked == []
+    p._pick_similar(rows.index("BA1PK"), 0)
+    p._refresh_checks()
+    assert p.call.text() == "BA1PK" and p._get("country") and p.log_btn.isEnabled()
+
+
 def test_unknown_call_checks_one_edit_candidates_online(win, qtbot, monkeypatch):
     from nwologger.core.lookup import clients as lookup_clients
 

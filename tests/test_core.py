@@ -318,6 +318,29 @@ def test_similar_calls_ranking():
     assert idx.online_candidates("BA1PW", skip={"BA1PQ"}, limit=1) == ["BA1PZ"]
 
 
+def test_similar_calls_wildcards_search_every_source():
+    from nwologger.core import similar
+    from nwologger.core.calllists import CallLists
+
+    idx = similar.CallIndex({"BA1PK": "2026-10-16T01:00:00Z", "BA8BLK": "2026-10-10T00:00:00Z",
+                             "BA1PK/P": "2026-09-01T00:00:00Z"}, {"BA4K": "QRZ.com"}, ["BA7XK", "BA1PKX", "W1PK"])
+    idx.set_lists(CallLists({"BA3ABK": "2026-01-01", "VK/BA9ZK": ""}, ["BA5QK"]))
+    # Like the search box: * is any run (also none), ? one character, over the whole call; case doesn't matter.
+    found = idx.find("ba*k")
+    assert [m.call for m in found] == ["BA1PK", "BA8BLK", "BA1PK/P", "BA4K", "BA3ABK", "BA5QK", "VK/BA9ZK", "BA7XK"]
+    assert [m.tier for m in found] == [similar.WORKED] * 3 + [similar.KNOWN] + [similar.LISTED] * 3 + [similar.SCP]
+    assert all(m.kind == similar.PATTERN for m in found)
+    assert [m.call for m in idx.find("*1PK")] == ["BA1PK", "BA1PK/P", "W1PK"]
+    assert [m.call for m in idx.find("B?1*K")] == ["BA1PK", "BA1PK/P"]
+    assert [m.call for m in idx.find("B*/P")] == ["BA1PK/P"]
+    assert idx.find("*") == [] and idx.find("**") == []  # nothing to match on
+    # Without a wildcard nothing changes: BA*PK only matched before as a one-character typo.
+    assert [m.call for m in idx.find("BA1PK")][:2] == ["BA1PK", "BA1PK/P"]
+    many = similar.CallIndex({}, {}, [f"BA{i}K" for i in range(10)])
+    calls, more = many.find_pattern("BA*K", cap=4)
+    assert len(calls) == 4 and more
+
+
 def test_power_values_and_setup_matching():
     from nwologger.core import devices
 
