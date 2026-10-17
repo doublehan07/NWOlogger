@@ -18,7 +18,7 @@ modern UI, and built with Python and Qt (PySide6).
 | | |
 |---|---|
 | ![Dupe compare](docs/screenshots/compare.png) | ![Contest mode](docs/screenshots/contest.png) |
-| *A group of three possible dupes side by side. Cells are editable; keep one and merge the others.* | *Contest mode (CQ WW): entry line, live score, Check Partial and N+1.* |
+| *A group of three possible dupes side by side. Cells are editable; Merge… picks, row by row, what the merged QSO keeps.* | *Contest mode (CQ WW): entry line, live score, Check Partial and N+1.* |
 | ![Dark theme](docs/screenshots/dark.png) | ![Simplified Chinese](docs/screenshots/zh_CN.png) |
 | *Dark theme* | *简体中文* |
 | ![Preferences: modes](docs/screenshots/prefs-modes.png) | ![Preferences: devices](docs/screenshots/prefs-devices.png) |
@@ -106,7 +106,7 @@ Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Ac
 - **Strict dupe checking:**
   - Only the same call, band and exact mode within 30 seconds blocks logging.
   - The same mode later, or a related mode (SSB vs USB, USB vs LSB, FT8 vs FT4), only warns.
-  - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, or keep one QSO and merge the others into it, delete one, or mark them as not dupes.
+  - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, merge them field by field (click the value to keep on each row that differs; confirmations and upload states are combined), delete one, or mark them as not dupes, also all of them at once (asks twice). Edit → Merge selected… merges 2–5 selected QSOs with the same call.
 - **Bulk edit** of a selection, with a preview; a backup is saved first.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
   - A call is **green** when LoTW confirmed the QSO (eQSL, QRZ.com and paper cards don't make it green).
@@ -174,7 +174,7 @@ NWOlogger/
 │   │   ├── entry/dx_panel.py  the DX entry form
 │   │   ├── log/               log table model / view, filter bar, advanced search
 │   │   ├── contest/           contest entry line and panes, setup, user-defined contests
-│   │   ├── dupe_dialog.py     side-by-side dupe groups: compare, edit, merge
+│   │   ├── dupe_dialog.py     side-by-side dupe groups: compare, edit, merge field by field
 │   │   ├── operator_field.py  the Operator field (personal / club station rules)
 │   │   ├── list_picker.py     "Other mode… / Other satellite…" search
 │   │   ├── bulk_edit.py, qsl_paper.py, import_dialog.py, prefs_dialog.py, about_dialog.py, …

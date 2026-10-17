@@ -1,6 +1,6 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found. What is left is below.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found; v0.1.6 adds merging field by field, Look up and fill with progress, and safer bulk edit times. What is left is below.
 
 ## Needs real accounts
 
@@ -29,10 +29,7 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] **Gridmaster-style grid display** (planned for v0.1.7): a map of Maidenhead grid squares coloured by worked / confirmed (VUCC), per band, mode or satellite
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
-- [ ] Bulk edit: refuse a Time Off earlier than Time On, as the entry form does
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
-- [ ] Bulk "Look up and fill" progress dialog with cancel
-- [ ] Find duplicates: merge two QSOs field by field
 - [ ] Check the release build (PyInstaller) uses the macOS Keychain / Windows Credential Manager backend
 
 ## M9 — Integrations (later)
@@ -46,6 +43,13 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
+
+## Done in v0.1.6 (2026-10-17)
+
+- [x] **Merge field by field:** in the compare window, *Merge…* adds a Result column; click the value to keep on each row that differs (Comment / Notes can keep both), choose the QSO that stays by its column header. Confirmations and upload states are combined (the best state with its date and log id), other programs' fields kept from all; the result is checked like the entry form; deleted QSOs that are also on QRZ.com / HRDLog are listed to delete there. *Edit → Merge selected…* does the same for 2–5 selected QSOs with the same call
+- [x] **Ignore all marked dupes** (Edit menu, and *Not dupes: all…* in the compare window): every DUPE / SUSPECT QSO becomes "not a dupe", after a warning and a second question, with a backup
+- [x] **Look up and fill** runs in a window with progress (count, current call, found / not found / failed) and *Stop*, which keeps what was found; at most one lookup a second; the same error three times in a row ends the run; *Look up the other N* continues later
+- [x] **Bulk edit** refuses a QSO that would end before it starts and a time it can't read (it used to empty the field), with *Leave those out* for the rest
 
 ## Done in v0.1.5 (2026-10-17)
 
