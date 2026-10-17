@@ -257,6 +257,7 @@ class ProfilesPage(QWidget):
         self.station_type.setCurrentIndex(max(0, self.station_type.findData(p.get("station_type") or "personal")))
         self.default.setChecked(bool(p.get("is_default")))
         self._type_changed()
+        self._saved_state = self._editor_state()
 
     def _type_changed(self) -> None:
         club = self.station_type.currentData() == "club"
@@ -271,6 +272,14 @@ class ProfilesPage(QWidget):
             e.clear()
         self.default.setChecked(not self.db.profiles())
         self.edits["name"].setFocus()
+        self._saved_state = self._editor_state()
+
+    def _editor_state(self) -> tuple:
+        return (tuple(e.text().strip() for e in self.edits.values()),
+                self.station_type.currentData(), self.default.isChecked())
+
+    def has_unsaved_changes(self) -> bool:
+        return self._editor_state() != self._saved_state
 
     def _auto_zones(self) -> None:
         call = self.edits["station_callsign"].text().strip().upper()
@@ -287,11 +296,11 @@ class ProfilesPage(QWidget):
         if not self.edits["name"].text():
             self.edits["name"].setText(call)
 
-    def _save(self) -> None:
+    def _save(self) -> bool:
         data = {k: (e.text().strip() or None) for k, e in self.edits.items()}
         if not data.get("station_callsign"):
             QMessageBox.warning(self, tr("Station profile"), tr("Enter the station callsign."))
-            return
+            return False
         data["station_callsign"] = data["station_callsign"].upper()
         for k in ("my_cq_zone", "my_itu_zone", "my_dxcc"):
             if data.get(k):
@@ -317,6 +326,7 @@ class ProfilesPage(QWidget):
         self._call_changed(old, data["station_callsign"])
         self._reload(select=pid)
         self.changed.emit()
+        return True
 
     def _call_used(self, call: str) -> bool:
         return any((p.get("station_callsign") or "").upper() == call for p in self.db.profiles())
@@ -848,9 +858,32 @@ class PrefsDialog(QDialog):
         theme.apply(QApplication.instance(), self.theme.currentData())
 
     def reject(self) -> None:
+        if not self._confirm_profile_changes():
+            return
         if self.theme.currentData() != self._theme_at_open:
             theme.apply(QApplication.instance(), self._theme_at_open)
         super().reject()
+
+    def _confirm_profile_changes(self) -> bool:
+        if not self.profiles_page.has_unsaved_changes():
+            return True
+        choice = QMessageBox.question(
+            self, tr("Unsaved station profile"),
+            tr("The station profile has been modified but not saved. Save these changes before closing Preferences?"),
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if choice == QMessageBox.StandardButton.Discard:
+            return True
+        if choice == QMessageBox.StandardButton.Save:
+            if self.profiles_page._save():
+                return True
+        # Keep the editor in view after Cancel or a failed profile validation.
+        for index in range(self.tabs.count()):
+            if self.tabs.widget(index).widget() is self.profiles_page:
+                self.tabs.setCurrentIndex(index)
+                break
+        return False
 
     def _fill_qrz_keys(self) -> None:
         """One row per station callsign in your profiles; a key typed or forgotten but not yet saved stays."""
@@ -913,6 +946,8 @@ class PrefsDialog(QDialog):
         QMessageBox.information(self, tr("Backup"), tr("Saved") + f"\n{dest}")
 
     def _save(self) -> None:
+        if not self._confirm_profile_changes():
+            return
         p = self.prefs
         before = {k: p.get(k) for k in DEFAULTS}
         touched: list[str] = []  # secrets written or forgotten (never their values)

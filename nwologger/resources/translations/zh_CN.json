@@ -916,6 +916,8 @@
 "TX MHz": "发射 MHz",
 "Type a command…": "输入命令…",
 "Unsaved edits": "未保存的修改",
+"Unsaved station profile": "未保存的电台配置",
+"The station profile has been modified but not saved. Save these changes before closing Preferences?": "电台配置已修改但尚未保存。关闭偏好设置前，是否保存这些修改？",
 "Update country file (cty.csv)": "更新国家数据文件 (cty.csv)",
 "Update JSON from the form": "根据表单更新 JSON",
 "Update LoTW and eQSL call lists (similar calls)": "更新 LoTW 和 eQSL 呼号列表（相似呼号）",
