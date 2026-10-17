@@ -543,6 +543,8 @@ The lookup runs when the call field loses focus, after a short pause while typin
 3. **QRZ.com XML** (`xmldata.qrz.com/xml/current/`, session key) gives name, address, QTH, state, county, grid, email, QSL via and LoTW/eQSL flags. Full data needs an XML subscription.
 4. **HamQTH** fallback: `xml.php` session, valid 1 h. Its API v2 (bearer token) will be checked during implementation.
 
+**Look up and fill** (Edit menu, for the selected QSOs) fills only empty fields (name, QTH, address, state, county, grid, email, web, QSL via, IOTA). Calls in the cache are filled at once; the others are looked up one at a time, at most one a second, in a window with progress (count, current call, found / not found / failed) and *Stop*. Stop finishes the request in flight and fills from everything found so far; every found call is cached at once, so *Look up the other N* only asks for the rest. The same error three times in a row (a wrong password, an expired subscription) ends the run. A `lookup` backup is saved before the fill; the log file gets one line with the counts and the time taken.
+
 **Similar calls** (§6) use your log, the lookup cache and MASTER.SCP. The XML APIs only look up exact calls, so when a call comes back "not found", up to three MASTER.SCP calls one character away (a changed character first) are looked up on QRZ.com / HamQTH. Those found are cached and listed as known; each candidate is asked once per run. This uses lookup quota, and needs MASTER.SCP (File → Update MASTER.SCP).
 
 Lookups fill **empty fields only** and never overwrite what you typed. They run in a background thread, and a result that arrives after the call has changed is thrown away. Fields filled by lookup are tinted until you edit them, so you can tell them from typed ones.

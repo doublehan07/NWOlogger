@@ -48,6 +48,7 @@ from .log.filter_bar import FilterBar
 from .log.log_model import LogModel
 from .log.log_view import LogView
 from .log.search_dialog import SearchDialog
+from .lookup_fill import LookupFillDialog
 from .prefs_dialog import PrefsDialog
 from .qsl_paper import PaperQslTab, mark_paper
 from .sync_controller import SyncController, clear_history
@@ -670,50 +671,20 @@ class MainWindow(QMainWindow):
 
         run_async(work, on_done=done, on_error=lambda m: self.flash(self._safe_lookup_error(m)))
 
-    def lookup_fill_selected(self) -> None:
-        ids = self.view.selected_ids()
-        rows = self.db.get_many(ids)
-        calls = sorted({q["call"] for q in rows.values() if q.get("call")})
-        if not calls:
+    def lookup_fill_selected(self, ids: list[int] | None = None) -> None:
+        """Look up the selected QSOs' calls and fill their empty fields, in a window with progress and Stop."""
+        ids = ids or self.view.selected_ids()
+        if not ids:
             return
-        clients = self.lookup_clients()
-        ttl = self.prefs.get("lookup_ttl_days")
-        cached = {c: self.db.cache_get(c, ttl) for c in calls}
-        todo = [c for c in calls if not cached[c]]
-        if todo and not clients:
-            QMessageBox.information(self, tr("Lookup"), tr("Set a QRZ.com or HamQTH account in Preferences → Lookup."))
-            if not any(cached.values()):
-                return
-        self.flash(tr("Looking up") + f" {len(todo)} " + tr("calls…"))
-
-        def work():
-            out = {}
-            for c in todo:
-                data, source, _err = lookup_clients.lookup_chain(c, clients)
-                if data:
-                    out[c] = (data, source)
-            return out
-
-        def done(found):
-            for c, (data, source) in found.items():
-                self.db.cache_put(c, source or "", data)
-                self.dx.note_known(c, source or "")
-                cached[c] = data
-            cols = ["first_name", "last_name", "qth", "address", "state", "cnty", "gridsquare", "email", "web",
-                    "qsl_via", "iota"]
-
-            def ch(q: dict) -> dict:
-                d = cached.get(q.get("call")) or {}
-                out = {c: d[c] for c in cols if d.get(c) and not q.get(c)}
-                if out.get("state") and q.get("dxcc") == regions.CHINA_DXCC:
-                    out["state"] = regions.normalize_cn(out["state"]) or out["state"]
-                return out
-
-            self.db.backup("lookup")
-            n = self.db.update_many(ids, ch, label=tr("Look up and fill"))
-            self.flash(tr("Filled") + f" {n} " + tr("QSOs"))
-
-        run_async(work, on_done=done, on_error=lambda m: self.flash(self._safe_lookup_error(m)))
+        cur = getattr(self, "_lookup_fill", None)
+        if cur is not None and cur.running:
+            cur.show()
+            cur.raise_()
+            return
+        dlg = LookupFillDialog(self, ids)
+        dlg.finished_fill.connect(lambda n: self.flash(tr("Filled") + f" {n} " + tr("QSOs")))
+        self._lookup_fill = dlg
+        dlg.start()
 
     # ------------------------------------------------------------------ files
     def import_file(self) -> None:

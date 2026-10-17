@@ -436,6 +436,81 @@ def test_unknown_call_checks_one_edit_candidates_online(win, qtbot, monkeypatch)
 
 
 
+def _lookup_setup(win, monkeypatch, chain):
+    from nwologger.core.lookup import clients as lookup_clients
+
+    class FakeClient:
+        name = "QRZ.com"
+
+        def secrets(self):
+            return []
+
+    win._lookup_clients = [FakeClient()]
+    monkeypatch.setattr(lookup_clients, "lookup_chain", chain)
+    for c in ("BA1AA", "BA1BB", "BA1CC", "BA1DD", "BA1EE"):
+        log_one(win, None, c)
+    win.db.cache_put("BA1AA", "QRZ.com", {"call": "BA1AA", "first_name": "Wang"})
+
+
+def test_look_up_and_fill_counts_and_fills_only_empty_fields(win, qtbot, monkeypatch):
+    from nwologger.ui.lookup_fill import LookupFillDialog
+
+    asked = []
+
+    def chain(call, _clients):
+        asked.append(call)
+        return ({"call": call, "first_name": "Li", "qth": "Beijing"}, "QRZ.com", []) if call == "BA1BB" else \
+            (None, None, ["QRZ.com: busy"] if call == "BA1CC" else [])
+
+    _lookup_setup(win, monkeypatch, chain)
+    win.db.update(2, {"qth": "Tianjin"})
+    dlg = LookupFillDialog(win, [1, 2, 3, 4, 5], pace=0)
+    qtbot.addWidget(dlg)
+    dlg.start()
+    qtbot.waitUntil(lambda: not dlg.running)
+    assert asked == ["BA1BB", "BA1CC", "BA1DD", "BA1EE"]  # BA1AA came from the cache
+    assert (win.db.get(1)["first_name"], win.db.get(2)["first_name"], win.db.get(2)["qth"]) == ("Wang", "Li", "Tianjin")
+    assert (dlg.not_found, dlg.failed) == (2, 1) and "QRZ.com: busy" in dlg.detail.text()
+    assert "lookup" in [win.db._label(p) for p in win.db.backups()] and win.db.cache_get("BA1BB", 30)
+
+
+def test_look_up_and_fill_stop_keeps_what_was_found(win, qtbot, monkeypatch):
+    import time
+
+    from nwologger.ui.lookup_fill import LookupFillDialog
+
+    def chain(call, _clients):
+        time.sleep(0.15)
+        return {"call": call, "first_name": "Li"}, "QRZ.com", []
+
+    _lookup_setup(win, monkeypatch, chain)
+    dlg = LookupFillDialog(win, [1, 2, 3, 4, 5], pace=0)
+    qtbot.addWidget(dlg)
+    dlg.start()
+    qtbot.waitUntil(lambda: dlg.asked >= 1)
+    dlg.stop()
+    qtbot.waitUntil(lambda: not dlg.running)
+    assert 1 <= dlg.asked < 4 and win.db.get(2)["first_name"] == "Li"
+    assert not dlg.again_btn.isHidden() and "Look up the other" in dlg.again_btn.text()
+
+
+def test_look_up_and_fill_stops_after_the_same_error_three_times(win, qtbot, monkeypatch):
+    from nwologger.ui.lookup_fill import LookupFillDialog
+
+    asked = []
+
+    def chain(call, _clients):
+        asked.append(call)
+        return None, None, ["QRZ.com: Session timeout"]
+
+    _lookup_setup(win, monkeypatch, chain)
+    dlg = LookupFillDialog(win, [1, 2, 3, 4, 5], pace=0)
+    qtbot.addWidget(dlg)
+    dlg.start()
+    qtbot.waitUntil(lambda: not dlg.running)
+    assert len(asked) == 3 and "Session timeout" in dlg.detail.text() and not dlg.again_btn.isHidden()
+
+
 def test_preferences_ok_opens_no_backup(win, monkeypatch):
     import sqlite3
 
