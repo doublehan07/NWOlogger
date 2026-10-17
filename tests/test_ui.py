@@ -78,6 +78,31 @@ def test_log_dupe_and_bulk_edit(win, qtbot):
     assert not any("Undo" in a.text() for a in win.actions_)  # there is no undo
 
 
+def test_bulk_edit_refuses_bad_times(win):
+    from nwologger.core import qso as qsomod
+    from nwologger.ui.bulk_edit import BulkEditDialog
+
+    db = win.db
+    for call, on, off in (("BA1PK", "15:19", "15:21"), ("BA8BLK", "15:24", None), ("BG1ZZ", "15:26", "15:27")):
+        db.insert(qsomod.normalize({"call": call, "mode": "FM", "band": "2m", "time_on": f"2026-10-10T{on}:00Z",
+                                    "time_off": f"2026-10-10T{off}:00Z" if off else None}))
+    dlg = BulkEditDialog(db, [1, 2, 3], win)
+    off = next(f for f in dlg.fields if f.col == "time_off")
+    off.value.setText("15:00")  # no date: never written as an empty Time Off
+    dlg._update_preview()
+    assert not dlg.apply_btn.isEnabled() and "2026-10-10 15:00" in dlg.problem.text()
+    off.on.setChecked(False)
+    on = next(f for f in dlg.fields if f.col == "time_on")
+    on.value.setText("2026-10-10 15:30")
+    dlg._update_preview()
+    assert dlg.refused == [1, 3] and not dlg.apply_btn.isEnabled() and not dlg.leave_out.isHidden()
+    assert dlg.preview.item(0, 5).text().startswith("ends before it starts")
+    dlg._leave_out()
+    assert dlg.ids == [2] and dlg.apply_btn.isEnabled()
+    dlg._apply()
+    assert db.get(2)["time_on"] == "2026-10-10T15:30:00Z" and db.get(1)["time_on"] == "2026-10-10T15:19:00Z"
+
+
 def test_filters_and_export(win, qtbot, tmp_path):
     for c in ("BA1AA", "BG8BB", "BA1CC"):
         log_one(win, qtbot, c, mode="FT8", freq="14.074")

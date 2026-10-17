@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QSplitter,
     QTableWidget,
@@ -25,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
-from ..core import dxcc, regions
+from ..core import dxcc, regions, timeutil
 from ..core import qso as qsomod
 from ..core.fields import BY_COL, GROUP_ORDER, bulk_fields
 from . import theme
@@ -34,6 +37,7 @@ from .widgets import fmt
 tr = i18n.tr
 
 CTY_COLS = {"country", "dxcc", "cqz", "ituz", "cont", "state"}
+TIME_COLS = ("time_on", "time_off")
 OPS = [("set", "Set to"), ("clear", "Clear"), ("replace", "Replace text"), ("cty", "Fill from country file")]
 
 
@@ -157,8 +161,16 @@ class BulkEditDialog(QDialog):
         rl.setContentsMargins(0, 0, 0, 0)
         self.count = QLabel()
         rl.addWidget(self.count)
-        self.preview = QTableWidget(0, 5)
-        self.preview.setHorizontalHeaderLabels([tr("Call"), tr("Time On"), tr("Field"), tr("Old"), tr("New")])
+        self.problem = QLabel()
+        self.problem.setWordWrap(True)
+        self.problem.setVisible(False)
+        rl.addWidget(self.problem)
+        self.leave_out = QPushButton()
+        self.leave_out.setVisible(False)
+        self.leave_out.clicked.connect(self._leave_out)
+        rl.addWidget(self.leave_out, 0, Qt.AlignmentFlag.AlignLeft)
+        self.preview = QTableWidget(0, 6)
+        self.preview.setHorizontalHeaderLabels([tr("Call"), tr("Time On"), tr("Field"), tr("Old"), tr("New"), ""])
         self.preview.verticalHeader().setVisible(False)
         self.preview.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.preview.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -185,6 +197,8 @@ class BulkEditDialog(QDialog):
         self._timer.setInterval(150)
         self._timer.timeout.connect(self._update_preview)
         self.changed_count = 0
+        self.refused: list[int] = []  # QSOs that would end before they start
+        self.unreadable: list[tuple[str, str]] = []  # (field label, text) of times that can't be read
         self._update_preview()
 
     def _schedule(self, *_a) -> None:
@@ -210,43 +224,102 @@ class BulkEditDialog(QDialog):
                     ch[fr.col] = new
         return ch
 
+    def _time_fields(self) -> list[tuple[str, str]]:
+        """Times typed for "Set to" that can't be read: they are refused, never written as empty."""
+        bad = []
+        for fr in self.fields:
+            if fr.col in TIME_COLS and fr.active() and fr.op.currentData() == "set":
+                text = fr.value.text().strip()
+                unreadable = bool(text) and timeutil.parse_iso(text) is None
+                fr.value.setProperty("opstate", "bad" if unreadable else "")
+                theme.repolish(fr.value)
+                if unreadable:
+                    bad.append((tr(BY_COL[fr.col].label), text))
+        return bad
+
+    @staticmethod
+    def _example(text: str, q: dict | None) -> str:
+        """A time typed without a date (15:00) shown with the first QSO's date: 2026-10-10 15:00."""
+        day = (q or {}).get("time_on", "")[:10] or timeutil.today_iso()
+        return f"{day} {text}" if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", text) else f"{day} 15:00"
+
     def _update_preview(self) -> None:
-        rows = []
+        rows, refused_rows = [], []
         n = 0
+        self.refused = []
+        self.unreadable = self._time_fields()
         for qid in self.ids:
             q = self.rows_data.get(qid)
             if not q:
                 continue
             ch = self.changes_for(q)
             norm = {}
+            merged = q
             if ch:
                 merged = qsomod.normalize({**q, **ch})
                 norm = {k: merged.get(k) for k in ch}
             real = {k: v for k, v in norm.items() if v != q.get(k)}
-            if real:
+            if not real:
+                continue
+            on, off = merged.get("time_on"), merged.get("time_off")
+            why = ""
+            if any(k in TIME_COLS and ch.get(k) not in (None, "") and merged.get(k) is None for k in real):
+                why = tr("can't read the new time")
+            elif on and off and off < on:
+                why = tr("ends before it starts") + f" ({tr('Time Off')} {fmt('time_off', off)[11:16]})"
+            if why:
+                self.refused.append(qid)
+            else:
                 n += 1
-                for k, v in real.items():
-                    if len(rows) < 300:
-                        rows.append((q.get("call") or "", fmt("time_on", q.get("time_on")), tr(BY_COL[k].label),
-                                     fmt(k, q.get(k)), fmt(k, v)))
+            for k, v in real.items():
+                row = (q.get("call") or "", fmt("time_on", q.get("time_on")), tr(BY_COL[k].label),
+                       fmt(k, q.get(k)), fmt(k, v), why)
+                (refused_rows if why else rows).append(row)
+        rows = (refused_rows + rows)[:300]
         self.changed_count = n
         self.count.setText(f"<b>{n}</b> " + tr("of") + f" {len(self.ids)} " + tr("QSOs will change"))
-        self.preview.setRowCount(len(rows))
         t = theme.tokens()
+        problems = []
+        if self.unreadable:
+            label, text = self.unreadable[0]
+            first = self.rows_data.get(self.ids[0]) if self.ids else None
+            problems.append(tr("Can't read") + f" “{text}” ({label}) " + tr("as a date and time. Type it as") +
+                            f" {self._example(text, first)}.")
+        if self.refused:
+            problems.append(f"<b>{len(self.refused)} " + tr("of") + f" {len(self.ids)} " +
+                            tr("QSOs would end before they start.") + "</b> " +
+                            tr("Change Time On / Time Off, or leave those QSOs out of this bulk edit."))
+        self.problem.setText("<br>".join(problems))
+        self.problem.setStyleSheet(f"color: {t.bad};")
+        self.problem.setVisible(bool(problems))
+        self.leave_out.setText(tr("Leave those out") + f" ({len(self.refused)})")
+        self.leave_out.setVisible(bool(self.refused) and not self.unreadable)
+        self.preview.setRowCount(len(rows))
         for i, r in enumerate(rows):
             for j, v in enumerate(r):
                 it = QTableWidgetItem(v)
-                if j == 3:
+                if r[5]:
+                    it.setBackground(QBrush(QColor(t.bad_soft)))
+                    if j == 5:
+                        it.setForeground(QBrush(QColor(t.bad)))
+                elif j == 3:
                     it.setForeground(Qt.GlobalColor.gray)
-                if j == 4:
+                elif j == 4:
                     it.setForeground(Qt.GlobalColor.darkGreen if t.name == "light" else Qt.GlobalColor.green)
                 self.preview.setItem(i, j, it)
-        self.apply_btn.setEnabled(n > 0)
+        self.apply_btn.setEnabled(n > 0 and not self.refused and not self.unreadable)
         if self.only_active.isChecked():
             self._filter()
 
+    def _leave_out(self) -> None:
+        """Take the QSOs that would end before they start out of this bulk edit, so the rest can be applied."""
+        out = set(self.refused)
+        self.ids = [i for i in self.ids if i not in out]
+        self.setWindowTitle(tr("Bulk edit") + f" — {len(self.ids)} " + tr("QSOs"))
+        self._update_preview()
+
     def _apply(self) -> None:
-        if not self.changed_count:
+        if not self.changed_count or self.refused or self.unreadable:
             return
         self.db.backup("bulk-edit")
         self.db.update_many(self.ids, self.changes_for, label=tr("Bulk edit") + f" ({self.changed_count})")
