@@ -631,6 +631,13 @@ class PrefsDialog(QDialog):
         f.addRow(tr("Callsign"), self.hrd_call)
         f.addRow(tr("Upload code"), self.hrd_code)
         f.addRow(tr("Upload each QSO when logged"), up)
+        self.gap = QSpinBox()
+        self.gap.setRange(1, 60)
+        self.gap.setSuffix(" " + tr("min"))
+        self.gap.setValue(max(1, prefs.get("sync_gap_minutes")))
+        f.addRow(tr("Wait between syncs with the same service"), self.gap)
+        f.addRow("", self._hint(tr("Whole minutes, at least 1: a download (or upload) that comes sooner is refused "
+                                   "and says when it can run. QSOs uploaded when logged wait and go together.")))
         self.tabs.addTab(sv, tr("Services"))
 
         # Modes shown in the entry form
@@ -914,6 +921,7 @@ class PrefsDialog(QDialog):
                 touched.append("qrz_logbook_key")
                 if not p.set_qrz_api_key(call, item.data(KEY_ROLE) if state == "new" else None):
                     failed.append(f"QRZ key {call}")
+        p.set("sync_gap_minutes", self.gap.value())
         p.set("upload_on_log", {"qrz": self.up_qrz.isChecked(), "eqsl": self.up_eqsl.isChecked(),
                                 "hrdlog": self.up_hrd.isChecked()})
         p.set("user_sats", self.user_sats)

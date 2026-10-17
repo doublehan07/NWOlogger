@@ -333,6 +333,59 @@ def test_cancel_stops_tqsl_and_leaves_the_qso_pending(ctrl, qtbot, stuck_tqsl, m
     assert "Stopped in NWOlogger" in ctrl.results.texts()[0]
 
 
+def test_a_second_download_inside_the_gap_is_refused_and_says_when(ctrl, qtbot, mock_net):
+    from nwologger.core import timeutil
+    from nwologger.ui.sync_controller import SyncController
+
+    seen = mock_net(lambda req: httpx.Response(200, text="<EOH>"))
+    ctrl.download("lotw")
+    qtbot.waitUntil(lambda: "lotwdown" not in ctrl.busy)
+    sent = len(seen)
+    ctrl.download("lotw")
+    assert len(seen) == sent and "Too soon after the last download" in ctrl.results.texts()[0]
+    assert "UTC" in ctrl.results.texts()[0] and ctrl.results.fixes[0] == "Services"
+    again = SyncController(ctrl.db, ctrl.prefs, ctrl.parent())  # a restart doesn't shorten the wait
+    assert again.wait_left("lotw", "download") > 0 and again.wait_left("lotw", "upload") == 0
+    ctrl.prefs.set("sync_gap_minutes", 0)  # never less than a minute
+    assert 0 < ctrl.wait_left("lotw", "download") <= 60
+    ctrl.db.sync_set("lotw", "last_download", timeutil.shift_iso(timeutil.now_iso(), -61))
+    assert ctrl.wait_left("lotw", "download") == 0
+    ctrl.download("eqsl")  # skipped before any request (no QTH nickname): no wait starts
+    assert ctrl.db.sync_get("eqsl", "last_download") is None
+
+
+def test_uploads_when_logged_wait_and_go_together(ctrl, monkeypatch):
+    from nwologger.core import timeutil
+
+    ctrl.db.insert(qsomod.normalize({"call": "BA1BB", "time_on": "2026-10-10T15:20:00Z", "mode": "FM", "band": "2m",
+                                     "station_callsign": "BI1ZZZ"}))
+    runs = []
+    monkeypatch.setattr(ctrl, "_upload_qrz", lambda qsos, quiet: runs.append([q["id"] for q in qsos]))
+    ctrl.db.sync_set("qrz", "last_upload", timeutil.now_iso())
+    ctrl.upload("qrz", [1], quiet=True)
+    ctrl.upload("qrz", [2], quiet=True)
+    assert runs == [] and ctrl.queued["qrz"] == {1, 2} and ctrl._queue_timers["qrz"].isActive()
+    assert ctrl.waiting() == ["QRZ.com upload (2 QSOs waiting)"]
+    ctrl.db.sync_set("qrz", "last_upload", None)  # the wait is over
+    ctrl._flush("qrz")
+    assert runs == [[1, 2]] and not ctrl.queued
+
+
+def test_download_everything_again_resets_where_downloads_resume(ctrl, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    asked, started = [], []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda _p, _t, text, *a, **k: asked.append(text) or
+                                                              QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(ctrl, "download", started.append)
+    ctrl.db.sync_set("lotw", "last_qsl", "2026-10-14 23:07:03")
+    ctrl.db.sync_set("lotw", "last_qsorx", "2026-10-16 14:37:32")
+    ctrl.db.sync_set("lotw", "full_seconds", "233")
+    ctrl.download_all_again("lotw")
+    assert ctrl.db.sync_get("lotw", "last_qsl") is None and ctrl.db.sync_get("lotw", "last_qsorx") is None
+    assert started == ["lotw"] and "3 min 53 sec" in asked[0]
+
+
 def test_background_tasks_never_hold_up_quitting():
     from nwologger.ui.widgets import Task
 

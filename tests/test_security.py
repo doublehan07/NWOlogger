@@ -245,6 +245,7 @@ def test_failed_downloads_store_and_show_no_password(ctrl, qtbot, mock_net, tmp_
         qtbot.waitUntil(lambda s=svc: s + "down" not in ctrl.busy)
     rows = ctrl.db.sync_history()
     assert len(rows) == 2 and all("HTTP 503" in r["message"] for r in rows)
+    ctrl.db.sync_set("lotw", "last_download", None)  # past the wait between syncs
     ctrl.download("lotw")  # a failed run no longer leaves the service marked busy
     assert "lotwdown" in ctrl.busy
     qtbot.waitUntil(lambda: "lotwdown" not in ctrl.busy)

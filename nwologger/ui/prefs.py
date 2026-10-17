@@ -29,6 +29,7 @@ DEFAULTS: dict[str, Any] = {
     "eqsl_user": "",
     "hrdlog_call": "",
     "upload_on_log": {"qrz": False, "eqsl": False, "hrdlog": False},
+    "sync_gap_minutes": 5,  # the wait between two downloads (or two uploads) with the same service
     "sat_names": {},
     "user_sats": [],
     "sat_list": [],

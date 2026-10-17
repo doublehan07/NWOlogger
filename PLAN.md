@@ -151,7 +151,7 @@ Notes on the model:
 | `contest_session` | Contest definition id, name, start/end, Cabrillo categories, sent-exchange template, next serial, station profile |
 | `saved_filter` | Named searches (JSON filter spec) |
 | `lookup_cache` | Callsign → JSON result, source, fetched_at (TTL in Prefs) |
-| `sync_state` | Per-service cursors (LoTW last QSL / last QSO-rx, eQSL RcvdSince); QRZ.com is always fetched whole |
+| `sync_state` | Per-service cursors (LoTW last QSL / last QSO-rx, eQSL RcvdSince; QRZ.com is always fetched whole), the time of the last download and upload per service (the wait between syncs), and how long the last full download took. QSL → LoTW / eQSL → *Download everything again…* resets the cursors |
 | `sync_log` | Sync history: service, direction, time, counts, errors. *Clear history…* deletes it per service; `sync_state` (where downloads resume) is separate and kept |
 
 ### 4.3 Safety
@@ -467,6 +467,8 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
 - **Adapter interface:** each service implements `test_credentials()`, `upload(qsos)` and `download(since)`.
   - Work runs in background workers, with a progress dialog and a row in `sync_log`.
   - Nothing is uploaded automatically unless enabled per service. "Upload on log" is offered for QRZ, eQSL and HRDLog (off by default).
+  - **Wait between syncs:** after a download (or an upload) that reached a service, the next one in the same direction waits N minutes (Preferences → Services, whole minutes, default 5, at least 1). A click inside the wait gives a Sync results row saying when it can run; a run skipped before any request (e.g. no password) doesn't start a wait; the times are kept in the log file, so a restart doesn't shorten it. QSOs uploaded when logged are never dropped: inside the wait (or while an upload runs) they wait and go out together when it ends. Lookups, call lists, cty.csv and MASTER.SCP are not paced by it.
+  - **Summaries lead with what is new:** "2 new confirmations · 1 already in your log · 6 not in your log". LoTW sends its newest confirmation again (its "since" is inclusive, so nothing recorded in the same second is missed), eQSL starts a day early, QRZ.com sends the whole logbook: those records are only "already in your log". The QRZ.com download date is set once, when a QSO first appears there. A Sync results row with new confirmations has *Select them*.
   - *Sync everything* only downloads (LoTW, eQSL, QRZ.com). Uploads are always started by you: Upload pending (asks first) or Upload selected, because a LoTW or eQSL upload can't be taken back and eQSL sends a card to the other station.
   - **Outcomes** go to one non-modal **Sync results** window (QSL → Show sync results), a row per run: Done / Note / Skipped / Failed / Stopped, the details and a short *ref*; a row that a setting fixes has *Open Preferences*. No message box is opened from a finished background job: three downloads finishing together used to stack three app-modal boxes, where only the top one takes a click and the app looked hung. Upload on log only brings the window up for a failure, without taking the keyboard. Records that don't match open the Unmatched list without blocking either.
   - **Checks before a run:** account fields; for LoTW, TQSL and each profile's station location, which must be one TQSL has (`~/.tqsl/station_data`, `%APPDATA%\TrustedQSL\station_data`, or `TQSLDIR`); for eQSL, each profile's QTH nickname. A QSO whose profile lacks one is skipped with a row naming the profile.

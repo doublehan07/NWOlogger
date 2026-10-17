@@ -157,6 +157,9 @@ class MainWindow(QMainWindow):
             if svc != "hrdlog":
                 sync_acts[f"{svc}_down"] = A(f"Download from {name}", lambda s=svc: self.sync.download(s), None,
                                              "download")
+            if svc in self.sync.RESUME_KEYS:
+                sync_acts[f"{svc}_again"] = A("Download everything again…",
+                                              lambda s=svc: self.sync.download_all_again(s))
         self.sync_acts = sync_acts
         self.a_sync_all = A("Sync everything", self.sync_all, "Ctrl+Shift+S", "refresh-cw",
                             tr("Download confirmations from LoTW, eQSL and QRZ.com. Nothing is uploaded: grey "
@@ -200,7 +203,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         for svc in ("lotw", "eqsl", "qrz", "hrdlog"):
             sub = m.addMenu({"lotw": "LoTW", "eqsl": "eQSL", "qrz": "QRZ.com", "hrdlog": "HRDLog"}[svc])
-            for k in (f"{svc}_down", f"{svc}_up", f"{svc}_up_sel"):
+            for k in (f"{svc}_down", f"{svc}_again", f"{svc}_up", f"{svc}_up_sel"):
                 if k in sync_acts:
                     sub.addAction(sync_acts[k])
         m.addSeparator()
@@ -242,7 +245,7 @@ class MainWindow(QMainWindow):
         sm = QMenu(syn)
         for svc, name in (("lotw", "LoTW"), ("eqsl", "eQSL"), ("qrz", "QRZ.com"), ("hrdlog", "HRDLog")):
             sub = sm.addMenu(name)
-            for k in (f"{svc}_down", f"{svc}_up", f"{svc}_up_sel"):
+            for k in (f"{svc}_down", f"{svc}_again", f"{svc}_up", f"{svc}_up_sel"):
                 if k in sync_acts:
                     sub.addAction(sync_acts[k])
         sm.addSeparator()
@@ -772,6 +775,7 @@ class MainWindow(QMainWindow):
         self.model.detach()
         self.paper.model.detach()
         self.db.remove_listener(self._on_db_change)
+        self.sync.stop_timers()
         self._clock_timer.stop()
         self.dx._clock.stop()
         self.dx._check_timer.stop()
@@ -903,6 +907,7 @@ class MainWindow(QMainWindow):
                          hh.sortIndicatorOrder()),
                 "selection": self.view.selected_ids(), "top": self.model.id_at(top.row()) if top.isValid() else None,
                 "form": self.dx.form_state(), "results": list(res.entries) if res is not None else [],
+                "queued": {s: sorted(ids) for s, ids in self.sync.queued.items() if ids},
                 "results_shown": res is not None and res.isVisible()}
 
     def restore(self, st: dict) -> None:
@@ -918,6 +923,8 @@ class MainWindow(QMainWindow):
         if top in self.model.row_of:
             self.view.scrollTo(self.model.index(self.model.row_of[top], 0), QAbstractItemView.ScrollHint.PositionAtTop)
         self.dx.restore_form(st.get("form") or {})
+        for svc, ids in (st.get("queued") or {}).items():
+            self.sync._queue(svc, ids)  # noqa: SLF001 - uploads that were waiting in the old window
         if st.get("results"):
             w = self.sync._window()  # noqa: SLF001 - the controller owns its results window
             w.replay(st["results"])
@@ -1004,15 +1011,14 @@ class MainWindow(QMainWindow):
             self.open_prefs("Station profiles")
 
     def closeEvent(self, e) -> None:  # noqa: N802
-        running = self.sync.running()
+        running = self.sync.running() + self.sync.waiting()
         if running and QMessageBox.question(
                 self, APP_NAME, tr("Still running:") + " " + ", ".join(running) + ".\n\n" +
                 tr("Quit anyway? TQSL is stopped; QSOs not reported as uploaded stay pending and can be uploaded "
                    "again later.")) != QMessageBox.StandardButton.Yes:
             e.ignore()
             return
-        if running:
-            self.sync.cancel_all()
+        self.sync.cancel_all()  # TQSL, and the timers of uploads waiting for the gap
         self.save_layout()
         self.shutdown()
         super().closeEvent(e)

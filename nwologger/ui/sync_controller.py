@@ -15,7 +15,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import timedelta
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -49,6 +49,12 @@ Text = str | Callable[[Callable[[str], str]], str]
 
 def _as_is(text: str) -> str:
     return text
+
+
+def _duration(t, seconds: float) -> str:
+    """78 → "1 min 18 s" (with t translating the units)."""
+    m, s = divmod(int(round(seconds)), 60)
+    return (f"{m} " + t("min") + (f" {s} " + t("sec") if s else "")) if m else f"{s} " + t("sec")
 
 RESULT_LABELS = {"ok": "Done", "info": "Note", "skipped": "Skipped", "failed": "Failed", "cancelled": "Stopped"}
 DIRECTIONS = {"up": "upload", "down": "download"}
@@ -217,7 +223,8 @@ class ClearHistoryDialog(QDialog):
             self.boxes[name] = cb
             lay.addWidget(cb)
         hint = QLabel(tr("Only the history is deleted. Your QSOs, their upload and confirmation status, and where "
-                         "the next download starts stay as they are."))
+                         "the next download starts stay as they are: downloads continue from where they stopped. To "
+                         "start over, use QSL → LoTW (or eQSL) → Download everything again…"))
         hint.setObjectName("Hint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -267,6 +274,8 @@ class SyncController(QObject):
         self.busy: set[str] = set()
         self.jobs: dict[str, tqsl.Job] = {}
         self.results: SyncResults | None = None
+        self.queued: dict[str, set[int]] = {}  # service → QSOs uploaded when logged, waiting for the gap
+        self._queue_timers: dict[str, QTimer] = {}
 
     def catalog(self) -> sats.SatCatalog:
         return sats.load(overrides=self.prefs.get("sat_names"), extra=self.prefs.get("user_sats"))
@@ -312,8 +321,19 @@ class SyncController(QObject):
             out.append(f"{apply.SERVICES.get(svc, svc)} {tr(DIRECTIONS[d])}")
         return out
 
+    def waiting(self) -> list[str]:
+        """Uploads waiting for the gap, e.g. ["QRZ.com upload (2 QSOs waiting)"], for the question when you quit."""
+        return [f"{apply.SERVICES.get(s, s)} {tr('upload')} ({len(ids)} {tr('QSOs waiting')})"
+                for s, ids in sorted(self.queued.items()) if ids]
+
+    def stop_timers(self) -> None:
+        for t in self._queue_timers.values():
+            t.stop()
+
     def cancel_all(self) -> None:
-        """Stop every TQSL run now (quitting); network requests end with their timeout on a daemon thread."""
+        """Stop every TQSL run and waiting upload now (quitting); network requests end with their timeout on a
+        daemon thread. Waiting QSOs stay pending: Upload pending sends them later."""
+        self.stop_timers()
         for key, job in list(self.jobs.items()):
             log.warning("Stopping %s (NWOlogger is quitting)", key)
             job.stop()
@@ -356,8 +376,52 @@ class SyncController(QObject):
             kw["message"] = self._safe(kw["message"], secrets)
         self.db.sync_log_add(apply.SERVICES[service], direction, started, **kw)
 
+    # ------------------------------------------------------------------ pacing
+    def gap_seconds(self) -> float:
+        return 60.0 * max(1, int(self.prefs.get("sync_gap_minutes") or 1))
+
+    def wait_left(self, service: str, direction: str) -> float:
+        """Seconds until the next run in this direction may reach this service (0: now). The time of the last run
+        is kept in the log file, so quitting doesn't shorten the wait."""
+        last = timeutil.parse_iso(self.db.sync_get(service, f"last_{direction}"))
+        if last is None:
+            return 0.0
+        return max(0.0, self.gap_seconds() - (timeutil.now_utc() - last).total_seconds())
+
+    def _too_soon(self, service: str, direction: str) -> bool:
+        left = self.wait_left(service, direction)
+        if left <= 0:
+            return False
+        ago, at = self.gap_seconds() - left, (timeutil.now_utc() + timedelta(seconds=left)).strftime("%H:%M:%S")
+        last = "Too soon after the last download" if direction == "download" else "Too soon after the last upload"
+        self.report(service, "skipped", lambda t: t(last) + f" ({_duration(t, ago)} " + t("ago") + "). " +
+                    t("The next one is possible at") + f" {at} UTC.", fix="Services")
+        return True
+
+    def _queue(self, service: str, ids: list[int]) -> None:
+        """Upload on log inside the gap (or while an upload runs): the QSOs wait and go together when it ends."""
+        q = self.queued.setdefault(service, set())
+        q.update(ids)
+        timer = self._queue_timers.get(service)
+        if timer is None:
+            timer = self._queue_timers[service] = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda s=service: self._flush(s))
+        if not timer.isActive():
+            timer.start(int(max(1.0, self.wait_left(service, "upload")) * 1000) + 500)
+        at = (timeutil.now_utc() + timedelta(milliseconds=timer.remainingTime())).strftime("%H:%M:%S")
+        log.info("%s upload: %d QSOs wait until %s UTC", apply.SERVICES[service], len(q), at)
+        self.message.emit(f"{apply.SERVICES[service]}: {len(q)} " + tr("QSOs wait for the next upload at") +
+                          f" {at} UTC")
+
+    def _flush(self, service: str) -> None:
+        ids = sorted(self.queued.pop(service, set()))
+        if ids:
+            self.upload(service, ids, quiet=True)
+
     def _start(self, service: str, direction: str, what: str) -> str:
         ref = applog.new_ref()
+        self.db.sync_set(service, f"last_{direction}", timeutil.now_iso())
         self.busy.add(service + ("down" if direction == "download" else "up"))
         log.info("%s %s started (ref %s): %s", apply.SERVICES[service], direction, ref, what)
         return ref
@@ -408,9 +472,14 @@ class SyncController(QObject):
     # ------------------------------------------------------------------ upload
     def upload(self, service: str, ids: list[int] | None = None, *, quiet: bool = False) -> None:
         key = service + "up"
+        if quiet and ids and (key in self.busy or self.wait_left(service, "upload") > 0):
+            self._queue(service, ids)  # upload on log: never dropped, sent when the gap ends
+            return
         if key in self.busy:
             if not quiet:
                 self.message.emit(f"{apply.SERVICES[service]}: " + tr("an upload is already running"))
+            return
+        if self._too_soon(service, "upload"):
             return
         qsos = apply.pending(self.db, service, ids)
         if not qsos:
@@ -660,7 +729,27 @@ class SyncController(QObject):
         if service + "down" in self.busy:
             self.message.emit(f"{apply.SERVICES[service]}: " + tr("a download is already running"))
             return
+        if self._too_soon(service, "download"):
+            return
         getattr(self, f"_download_{service}")()
+
+    RESUME_KEYS = {"lotw": ("last_qsl", "last_qsorx"), "eqsl": ("rcvd_since",)}
+
+    def download_all_again(self, service: str) -> None:
+        """Forget where downloads resume, so the next one starts from your first QSO (QRZ.com always does)."""
+        name = apply.SERVICES[service]
+        took = self.db.sync_get(service, "full_seconds")
+        if QMessageBox.question(
+                self.win, tr("Download everything again"),
+                f"{name}: " + tr("download everything again? The next download starts from your first QSO instead "
+                                 "of where the last one stopped.") + " " +
+                (tr("Last time this took") + f" {_duration(tr, float(took))}." if took else
+                 tr("For a large log this can take several minutes."))) != QMessageBox.StandardButton.Yes:
+            return
+        for k in self.RESUME_KEYS[service]:
+            self.db.sync_set(service, k, None)
+        log.info("%s: download positions reset (download everything again)", name)
+        self.download(service)
 
     def _download_lotw(self) -> None:
         user, pw = self._account("lotw_user"), self._secret("lotw_password")
@@ -684,6 +773,8 @@ class SyncController(QObject):
             self._end("lotw", "download")
             h1, r1, h2, r2 = res
             t1 = time.monotonic()
+            if not since_qsl and not since_rx:
+                self.db.sync_set("lotw", "full_seconds", str(round(t1 - t0)))
             cat = self.catalog()
             up = apply.apply_lotw_uploads(self.db, r2, cat)
             a = apply.apply_lotw_qsls(self.db, r1, cat)
@@ -734,6 +825,8 @@ class SyncController(QObject):
             dlg.close()
             self._end("eqsl", "download")
             t1 = time.monotonic()
+            if not since:
+                self.db.sync_set("eqsl", "full_seconds", str(round(t1 - t0)))
             a = apply.apply_eqsl(self.db, recs, self.catalog())
             timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
             # RcvdSince is a date: start the next download a day early, so cards that arrive later today aren't
