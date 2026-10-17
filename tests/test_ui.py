@@ -712,6 +712,53 @@ def test_sync_results_select_them(win, qtbot):
     assert not w.select_btn.isEnabled()  # nothing to select on that row
 
 
+def test_statistics_grid_map(win, qtbot):
+    from PySide6.QtCore import QPointF
+
+    from nwologger.core import grids
+    from nwologger.core import qso as qsomod
+
+    for call, grid, lotw in (("BA1AA", "OM89", "Y"), ("BA1BB", "OM89", None), ("BA1CC", "PM95", None)):
+        win.db.insert(qsomod.normalize({"call": call, "time_on": "2026-10-10T10:00:00Z", "mode": "FM", "band": "2m",
+                                        "prop_mode": "SAT", "sat_name": "SO-50", "gridsquare": grid,
+                                        "my_gridsquare": "ON80", "lotw_qsl_rcvd": lotw}))
+    win.tabs.setCurrentIndex(3)
+    st = win.stats
+    st.home.setText("ON80")
+    st._changed()
+    assert set(st.map.cells) == {"OM89", "PM95"} and "1</b> confirmed (LoTW)" in st.count.text()
+    assert "first confirmed by LoTW: BA1AA" in st.map.describe("OM89") and "worked only" in st.map.describe("PM95")
+    st.source_btns["lotw"].setChecked(False)  # nothing ticked: every square is "worked"
+    assert all(c.status == "worked" for c in st.map.cells.values())
+    st.map.fit((110.0, 30.0, 130.0, 45.0))
+    st.map.zoom = 8.0  # close enough for grid names and calls
+    assert not st.map.grab().isNull()
+    lat, lon = grids.center("OM89")
+    assert st.map.square_at(QPointF(st.map.to_screen(lon, lat))) == "OM89"
+    with qtbot.waitSignal(st.show_square, timeout=1000):
+        st.map.square_clicked.emit("OM89")
+    win.model.refresh()
+    assert win.tabs.currentIndex() == 0 and win.model.ids and all(
+        win.db.get(i)["gridsquare"].startswith("OM89") for i in win.model.ids)
+
+
+def test_map_preferences(win, qtbot, keyring_store):
+    from nwologger.core import maptiles
+    from nwologger.ui.prefs_dialog import PrefsDialog
+
+    dlg = PrefsDialog(win.db, win.prefs, win)
+    qtbot.addWidget(dlg)
+    dlg.map_provider.setCurrentIndex(dlg.map_provider.findData("tianditu"))
+    dlg.tianditu_key.edit.setText("FAKE-TIANDITU-KEY")
+    dlg._save()
+    assert win.prefs.get("map_provider") == "tianditu" and win.prefs.tianditu_key() == "FAKE-TIANDITU-KEY"
+    win.stats.apply_provider()
+    assert win.stats.map.provider is maptiles.TIANDITU and win.stats.map.api_key == "FAKE-TIANDITU-KEY"
+    win.prefs.set("map_provider", "none")
+    win.stats.apply_provider()
+    assert win.stats.map.provider is None
+
+
 def test_sync_everything_never_uploads(win, monkeypatch):
     downloads = []
     monkeypatch.setattr(win.sync, "upload", lambda *a, **k: pytest.fail("Sync everything uploaded"))

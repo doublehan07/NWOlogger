@@ -1,6 +1,6 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found; v0.1.6 adds merging field by field, Look up and fill with progress, and safer bulk edit times. What is left is below.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found; v0.1.6 adds merging field by field, Look up and fill with progress, and safer bulk edit times; v0.1.7 adds the grid map. What is left is below.
 
 ## Needs real accounts
 
@@ -25,8 +25,7 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Next
 
-- [ ] **Statistics view** (planned for v0.1.7): totals per year, band, mode and satellite, unique calls, QSL counts, award-style progress
-- [ ] **Gridmaster-style grid display** (planned for v0.1.7): a map of Maidenhead grid squares coloured by worked / confirmed (VUCC), per band, mode or satellite
+- [ ] **Statistics: Overview, Awards and Matrix** (planned for v0.1.8, sub-tabs next to the grid map): totals per year, band, mode and satellite, unique calls, QSL counts; award cards (DXCC, WAS, WAC, WAZ, WPX, VUCC, QRZ.com awards, China provinces, IOTA) counting confirmations as each sponsor does; the band × mode matrix per entity, zone, province or prefix
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
@@ -43,6 +42,11 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
+
+## Done in v0.1.7 (2026-10-17)
+
+- [x] **Grid map** (Statistics tab, Ctrl+4), GridMaster / GridTracker style: every 4-character square on satellite imagery; confirmed squares green with their grid and the first call that confirmed them (LoTW, eQSL, QRZ.com, paper: any mix you tick), worked-only squares amber with the first call worked; satellite / band / all, mode group, only QSOs made within 200 km of your grid (VUCC, GridMaster); region presets incl. CONUS 488; zoom, pan, click to show the square's QSOs, Save as PNG
+- [x] **Map imagery** (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (free key, kept in the keychain); tiles fetched in the background and kept in the system cache folder (up to 300 MB), so views seen before open offline
 
 ## Done in v0.1.6 (2026-10-17)
 

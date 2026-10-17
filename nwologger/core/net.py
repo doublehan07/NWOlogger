@@ -24,7 +24,7 @@ from .. import __version__
 MASK = "•••"
 
 NAMES = {"lotw": "LoTW", "eqsl": "eQSL", "qrz": "QRZ.com", "qrz_xml": "QRZ.com", "hamqth": "HamQTH",
-         "hrdlog": "HRDLog"}
+         "hrdlog": "HRDLog", "gibs": "NASA GIBS", "tianditu": "Tianditu"}
 HOSTS = {
     "lotw": {"lotw.arrl.org"},
     "eqsl": {"www.eqsl.cc", "eqsl.cc"},
@@ -32,6 +32,9 @@ HOSTS = {
     "qrz_xml": {"xmldata.qrz.com"},
     "hamqth": {"www.hamqth.com"},
     "hrdlog": {"robot.hrdlog.net"},
+    # Map imagery for the grid map (core/maptiles.py).
+    "gibs": {"gibs.earthdata.nasa.gov"},
+    "tianditu": {f"t{i}.tianditu.gov.cn" for i in range(8)},
 }
 
 # Tests put an httpx.MockTransport here; None means the real network.
@@ -39,7 +42,7 @@ transport: httpx.BaseTransport | None = None
 
 log = logging.getLogger("nwologger.net")
 # Lookups run for every call you type: their requests are only logged at debug level.
-_QUIET = {"qrz_xml", "hamqth"}
+_QUIET = {"qrz_xml", "hamqth", "gibs", "tianditu"}
 
 _URL_QUERY = re.compile(r"(https?://[^\s'\"<>?#]+)\?[^\s'\"<>#]*", re.I)
 _PAIRS = re.compile(r"\b(password|passwd|pswd|eqslpswd|eqsl_pswd|api_?key)=[^&\s'\"<>]+", re.I)
@@ -94,7 +97,8 @@ _active_lock = threading.Lock()
 
 
 @contextmanager
-def _in_flight(secrets: Iterable[str | None]) -> Iterator[None]:
+def in_flight(secrets: Iterable[str | None]) -> Iterator[None]:
+    """While it runs, log records mask these secrets (e.g. a key in a URL a client sends itself)."""
     vals = [s for s in secrets if s]
     with _active_lock:
         _active.update(vals)
@@ -161,7 +165,7 @@ def request(service: str, method: str, url: str, *, secrets: Iterable[str | None
     where = _where(url)
     t0 = time.monotonic()
     try:
-        with _in_flight(secrets), client(service, call=call, timeout=timeout, redirects=redirects) as c:
+        with in_flight(secrets), client(service, call=call, timeout=timeout, redirects=redirects) as c:
             r = c.request(method, url, **kw)
             r.raise_for_status()
             log.log(level, "%s %s %s: HTTP %s, %d bytes, %.1f s", NAMES[service], method, where, r.status_code,

@@ -32,9 +32,10 @@ class FakeKeyring:
 
 @pytest.fixture(autouse=True)
 def no_real_tqsl_or_log(monkeypatch, tmp_path):
-    """Tests never read your TQSL station locations or write to your NWOlogger log folder."""
+    """Tests never read your TQSL station locations or write to your NWOlogger log or cache folders."""
     monkeypatch.setenv("TQSLDIR", str(tmp_path / "no-tqsl"))
     monkeypatch.setenv("NWOLOGGER_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("NWOLOGGER_CACHE_DIR", str(tmp_path / "cache"))  # map tiles
 
 
 @pytest.fixture(autouse=True)

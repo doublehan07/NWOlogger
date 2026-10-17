@@ -30,6 +30,7 @@ DEFAULTS: dict[str, Any] = {
     "hrdlog_call": "",
     "upload_on_log": {"qrz": False, "eqsl": False, "hrdlog": False},
     "sync_gap_minutes": 5,  # the wait between two downloads (or two uploads) with the same service
+    "map_provider": "auto",  # grid map imagery: auto, nasa, tianditu or none (core/maptiles.choose)
     "sat_names": {},
     "user_sats": [],
     "sat_list": [],
@@ -111,6 +112,12 @@ class Prefs:
         if new_user and old_user.strip().lower() == new_user.strip().lower() and not secrets.get(service, new_user):
             ok = secrets.set(service, new_user, old)
         return secrets.delete(service, old_user) and ok
+
+    def tianditu_key(self) -> str | None:
+        return secrets.get("tianditu", "key")
+
+    def set_tianditu_key(self, key: str | None) -> bool:
+        return secrets.set("tianditu", "key", key)
 
     def qrz_api_key(self, station_call: str) -> str | None:
         return secrets.get("qrz_logbook", station_call.upper()) if station_call else None

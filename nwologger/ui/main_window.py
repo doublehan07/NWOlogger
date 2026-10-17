@@ -51,6 +51,7 @@ from .log.search_dialog import SearchDialog
 from .lookup_fill import LookupFillDialog
 from .prefs_dialog import PrefsDialog
 from .qsl_paper import PaperQslTab, mark_paper
+from .stats.statistics_tab import StatisticsTab
 from .sync_controller import SyncController, clear_history
 from .widgets import fmt, run_async
 
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         self.a_log_tab = A("Show the log", lambda: self.tabs.setCurrentIndex(0), "Ctrl+1")
         self.a_paper_tab = A("Show paper QSL", lambda: self.tabs.setCurrentIndex(1), "Ctrl+2")
         self.a_hist_tab = A("Show sync history", lambda: self.tabs.setCurrentIndex(2), "Ctrl+3")
+        self.a_stats_tab = A("Show statistics (grid map)", lambda: self.tabs.setCurrentIndex(3), "Ctrl+4")
         self.a_about = A("About NWOlogger", self.about)
         self.a_log_folder = A("Show log folder", self.show_log_folder)
         self.a_results = A("Show sync results", self.show_sync_results)
@@ -199,6 +201,7 @@ class MainWindow(QMainWindow):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&View"))
         for a in (self.a_view_log, self.a_view_contest, None, self.a_log_tab, self.a_paper_tab, self.a_hist_tab,
+                  self.a_stats_tab,
                   None, self.a_search, self.a_clear_filters, self.a_suspicious, None, self.a_palette):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&QSL"))
@@ -356,6 +359,9 @@ class MainWindow(QMainWindow):
         hl.addLayout(hbar)
         hl.addWidget(self.history, 1)
         self.tabs.addTab(hist_tab, theme.icon("history"), tr("Sync history"))
+        self.stats = StatisticsTab(self.db, self.prefs)
+        self.stats.show_square.connect(self._show_square)
+        self.tabs.addTab(self.stats, theme.icon("map-pin"), tr("Statistics"))
         self.tabs.currentChanged.connect(lambda i: self._refresh_history() if i == 2 else None)
         self.splitter.addWidget(self.tabs)
         self.splitter.setStretchFactor(0, 0)
@@ -768,6 +774,7 @@ class MainWindow(QMainWindow):
         self.model.detach()
         self.paper.model.detach()
         self.db.remove_listener(self._on_db_change)
+        self.stats.shutdown()
         self.sync.stop_timers()
         self._clock_timer.stop()
         self.dx._clock.stop()
@@ -817,6 +824,7 @@ class MainWindow(QMainWindow):
                 t.step("entry form")
                 self.model.refresh()
                 t.step("log table")
+            self.stats.apply_provider()
             if self.prefs.get("language") != i18n.lang():
                 self.request_rebuild()
         else:
@@ -835,6 +843,12 @@ class MainWindow(QMainWindow):
         hidden = sum(1 for i in ids if i not in self.model.row_of)
         self.flash(f"{uploads.SERVICES.get(service, service)}: {len(ids)} " + tr("new confirmations selected") +
                    (f" ({hidden} " + tr("hidden by the filter") + ")" if hidden else ""))
+
+    def _show_square(self, sq: str) -> None:
+        """Grid map → a square: the Log tab, filtered to the QSOs in it."""
+        self.tabs.setCurrentIndex(0)
+        self.filter.set_spec({"conditions": [{"field": "gridsquare", "op": "starts", "value": sq}]})
+        self.flash(tr("QSOs in") + f" {sq} · " + tr("Clear filters to see them all"))
 
     def _show_ids(self, ids: list[int]) -> None:
         """Sync results → Select them: the Log tab with those QSOs selected and the first in view."""

@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
-from ..core import devices, dxcc, sats
+from ..core import devices, dxcc, maptiles, sats
 from ..core import secrets as keychain
 from ..core.sync import tqsl
 from . import theme
@@ -717,6 +717,29 @@ class PrefsDialog(QDialog):
         f.addRow("", b)
         self.tabs.addTab(dbw, tr("Database"))
 
+        # Map (the grid map's imagery)
+        mp = QWidget()
+        f = QFormLayout(mp)
+        self.map_provider = QComboBox()
+        for code, name in (("auto", "Automatic"), ("nasa", "NASA Blue Marble (no key)"),
+                           ("tianditu", "Tianditu 天地图 (free key)"), ("none", "None: grid only")):
+            self.map_provider.addItem(tr(name), code)
+        self.map_provider.setCurrentIndex(max(0, self.map_provider.findData(prefs.get("map_provider"))))
+        f.addRow(tr("Imagery"), self.map_provider)
+        f.addRow("", self._hint(tr("Automatic uses Tianditu when NWOlogger runs in Chinese or your system region is "
+                                   "China and a Tianditu key is set, and NASA Blue Marble otherwise. Only imagery "
+                                   "is used; the grid is drawn on top.")))
+        self.tianditu_key = SecretField(bool(prefs.tianditu_key()))
+        f.addRow(tr("Tianditu key"), self.tianditu_key)
+        f.addRow("", self._hint(tr("Free: register at lbs.tianditu.gov.cn (天地图开放平台) as a personal developer, "
+                                   "create an application in the console, and paste its key here. It is kept in the "
+                                   "system keychain. NASA Blue Marble needs no key.")))
+        clear_tiles = QPushButton(tr("Clear map cache"))
+        clear_tiles.setToolTip(tr("Remove the imagery tiles kept for views you have seen"))
+        clear_tiles.clicked.connect(self._clear_tiles)
+        f.addRow(tr("Map cache"), clear_tiles)
+        self.tabs.addTab(mp, tr("Map"))
+
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         bb.button(QDialogButtonBox.StandardButton.Save).setProperty("primary", True)
         bb.accepted.connect(self._save)
@@ -872,6 +895,10 @@ class PrefsDialog(QDialog):
         lab.setWordWrap(True)
         return lab
 
+    def _clear_tiles(self) -> None:
+        freed = maptiles.clear()
+        QMessageBox.information(self, tr("Map cache"), tr("Removed") + f" {freed / 1e6:.1f} MB.")
+
     def _browse_tqsl(self) -> None:
         p, _ = QFileDialog.getOpenFileName(self, tr("Locate TQSL"), os.path.expanduser("~"))
         if p:
@@ -922,6 +949,12 @@ class PrefsDialog(QDialog):
                 if not p.set_qrz_api_key(call, item.data(KEY_ROLE) if state == "new" else None):
                     failed.append(f"QRZ key {call}")
         p.set("sync_gap_minutes", self.gap.value())
+        p.set("map_provider", self.map_provider.currentData())
+        what, value = self.tianditu_key.action()
+        if what != "keep":
+            touched.append("tianditu_key")
+            if not p.set_tianditu_key(value):
+                failed.append("Tianditu key")
         p.set("upload_on_log", {"qrz": self.up_qrz.isChecked(), "eqsl": self.up_eqsl.isChecked(),
                                 "hrdlog": self.up_hrd.isChecked()})
         p.set("user_sats", self.user_sats)

@@ -454,7 +454,7 @@ def test_http_loggers_stay_quiet_and_mask_headers(caplog):
     lg.debug(trace)
     assert "receive_response_headers" not in caplog.text
     caplog.set_level(logging.DEBUG, logger="httpcore.http11")  # deliberately turned on
-    with net._in_flight([SECRET]):
+    with net.in_flight([SECRET]):
         lg.debug(trace)
     assert "receive_response_headers" in caplog.text
     assert "FAKEPW1" not in caplog.text and "FAKESID1" not in caplog.text
