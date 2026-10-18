@@ -44,14 +44,15 @@ AUTO = "*near"  # the saved value for "the locations within 200 km of my grid"
 
 
 def png_file_name(calls: list[str], squares: list[str], version: str = __version__) -> str:
-    """``BI1NWO at ON80 - NWOlogger 0.1.9.png``: the first call and the first grid, each followed by "et al" when
-    there are more (most QSOs first, as the caller orders them); a slash in a portable call becomes a hyphen."""
-    def part(items: list[str]) -> str:
+    """``BI1NWO at ON80 - NWOlogger 0.1.9.png``: the first call and the first grid; several calls read "et al"
+    (people), several grids "etc" (places), most QSOs first as the caller orders them; a slash in a portable call
+    becomes a hyphen."""
+    def part(items: list[str], more: str) -> str:
         clean = [re.sub(r"[^A-Z0-9]+", "-", (x or "").upper()).strip("-") for x in items]
         clean = [x for x in clean if x]
-        return clean[0] + (" et al" if len(clean) > 1 else "") if clean else ""
+        return clean[0] + (more if len(clean) > 1 else "") if clean else ""
 
-    who, where = part(calls), part(squares)
+    who, where = part(calls, " et al"), part(squares, " etc")
     head = who + (f" at {where}" if who and where else where)
     return (f"{head} - " if head else "") + f"{APP_NAME} {version}.png"
 

@@ -149,7 +149,7 @@ def test_filters_change_the_squares_and_are_remembered(tab, tmp_path, log):
 
 
 def test_the_png_is_named_after_the_ticked_calls_and_places(tab):
-    assert tab.png_name() == f"BI1NWO et al at ON80 et al - NWOlogger {__version__}.png"
+    assert tab.png_name() == f"BI1NWO et al at ON80 etc - NWOlogger {__version__}.png"
     tab.calls.set_checked(["AI6OT"])
     tab.places.set_checked(["CM87"])
     assert tab.png_name() == f"AI6OT at CM87 - NWOlogger {__version__}.png"
