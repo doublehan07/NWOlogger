@@ -50,9 +50,10 @@ Open an issue on GitHub. Include what you did, the text from Help → About → 
 uv run pytest      # tests (Qt runs off-screen; they never reach the network or your keychain)
 uv run ruff check  # lint
 uv run --with pyinstaller --with pillow pyinstaller packaging/nwologger.spec --noconfirm   # stand-alone app in dist/
+uv run python packaging/smoke_test.py   # start that app off-screen: it must run and use the system keychain
 ```
 
-Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Actions build a macOS `.dmg` and a Windows installer.
+Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Actions build Linux (`.tar.gz`), macOS (`.dmg`, Apple silicon) and Windows (installer and ZIP), start each built app once, and put them in a draft pre-release that you publish on GitHub. Actions → Release → *Run workflow* builds the same as downloadable artifacts, without a release.
 
 ## Build a Windows x64 app
 

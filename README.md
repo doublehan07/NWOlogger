@@ -166,8 +166,8 @@ NWOlogger/
 ├── tests/                     pytest suite; fixtures/sample.adi is a synthetic log for trying the app
 ├── tools/screenshots.py       renders docs/screenshots/ from made-up data
 ├── docs/screenshots/          the README screenshots
-├── packaging/                 PyInstaller spec, Inno Setup script (Windows installer)
-├── .github/workflows/         CI (tests on macOS + Windows) and release builds
+├── packaging/                 PyInstaller spec, Inno Setup script (Windows installer), smoke test of a built app
+├── .github/workflows/         CI (tests on Linux, macOS and Windows) and release builds for all three
 ├── PLAN.md, TODO.md           design and remaining work
 └── pyproject.toml, uv.lock    project metadata and pinned dependencies
 ```

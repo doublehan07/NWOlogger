@@ -1,41 +1,91 @@
 name: Release
 
+# A tag (v0.1.8) builds Linux, macOS and Windows and puts them in a draft pre-release, which you publish by hand.
+# Actions → Release → Run workflow builds them as downloadable artifacts only.
 on:
   push:
     tags: ["v*"]
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: macos-latest
+            target: macos-arm64
+          - os: windows-latest
+            target: windows-x64
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+      - name: Qt's system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libfontconfig1 libdbus-1-3 fonts-dejavu-core libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
       - uses: astral-sh/setup-uv@v6
       - run: uv sync
-      - name: Tag must match pyproject version
+      - name: Version (a tag must match pyproject.toml)
         shell: bash
         run: |
           v=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != v$v"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$v"; exit 1; }
+          fi
           echo "VERSION=$v" >> "$GITHUB_ENV"
       - run: uv run pytest -q
       - run: uv run --with pyinstaller --with pillow pyinstaller packaging/nwologger.spec --noconfirm
+      - name: Start the built app
+        run: uv run python packaging/smoke_test.py
+      - name: Linux archive
+        if: runner.os == 'Linux'
+        run: tar -czf "dist/NWOlogger-${VERSION}-linux-x64.tar.gz" -C dist NWOlogger
       - name: macOS disk image
         if: runner.os == 'macOS'
-        run: hdiutil create -volname NWOlogger -srcfolder dist/NWOlogger.app -ov -format UDZO "dist/NWOlogger-${VERSION}-macos.dmg"
-      - name: Windows installer
+        run: hdiutil create -volname NWOlogger -srcfolder dist/NWOlogger.app -ov -format UDZO "dist/NWOlogger-${VERSION}-macos-arm64.dmg"
+      - name: Windows ZIP and installer
         if: runner.os == 'Windows'
         shell: pwsh
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" packaging\nwologger.iss'
+        run: |
+          uv run python -m zipfile -c "dist\NWOlogger-$env:VERSION-windows-x64.zip" dist\NWOlogger
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=$env:VERSION" packaging\nwologger.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NWOlogger-${{ env.VERSION }}-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.dmg
+            dist/*.zip
+            dist/*-setup.exe
+          if-no-files-found: error
+
+  release:
+    # One job creates the release: parallel jobs would each start their own draft.
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/*.dmg
-            dist/*-setup.exe
+          draft: true
+          prerelease: true
+          files: dist/*

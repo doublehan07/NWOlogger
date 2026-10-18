@@ -173,6 +173,9 @@ def startup_banner(db_path: str | os.PathLike | None = None) -> None:
     built = " · packaged build" if getattr(sys, "frozen", False) else ""
     log.info("%s %s started · Python %s · %s · %s %s %s%s", APP_NAME, __version__, platform.python_version(), qt,
              platform.system(), platform.release(), platform.machine(), built)
+    from .core import secrets  # noqa: PLC0415
+
+    log.info("Keychain: %s", secrets.backend_name() or "none")  # the store passwords go to (a packaged build check)
     if db_path:
         log.info("Log file (database): %s", tidy_path(db_path))
 

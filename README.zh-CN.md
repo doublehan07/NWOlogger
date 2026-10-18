@@ -164,8 +164,8 @@ NWOlogger/
 ├── tests/                     pytest 测试；fixtures/sample.adi 为试用的虚构日志
 ├── tools/screenshots.py       用虚构数据生成 docs/screenshots/ 截图
 ├── docs/screenshots/          README 截图
-├── packaging/                 PyInstaller 配置、Inno Setup 脚本（Windows 安装程序）
-├── .github/workflows/         CI（macOS + Windows 测试）和发布构建
+├── packaging/                 PyInstaller 配置、Inno Setup 脚本（Windows 安装程序）、打包后应用的冒烟测试
+├── .github/workflows/         CI（Linux、macOS 和 Windows 测试）和三个平台的发布构建
 ├── PLAN.md, TODO.md           设计和待办事项
 └── pyproject.toml, uv.lock    项目元数据和锁定的依赖
 ```
