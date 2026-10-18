@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+import plistlib
+import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
@@ -31,6 +34,46 @@ def run(argv: list[str], *, db_path: str | None = None, lang: str | None = None,
         applog.shutdown()
 
 
+def installer_mounts(info: dict, running_from: Path) -> list[str]:
+    """Mount points of NWOlogger disk images (``NWOlogger….dmg`` holding NWOlogger.app) in ``hdiutil info -plist``
+    output, unless the app runs from one of them."""
+    out = []
+    for image in info.get("images", []):
+        name = Path(str(image.get("image-path", ""))).name
+        if not (name.startswith(APP_NAME) and name.lower().endswith(".dmg")):
+            continue
+        for entity in image.get("system-entities", []):
+            mount = entity.get("mount-point")
+            if not mount or not (Path(mount) / f"{APP_NAME}.app").is_dir():
+                continue
+            if running_from == Path(mount) or Path(mount) in running_from.parents:
+                continue
+            out.append(mount)
+    return out
+
+
+def eject_installer_image() -> None:
+    """macOS: once the app has been dragged to Applications and started from there, eject the disk image it came
+    from (closing the image's window does not). Nothing happens when it runs from the image itself."""
+    if sys.platform != "darwin" or not getattr(sys, "frozen", False):
+        return
+    running_from = Path(sys.executable).resolve()
+    if "/AppTranslocation/" in str(running_from):
+        return  # started from the image, through Gatekeeper's copy
+    try:
+        info = plistlib.loads(subprocess.run(["/usr/bin/hdiutil", "info", "-plist"], capture_output=True,
+                                             timeout=20, check=True).stdout)
+        for mount in installer_mounts(info, running_from):
+            done = subprocess.run(["/usr/bin/hdiutil", "detach", mount], capture_output=True, timeout=60)
+            if done.returncode == 0:
+                log.info("Ejected the installer disk image at %s", mount)
+            else:
+                log.info("Could not eject the installer disk image at %s: %s", mount,
+                         done.stderr.decode(errors="replace").strip())
+    except (OSError, subprocess.SubprocessError, plistlib.InvalidFileException, ValueError):
+        log.debug("Looking for the installer disk image failed", exc_info=True)
+
+
 def _qt_translator(app: QApplication, language: str) -> QTranslator:
     """Qt's own texts (OK, Cancel, the colour and file dialogs) in ``language``."""
     qt_tr = QTranslator(app)
@@ -55,6 +98,7 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
     from .ui.prefs import Prefs  # noqa: PLC0415
 
     theme.watch_system(app)
+    threading.Thread(target=eject_installer_image, name="eject", daemon=True).start()
     while True:
         prefs = Prefs()
         language = lang or prefs.get("language")

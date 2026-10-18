@@ -50,9 +50,11 @@ jobs:
       - name: Linux archive
         if: runner.os == 'Linux'
         run: tar -czf "dist/NWOlogger-${VERSION}-linux-x64.tar.gz" -C dist NWOlogger
-      - name: macOS disk image
+      - name: macOS disk image (the app and Applications side by side, to drag it in)
         if: runner.os == 'macOS'
-        run: hdiutil create -volname NWOlogger -srcfolder dist/NWOlogger.app -ov -format UDZO "dist/NWOlogger-${VERSION}-macos-arm64.dmg"
+        run: |
+          uv run --with dmgbuild dmgbuild -s packaging/dmg_settings.py -D app=dist/NWOlogger.app NWOlogger \
+            "dist/NWOlogger-${VERSION}-macos-arm64.dmg"
       - name: Windows ZIP and installer
         if: runner.os == 'Windows'
         shell: pwsh

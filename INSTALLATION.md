@@ -53,7 +53,7 @@ uv run --with pyinstaller --with pillow pyinstaller packaging/nwologger.spec --n
 uv run python packaging/smoke_test.py   # start that app off-screen: it must run and use the system keychain
 ```
 
-Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Actions build Linux (`.tar.gz`), macOS (`.dmg`, Apple silicon) and Windows (installer and ZIP), start each built app once, and put them in a draft pre-release that you publish on GitHub. Actions → Release → *Run workflow* builds the same as downloadable artifacts, without a release.
+Pushing a tag `vX.Y.Z` that matches the `pyproject.toml` version makes GitHub Actions build Linux (`.tar.gz`), macOS (`.dmg`, Apple silicon: drag the app onto the Applications link beside it; the installed app ejects the disk image when it starts) and Windows (installer and ZIP), start each built app once, and put them in a draft pre-release that you publish on GitHub. Actions → Release → *Run workflow* builds the same as downloadable artifacts, without a release.
 
 ## Build a Windows x64 app
 
