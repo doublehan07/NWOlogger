@@ -108,6 +108,7 @@ def test_summaries_lead_with_what_is_new_and_qrz_dates_once(tmp_path, monkeypatc
     cat = sats.load()
     recs = [{"CALL": c, "QSO_DATE": "20261010", "TIME_ON": "1519", "BAND": "2M", "MODE": "FM",
              "APP_QRZLOG_LOGID": str(i)} for i, c in enumerate(("BA1AA", "BA1BB", "BG9ZZZ"))]
+    monkeypatch.setattr(timeutil, "today_iso", lambda: "2026-10-17")  # not the real clock: any day works
     first = apply.apply_qrz(d, recs, cat)
     assert first.changed == 2
     monkeypatch.setattr(timeutil, "today_iso", lambda: "2026-10-18")  # the next UTC day
