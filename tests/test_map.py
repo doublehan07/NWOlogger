@@ -145,3 +145,29 @@ def test_fetcher_offline_and_without_key(mock_net):
     f2.want(maptiles.TIANDITU, 4, 1, 1, None)
     time.sleep(0.3)
     assert seen == []
+
+
+def test_fetcher_asks_again_for_a_released_or_long_failed_tile(monkeypatch, mock_net):
+    monkeypatch.delenv("NWOLOGGER_OFFLINE", raising=False)
+    answers = [httpx.Response(503), httpx.Response(200, content=JPEG, headers={"content-type": "image/jpeg"})]
+    seen = mock_net(lambda req: answers.pop(0) if answers else httpx.Response(500))
+    got = []
+    f = maptiles.Fetcher(lambda *a: got.append(a))
+    tile = (maptiles.NASA, 5, 20, 11)
+
+    def ask():
+        f.want(*tile)
+        end = time.time() + 5
+        while f.pending() and time.time() < end:
+            time.sleep(0.02)
+
+    ask()
+    assert len(seen) == 1 and f.stats["failed"] == 1 and not got
+    ask()  # failed just now: not asked again yet
+    assert len(seen) == 1
+    monkeypatch.setattr(maptiles, "RETRY_S", 0.0)  # a while later it is
+    ask()
+    assert len(seen) == 2 and len(got) == 1 and maptiles.cached("nasa", 5, 20, 11) == JPEG
+    f.release("nasa", 5, 20, 11)  # dropped from the view's memory: asked again, from the disk cache
+    ask()
+    assert len(seen) == 2 and f.stats["cached"] == 1 and len(got) == 2

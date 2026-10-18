@@ -51,6 +51,7 @@ From testing the first 0.1.8 build (the version stays 0.1.8):
 - [x] **Grid map full screen:** *Full screen* (or the system's full-screen key) shows the map alone; Esc, its *Exit full screen* button or closing the window brings it back, and a click on a square comes back to show its QSOs
 - [x] **Calls the same size:** every call is sized as an eight-character one, so a five-letter call is no larger than a six-letter one and all calls appear at the same zoom; thin (normal weight), up to 12 pt (names 10 pt); a longer call is made smaller to fit
 - [x] **Save as PNG:** the whole globe, facing the way the map faces, on a 2000 × 2000 image named `<operator>-grid-map-NWOlogger.png`, with "NWOlogger" and the version at the top, after the tiles of the whole hemisphere have arrived
+- [x] **Imagery after much zooming and dragging:** a view seen before could come back without imagery, because tiles dropped from memory were never asked for again; now they load again (from the disk cache), coarse tiles stay as stand-ins, and a failed tile is retried after 30 s
 - [x] **A clear grey line:** the night shade goes from none to full within ±1° of solar altitude, as on PSK Reporter's map, and covers the squares too
 - [x] **Space behind the globe:** stars, a faint Milky Way and an atmosphere glow at the limb
 - [x] **Asking again while a run goes on:** a second download or upload with the same service shows "another download (upload) is still in progress", starts nothing and brings back its hidden progress window; Sync everything warns once for all still running

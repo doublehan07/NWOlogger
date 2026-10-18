@@ -13,6 +13,7 @@ import os
 import queue
 import sys
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ CACHE_MAX = 300 * 1024 * 1024
 CACHE_KEEP = 270 * 1024 * 1024  # what a prune goes down to
 WORKERS = 6
 GIVE_UP = 12  # this many failures in a row: stop asking this provider for the session
+RETRY_S = 30.0  # a tile that failed may be asked for again after this long
 
 
 @dataclass(frozen=True)
@@ -145,8 +147,9 @@ def clear() -> int:
 # ------------------------------------------------------------------ fetching
 class Fetcher:
     """Fetches tiles on daemon worker threads (quitting never waits for them); ``on_tile(provider, z, x, y, data)``
-    runs on a worker thread, and the UI hands it to its own. Each tile is asked for once per session, and only while
-    the provider keeps answering. The newest requests go first, so the view you stopped at fills in first."""
+    runs on a worker thread, and the UI hands it to its own. A tile is asked for once, unless the UI has dropped it
+    from memory (:meth:`release`) or it failed more than :data:`RETRY_S` ago, and only while the provider keeps
+    answering. The newest requests go first, so the view you stopped at fills in first."""
 
     def __init__(self, on_tile: Callable[[str, int, int, int, bytes], None]):
         self.on_tile = on_tile
@@ -155,6 +158,7 @@ class Fetcher:
         self._lock = threading.Lock()
         self._asked: set[tuple] = set()
         self._pending = 0  # tiles asked for and not yet answered (loaded, from the cache, failed or skipped)
+        self._failed: dict[tuple, float] = {}  # tile → when it failed
         self._local = threading.local()
         self.failures_in_row: dict[str, int] = {}
         self.stopped: dict[str, str] = {}  # provider → why it is no longer asked
@@ -166,8 +170,13 @@ class Fetcher:
         """Ask for a tile (from the cache first). Asking again for the same tile does nothing."""
         k = (provider.key, z, x, y)
         with self._lock:
-            if k in self._asked or provider.key in self.stopped:
+            if provider.key in self.stopped:
                 return
+            if k in self._asked:
+                failed = self._failed.get(k)
+                if failed is None or time.monotonic() - failed < RETRY_S:
+                    return
+                del self._failed[k]
             self._asked.add(k)
             self._pending += 1
             if len(self._threads) < WORKERS:
@@ -188,6 +197,12 @@ class Fetcher:
             finally:
                 with self._lock:
                     self._pending -= 1
+
+    def release(self, provider_key: str, z: int, x: int, y: int) -> None:
+        """The UI has dropped this tile from memory: it may be asked for again (it comes back from the cache)."""
+        with self._lock:
+            self._asked.discard((provider_key, z, x, y))
+            self._failed.pop((provider_key, z, x, y), None)
 
     def pending(self) -> int:
         """Tiles asked for that have no answer yet."""
@@ -224,6 +239,7 @@ class Fetcher:
                    else net.describe(provider.service, e))
             with self._lock:
                 self.stats["failed"] += 1
+                self._failed[(provider.key, z, x, y)] = time.monotonic()
                 n = self.failures_in_row[provider.key] = self.failures_in_row.get(provider.key, 0) + 1
                 if n >= GIVE_UP and provider.key not in self.stopped:
                     self.stopped[provider.key] = msg
@@ -264,6 +280,7 @@ class Fetcher:
         """Ask again for tiles that failed (after a key or provider change)."""
         with self._lock:
             self._asked.clear()
+            self._failed.clear()
             self.stopped.clear()
             self.failures_in_row.clear()
 

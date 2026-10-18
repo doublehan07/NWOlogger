@@ -57,6 +57,7 @@ SIZE_CALL = "BA8TSK/9"  # every call is sized as this eight-character one, so le
 CALL_WIDTH = .88  # SIZE_CALL fills at most this share of a square's width; a longer call is made smaller to fit
 CAP = 0.7  # cap height of a label font, as a share of its size
 PIX_CACHE = 600
+KEEP_LEVEL = 3  # tiles this coarse (84 at most) stay in memory, so any view has a stand-in while finer ones load
 TEXT_CACHE = 6000
 MAX_TILES = 144  # tiles in one view's atlas; a busier view uses the next coarser level
 MAX_DPR = 2.0
@@ -509,11 +510,21 @@ class GridMapView(QWidget):
         if img.isNull():
             return
         self._pix[(provider, z, x, y)] = QPixmap.fromImage(img)
+        self._pix.move_to_end((provider, z, x, y))
         self._tile_revision += 1
-        while len(self._pix) > PIX_CACHE:
-            self._pix.popitem(last=False)
+        self._drop_tiles()
         if not self._tile_timer.isActive():
             self._tile_timer.start()
+
+    def _drop_tiles(self) -> None:
+        """Keep at most PIX_CACHE tiles, dropping the least recently used finer ones first; the fetcher may then
+        ask for a dropped tile again when a view needs it (it used to stay missing for the session)."""
+        while len(self._pix) > PIX_CACHE:
+            key = next((k for k in self._pix if k[1] > KEEP_LEVEL), None)
+            if key is None:
+                return
+            del self._pix[key]
+            self.fetcher.release(*key)
 
     def _tile(self, z: int, x: int, y: int) -> QPixmap | None:
         key = self.provider.key, z, x, y

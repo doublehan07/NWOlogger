@@ -448,3 +448,47 @@ def test_squares_are_filled_per_pixel(view):
     outside = image.pixelColor(view.to_screen(-0.5, 0.75).toPoint())
     assert inside.green() > inside.red() + 60 and outside.green() < outside.red() + 60
 
+
+def test_tiles_dropped_from_memory_load_again_when_the_view_comes_back(view, monkeypatch):
+    """Zooming in and out and dragging fills the tile memory; a view seen before used to stay without imagery,
+    because its dropped tiles were never asked for again."""
+    monkeypatch.setattr(gridmap, "PIX_CACHE", 40)
+    view.set_terminator_enabled(False)
+    view.set_provider(maptiles.NASA)
+    jobs = []
+    view.fetcher._threads = [None] * 6  # no workers: the test answers every request itself
+    monkeypatch.setattr(view.fetcher._queue, "put", jobs.append)
+    tile = _png_bytes(QColor("green"))
+
+    def settle():
+        for _ in range(3):
+            view.grab()
+            while jobs:
+                provider, z, x, y, _key = jobs.pop()
+                view.fetcher._pending -= 1
+                view._store_tile(provider.key, z, x, y, tile)
+        image = view.grab().toImage()
+        return image.pixelColor(view.width() // 2, view.height() // 2)
+
+    view.center_lon, view.center_lat, view.zoom = 110, 35, 6.5
+    assert settle().green() > 100
+    for lon in range(-170, 60, 12):  # far away, zoomed in: the first view's tiles are dropped
+        view.center_lon, view.center_lat, view.zoom = lon, -20, 7
+        settle()
+    assert not any(k[1] >= 6 and abs(k[2] / 2 ** k[1] * 360 - 180 - 110) < 5 for k in view._pix)
+    view.center_lon, view.center_lat, view.zoom = 110, 35, 6.5
+    assert settle().green() > 100
+    assert len(view._pix) <= gridmap.PIX_CACHE
+
+
+def test_coarse_tiles_stay_in_memory_as_stand_ins(view, monkeypatch):
+    monkeypatch.setattr(gridmap, "PIX_CACHE", 5)
+    released = []
+    monkeypatch.setattr(view.fetcher, "release", lambda *key: released.append(key))
+    tile = _png_bytes(QColor("blue"))
+    for x in range(4):
+        view._store_tile(maptiles.NASA.key, 2, x, 1, tile)
+    for x in range(6):
+        view._store_tile(maptiles.NASA.key, 7, x, 40, tile)
+    assert sum(1 for k in view._pix if k[1] == 2) == 4  # every level-2 tile kept
+    assert len(view._pix) == 5 and len(released) == 5 and all(k[1] == 7 for k in released)
