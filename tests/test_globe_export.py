@@ -172,46 +172,49 @@ def test_snapshot_draws_without_tiles_that_failed(qtbot, monkeypatch):
 def test_open_in_a_window_and_esc_brings_it_back(tab, qtbot):
     pane, m = tab.pane, tab.map
     tab.toggle_window()
-    assert pane.isWindow() and pane.isVisible() and tab.in_window() and m.parent() is pane
+    win = tab.map_window
+    assert tab.in_window() and win.isVisible() and win.isWindow() and m.parent() is pane
+    assert not pane.isWindow() and pane.parentWidget() is win  # the pane stays an ordinary child widget
     assert not tab._away_box.isHidden() and tab.window_btn.text() == "Bring it back"
-    assert pane.windowTitle().endswith("Grid map") and not pane.isFullScreen()
+    assert win.windowTitle().endswith("Grid map") and not win.isFullScreen()
     from PySide6.QtCore import QPoint
     from PySide6.QtWidgets import QLabel, QPushButton
 
-    pane.resize(1200, 700)
-    qtbot.waitUntil(lambda: pane.width() >= 1200)  # wider when the font makes the controls' minimum wider
+    win.resize(1200, 700)
+    qtbot.waitUntil(lambda: win.width() >= 1200)  # wider when the font makes the controls' minimum wider
     first = next(w for w in pane.findChildren(QLabel) if w.text() == "Satellite")
     last = next(b for b in pane.findChildren(QPushButton) if b.text() == "Save as PNG")
-    assert pane.layout().contentsMargins().left() == 8  # the window keeps the tab's margins
-    assert first.mapTo(pane, QPoint(0, 0)).x() >= 8
-    assert last.mapTo(pane, QPoint(last.width(), 0)).x() <= pane.width() - 8
+    assert win.layout().contentsMargins().left() == 8  # the window keeps the tab's margins
+    assert first.mapTo(win, QPoint(0, 0)).x() >= 8
+    assert last.mapTo(win, QPoint(last.width(), 0)).x() <= win.width() - 8
     qtbot.keyClick(m, Qt.Key.Key_Escape)  # Esc in the window: back into the tab
-    assert not pane.isWindow() and tab.layout().indexOf(pane) >= 0 and tab._away_box.isHidden()
-    assert tab.window_btn.text() == "Open in a window" and m.isVisible()
-    assert pane.layout().contentsMargins().left() == 0  # the tab's layout has them again
+    assert not tab.in_window() and tab.map_window is None and tab.layout().indexOf(pane) >= 0
+    assert tab._away_box.isHidden() and tab.window_btn.text() == "Open in a window" and m.isVisible()
+    assert pane.parentWidget() is tab and pane.layout().contentsMargins().left() == 0
+    assert pane.width() == tab.width() - 16  # laid out at the tab's width at once, not at the next resize
 
 
 def test_the_window_remembers_its_geometry_and_its_close_button_brings_it_back(tab):
     tab.toggle_window()
-    width = tab.pane.minimumSizeHint().width() + 100  # above the controls' minimum, whatever the font's width
-    tab.pane.setGeometry(120, 90, width, 600)
-    tab.pane.close()  # the window's own close button comes back too
-    assert not tab.pane.isWindow() and tab.pane.isVisible()
+    width = tab.map_window.minimumSizeHint().width() + 100  # above the controls' minimum, whatever the font's width
+    tab.map_window.setGeometry(120, 90, width, 600)
+    tab.map_window.close()  # the window's own close button comes back too
+    assert not tab.in_window() and tab.pane.isVisible() and tab.pane.parentWidget() is tab
     assert tab.prefs.value("map/window_geometry") == f"120,90,{width},600"
     tab.window_btn.click()
-    assert tab.in_window() and (tab.pane.width(), tab.pane.height()) == (width, 600)
+    assert tab.in_window() and (tab.map_window.width(), tab.map_window.height()) == (width, 600)
     tab.bring_back()
 
 
 def test_full_screen_fills_the_window_and_esc_leaves_it_first(tab, qtbot):
     m = tab.map
     tab.toggle_full_screen()  # from the tab: the window opens and fills the screen
-    assert tab.in_window() and tab.pane.isFullScreen() and tab.is_full_screen()
+    assert tab.in_window() and tab.map_window.isFullScreen() and tab.is_full_screen()
     assert m._leave.isVisible() and m._save.isVisible()
     assert m._save.geometry().right() < m._leave.geometry().left()  # side by side in the top right corner
     assert m._leave.geometry().right() <= m.width() - 10 and m._leave.geometry().top() <= 20
     qtbot.keyClick(m, Qt.Key.Key_Escape)
-    assert tab.in_window() and not tab.pane.isFullScreen() and not m._leave.isVisible()
+    assert tab.in_window() and not tab.map_window.isFullScreen() and not m._leave.isVisible()
     qtbot.keyClick(m, Qt.Key.Key_Escape)
     assert not tab.in_window()
 
@@ -233,7 +236,7 @@ def test_clicking_a_square_in_the_window_shows_its_qsos_and_keeps_the_window(tab
 def test_shutdown_in_a_window_puts_the_map_back(tab):
     tab.toggle_window()
     tab.shutdown()
-    assert not tab.pane.isWindow()
+    assert not tab.in_window() and tab.pane.parentWidget() is tab
 
 
 def test_halo_and_stars_frame_the_globe(qtbot):
@@ -274,7 +277,7 @@ def test_save_as_png_from_the_full_screen_map_opens_on_its_window(tab, monkeypat
     monkeypatch.setattr(statistics_tab.QFileDialog, "getSaveFileName", save_dialog)
     tab.toggle_full_screen()
     tab.map._save.click()
-    assert parents == [tab.pane] and tab.is_full_screen()  # it stays full screen, in the map's own window
+    assert parents == [tab.map_window] and tab.is_full_screen()  # it stays full screen, in the map's own window
     image = QImage(str(tmp_path / "full.png"))
     assert image.width() == tab.map.width() * gridmap.EXPORT_SCALE
 
@@ -332,10 +335,10 @@ def test_a_slow_export_shows_its_progress_soon_and_keeps_it_with_the_map(tab, qt
     tab.save_png()  # asked again: no second file dialog, the same progress comes forward
     assert len(asked) == 1 and tab._progress is progress and progress.isVisible()
     tab.toggle_full_screen()
-    assert progress.parentWidget() is tab.pane and progress.isVisible()  # on the full-screen window
+    assert progress.parentWidget() is tab.map_window and progress.isVisible()  # on the full-screen window
     tab.toggle_full_screen()
-    assert tab.in_window() and progress.parentWidget() is tab.pane and progress.isVisible()  # still its window
-    tab.pane.close()  # the window's red button during the export: the map comes back, the progress with it
+    assert tab.in_window() and progress.parentWidget() is tab.map_window and progress.isVisible()  # its window
+    tab.map_window.close()  # the window's red button during the export: the map comes back, the progress with it
     assert not tab.in_window() and progress.parentWidget() is tab and progress.isVisible()
     # Never modal: a sheet moved between windows could stay invisible on macOS while blocking every click.
     from PySide6.QtWidgets import QApplication

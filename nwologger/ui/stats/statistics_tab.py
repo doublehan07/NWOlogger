@@ -88,20 +88,30 @@ def _saved_rect(value) -> QRect | None:
 
 
 class MapPane(QWidget):
-    """The controls and the map together: in the tab, or in a window of their own (Open in a window)."""
+    """The controls and the map together: in the tab, or inside a :class:`MapWindow` (Open in a window). Always an
+    ordinary child widget: turned into a top-level window and back with window flags, it kept the window's size
+    inside the tab on Windows until the main window was resized."""
+
+
+class MapWindow(QWidget):
+    """A window of its own for the pane, sized to the screen's available area the first time and remembered
+    afterwards; its close button and Esc hand the pane back to the tab."""
 
     closing = Signal()  # the window's close button: the pane goes back into its tab
     escape = Signal()
 
+    def __init__(self):
+        super().__init__(None, Qt.WindowType.Window)
+        self.setWindowTitle("NWOlogger · " + tr("Grid map"))
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 6, 8, 6)  # the tab's margins
+
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if self.isWindow():
-            event.ignore()
-            self.closing.emit()
-            return
-        super().closeEvent(event)
+        event.ignore()  # the tab takes the pane back and disposes of this window
+        self.closing.emit()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if event.key() == Qt.Key.Key_Escape and self.isWindow():
+        if event.key() == Qt.Key.Key_Escape:
             self.escape.emit()
             return
         super().keyPressEvent(event)
@@ -116,8 +126,7 @@ class StatisticsTab(QWidget):
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(8, 6, 8, 6)
         self.pane = MapPane()
-        self.pane.closing.connect(self.bring_back)
-        self.pane.escape.connect(self._escape)
+        self._window: MapWindow | None = None  # the pane's own window while Open in a window is on
         lay = QVBoxLayout(self.pane)
         lay.setContentsMargins(0, 0, 0, 0)
         self._lay.addWidget(self.pane, 1)
@@ -351,8 +360,8 @@ class StatisticsTab(QWidget):
         calls = self.calls.checked()
         s("map/calls", ALL if len(calls) == len(self.calls.keys()) else ",".join(calls))
         s("map/grids", ",".join(self.places.checked()))
-        if self.pane.isWindow() and not self.pane.isFullScreen():
-            g = self.pane.geometry()
+        if self._window is not None and not self._window.isFullScreen():
+            g = self._window.geometry()
             s("map/window_geometry", f"{g.x()},{g.y()},{g.width()},{g.height()}")
 
     def sources(self) -> list[str]:
@@ -369,7 +378,7 @@ class StatisticsTab(QWidget):
     def _on_db_change(self, kind: str, _ids) -> None:
         if kind in ("insert", "delete", "reset", "update"):
             self._dirty = True
-            if self.isVisible() or self.pane.isWindow():
+            if self.isVisible() or self.in_window():
                 self._timer.start()
 
     def _db_changed_later(self) -> None:
@@ -495,54 +504,62 @@ class StatisticsTab(QWidget):
         return runs
 
     # ------------------------------------------------------------------ the map in its own window
+    @property
+    def map_window(self) -> MapWindow | None:
+        """The pane's own window while Open in a window is on."""
+        return self._window
+
     def in_window(self) -> bool:
-        return self.pane.isWindow()
+        return self._window is not None
 
     def is_full_screen(self) -> bool:
-        return self.in_window() and self.pane.isFullScreen()
+        return self._window is not None and self._window.isFullScreen()
 
     def toggle_window(self) -> None:
         """The controls and the map in a resizable window of their own, sized to the screen's available area the
-        first time and remembered afterwards; or back into the tab."""
+        first time and remembered afterwards; or back into the tab. The pane moves between the tab and the window
+        as an ordinary child widget, never becoming a window itself."""
         if self.in_window():
             self.bring_back()
             return
-        pane = self.pane
-        self._lay.removeWidget(pane)
-        pane.setParent(None)
-        pane.setWindowFlags(Qt.WindowType.Window)
-        pane.layout().setContentsMargins(8, 6, 8, 6)  # the tab's margins; its own layout has none
-        pane.setWindowTitle("NWOlogger · " + tr("Grid map"))
+        win = self._window = MapWindow()
+        win.closing.connect(self.bring_back)
+        win.escape.connect(self._escape)
+        self._lay.removeWidget(self.pane)
+        win.layout().addWidget(self.pane)
         rect = _saved_rect(self.prefs.value("map/window_geometry"))
         screen = self.screen()
         if rect is not None and (screen is None or screen.availableVirtualGeometry().intersects(rect)):
-            pane.setGeometry(rect)
+            win.setGeometry(rect)
         elif screen is not None:
-            pane.setGeometry(screen.availableGeometry())
+            win.setGeometry(screen.availableGeometry())
         self._away_box.show()
         self.window_btn.setText(tr("Bring it back"))
-        pane.show()
-        pane.raise_()
-        pane.activateWindow()
+        win.show()
+        win.raise_()
+        win.activateWindow()
         self.map.setFocus()
         self._show_progress()
 
     def bring_back(self) -> None:
-        pane = self.pane
-        if not pane.isWindow():
+        win = self._window
+        if win is None:
             return
-        if not pane.isFullScreen():
-            g = pane.geometry()
+        if not win.isFullScreen():
+            g = win.geometry()
             self.prefs.set_value("map/window_geometry", f"{g.x()},{g.y()},{g.width()},{g.height()}")
         else:
-            pane.showNormal()
+            win.showNormal()
         self.map.set_full_screen(False)
-        pane.setWindowFlags(Qt.WindowType.Widget)
-        pane.layout().setContentsMargins(0, 0, 0, 0)  # back inside the tab's own margins
-        self._lay.insertWidget(0, pane, 1)
+        self._window = None
+        win.layout().removeWidget(self.pane)
+        self._lay.insertWidget(0, self.pane, 1)
+        self.pane.show()
+        self._lay.activate()  # laid out at the tab's size now, not at the next resize
+        win.hide()
+        win.deleteLater()
         self._away_box.hide()
         self.window_btn.setText(tr("Open in a window"))
-        pane.show()
         self.window().activateWindow()
         self.map.setFocus()
         self._show_progress()
@@ -552,17 +569,17 @@ class StatisticsTab(QWidget):
         screen, or goes back to its size; from the tab it opens the window first."""
         if not self.in_window():
             self.toggle_window()
-        pane = self.pane
-        if pane.isFullScreen():
-            pane.showNormal()
+        win = self._window
+        if win.isFullScreen():
+            win.showNormal()
             self.map.set_full_screen(False)
         else:
-            pane.showFullScreen()
+            win.showFullScreen()
             self.map.set_full_screen(True)
 
     def _escape(self) -> None:
         """Esc in the window: leave full screen first, then bring the map back into its tab."""
-        if self.pane.isFullScreen():
+        if self.is_full_screen():
             self.toggle_full_screen()
         else:
             self.bring_back()
@@ -596,7 +613,7 @@ class StatisticsTab(QWidget):
 
     def _dialog_owner(self) -> QWidget:
         """Where dialogs about the map open: on the map's own window while it has one."""
-        return self.pane if self.in_window() else self
+        return self._window if self._window is not None else self
 
     def _show_progress(self) -> None:
         """Bring the running export's progress window to the front, on the window that shows the map. It is never
