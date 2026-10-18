@@ -162,7 +162,7 @@ Notes on the model:
   - `manual` from File → Back up now and Preferences → Database;
   - `compact` before File → Compact log file.
   - Of `open`, `manual` and `compact`, the newest N are kept (Preferences, default 20). Restoring is opening a backup with File → Open log file.
-- **Compact log file** (File menu, asks first, with the current size): SQLite keeps the space deleted QSOs leave for reuse, so the file never shrinks by itself, and their old bytes stay in that free space until overwritten (`secure_delete` and `auto_vacuum` are off). After a `compact` backup it runs `VACUUM` and truncates the write-ahead log; the status bar gives the size before and after (`LogDB.compact`). Backups keep their own copies of deleted QSOs.
+- **Compact log file** (File menu, asks first, with the current size): SQLite keeps the space deleted QSOs leave for reuse, so the file never shrinks by itself (`auto_vacuum` is off), and unless the SQLite in use clears freed space (secure delete: off in the macOS build, on in the Linux CI's) their old bytes stay there until overwritten. After a `compact` backup it runs `VACUUM` and truncates the write-ahead log; the status bar gives the size before and after (`LogDB.compact`). Backups keep their own copies of deleted QSOs.
 - All writes happen in transactions.
 - Schema migrations are versioned.
 - **No undo** (removed in 0.1.5): undoing a download put the log out of step with the services, and one click could delete a whole import. Instead, every change to many QSOs (import, bulk edit, delete, merge, ignore all dupes, look up and fill, recompute DXCC) asks first and saves a backup (§4.3 backups); 0.1.4's undo history is dropped from the file once.

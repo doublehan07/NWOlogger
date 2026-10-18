@@ -24,7 +24,8 @@ def test_compacting_shrinks_the_file_and_drops_deleted_data(tmp_path):
                                        "mode": "FM", "comment": "still here"}))
     db.delete(ids, backup=False)
     db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    assert SECRET.encode() in path.read_bytes()  # SQLite keeps deleted rows' bytes in its free pages
+    # Whether the deleted rows' bytes are still in the file depends on how SQLite was built (secure delete), so only
+    # what compacting promises is checked: a smaller file without them.
     size = db.file_size()
     before, after, backup = db.compact()
     assert before == size and after < before / 5
