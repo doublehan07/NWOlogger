@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QStyle,
     QStyleOptionToolButton,
     QStylePainter,
@@ -364,6 +365,68 @@ class CheckListButton(QToolButton):
             shown = ", ".join(on[:2]) + (f" +{len(on) - 2}" if len(on) > 2 else "")
             text = shown
         self.setText(f"{self.title}: {text}")
+
+
+class SideTabs(QWidget):
+    """Pages with their titles in a list down the left side, as system settings have them: any number of pages fits
+    any window width and display scaling, where a tab bar hides the last pages behind scroll arrows. Offers the part
+    of QTabWidget's API that Preferences and its tests use."""
+
+    currentChanged = Signal(int)
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        self.list = QListWidget()
+        self.list.setObjectName("SideTabs")
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self.stack = QStackedWidget()
+        lay.addWidget(self.list)
+        lay.addWidget(self.stack, 1)
+        self.list.currentRowChanged.connect(self._row_changed)
+
+    def addTab(self, widget: QWidget, title: str) -> int:  # noqa: N802 - QTabWidget's name
+        index = self.stack.addWidget(widget)
+        self.list.addItem(QListWidgetItem(title))
+        fm = self.list.fontMetrics()
+        self.list.setFixedWidth(max(fm.horizontalAdvance(self.tabText(i)) for i in range(self.count())) + 44)
+        if self.count() == 1:
+            self.list.setCurrentRow(0)
+        return index
+
+    def count(self) -> int:
+        return self.stack.count()
+
+    def tabText(self, index: int) -> str:  # noqa: N802 - QTabWidget's name
+        item = self.list.item(index)
+        return item.text() if item is not None else ""
+
+    def widget(self, index: int) -> QWidget | None:
+        return self.stack.widget(index)
+
+    def indexOf(self, widget: QWidget) -> int:  # noqa: N802 - QTabWidget's name
+        return self.stack.indexOf(widget)
+
+    def currentIndex(self) -> int:  # noqa: N802 - QTabWidget's name
+        return self.stack.currentIndex()
+
+    def currentWidget(self) -> QWidget | None:  # noqa: N802 - QTabWidget's name
+        return self.stack.currentWidget()
+
+    def setCurrentIndex(self, index: int) -> None:  # noqa: N802 - QTabWidget's name
+        if 0 <= index < self.count():
+            self.list.setCurrentRow(index)
+
+    def setCurrentWidget(self, widget: QWidget) -> None:  # noqa: N802 - QTabWidget's name
+        self.setCurrentIndex(self.stack.indexOf(widget))
+
+    def _row_changed(self, row: int) -> None:
+        if row >= 0:
+            self.stack.setCurrentIndex(row)
+            self.currentChanged.emit(row)
 
 
 # ------------------------------------------------------------------ background work

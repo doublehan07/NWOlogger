@@ -71,7 +71,10 @@ HALO = QColor(120, 175, 255)  # the atmosphere's glow around the globe
 EXPORT_SCALE = 2.0  # Save as PNG: the view as it is, at twice its size in pixels
 EXPORT_PIXELS = 8_000_000  # its per-pixel layers stay within this many pixels
 EXPORT_TILES = 256  # tiles in its atlas
-CAPTION_PX = 32.0  # the band above it naming NWOlogger and its version, so the caption covers nothing
+CAPTION_PX = 44.0  # the band above it carrying the PNG's own name, so the caption covers nothing
+BADGE_PT = 11.0  # the counts in the corner
+EXPORT_BADGE_SCALE = 1.75  # a saved PNG is looked at smaller than the screen: its badge is drawn larger
+BADGE_OK, BADGE_WARN = QColor(0x7C, 0xE4, 0x95), QColor(0xF2, 0xB8, 0x4B)  # the confirmed and worked-only counts
 
 
 def _utc_now() -> datetime:
@@ -139,7 +142,9 @@ class GridMapView(QWidget):
         self._press: QPointF | None = None  # a left press, which selects a square on release unless it moved
         self._moved = False
         self._hover: str | None = None
-        self.badge: str | None = None  # the counts shown in the bottom right corner, in the sky
+        self.badge: str | None = None  # the counts shown in the bottom right corner, in the sky (plain text)
+        self.badge_runs: list[tuple[str, str]] = []  # the same as (text, role) runs: "ok", "warn", "strong" or ""
+        self.badge_scale = 1.0  # EXPORT_BADGE_SCALE on an export view
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)  # the right button rotates
         self._mono = theme.mono_font()
         self._geometry_key = None
@@ -323,7 +328,7 @@ class GridMapView(QWidget):
         view.caption = f"{APP_NAME} {__version__}"
         view.zoom, view.center_lon, view.center_lat = self.view_state()
         view.home, view.radius_km, view.highlight = self.home, self.radius_km, self.highlight
-        view.badge = self.badge
+        view.badge, view.badge_runs, view.badge_scale = self.badge, list(self.badge_runs), EXPORT_BADGE_SCALE
         view.set_cells(self.cells)
         view.provider, view.api_key = self.provider, self.api_key
         view._pix = OrderedDict(self._pix)  # the tiles already here; the rest come from the cache or the provider
@@ -1124,27 +1129,50 @@ class GridMapView(QWidget):
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
         return box
 
+    def set_badge(self, runs: list[tuple[str, str]]) -> None:
+        """The counts in the corner as ``(text, role)`` runs: "ok" draws the confirmed count in green, "warn" the
+        worked-only count in amber, "strong" bold white, "" plain white. :attr:`badge` keeps the plain text."""
+        self.badge_runs = list(runs)
+        self.badge = "".join(text for text, _role in self.badge_runs) or None
+
     def _draw_badge(self, painter: QPainter, credit: QRectF) -> None:
-        """The counts (confirmed, worked only, VUCC or GridMaster) in the bottom right corner, in the sky outside the
-        globe, so they cover no square; above the credit when the view is too narrow for both side by side."""
-        if not self.badge:
+        """The counts (confirmed in green, worked only in amber, VUCC or GridMaster progress in bold) in the bottom
+        right corner, in the sky outside the globe, so they cover no square; above the credit when the view is too
+        narrow for both side by side. Drawn larger on an export (:data:`EXPORT_BADGE_SCALE`)."""
+        runs = self.badge_runs or ([(self.badge, "")] if self.badge else [])
+        if not runs:
             return
-        font = QFont(self.font())
-        font.setPointSizeF(10)
-        font.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(font)
-        metrics = painter.fontMetrics()
-        width = min(self.width() - 12, metrics.horizontalAdvance(self.badge) + 18)
-        text = metrics.elidedText(self.badge, Qt.TextElideMode.ElideRight, max(1, width - 18))
+        scale = self.badge_scale
+        plain, strong = QFont(self.font()), QFont(self.font())
+        plain.setPointSizeF(BADGE_PT * scale)
+        strong.setPointSizeF(BADGE_PT * scale)
+        strong.setWeight(QFont.Weight.DemiBold)
+        fm_plain, fm_strong = QFontMetricsF(plain), QFontMetricsF(strong)
+
+        def metrics(role: str) -> QFontMetricsF:
+            return fm_strong if role else fm_plain
+
+        pad = 10 * scale
+        text_w = sum(metrics(role).horizontalAdvance(text) for text, role in runs)
+        width = min(self.width() - 12, text_w + 2 * pad)
+        if text_w + 2 * pad > width:  # too narrow a view: the plain text, elided
+            runs = [(fm_plain.elidedText(self.badge or "", Qt.TextElideMode.ElideRight, max(1.0, width - 2 * pad)), "")]
+            text_w = fm_plain.horizontalAdvance(runs[0][0])
+        height = fm_strong.height() + 8 * scale
         bottom = self.height() - 8
         if self.width() - width - 8 < credit.right() + 8:
             bottom = credit.top() - 6
-        box = QRectF(self.width() - width - 8, bottom - metrics.height() - 8, width, metrics.height() + 8)
-        painter.setPen(QPen(QColor(255, 255, 255, 70), 1))
+        box = QRectF(self.width() - width - 8, bottom - height, width, height)
+        painter.setPen(QPen(QColor(255, 255, 255, 64), 1))
         painter.setBrush(QColor(0, 0, 0, 140))
-        painter.drawRoundedRect(box, 6, 6)
-        painter.setPen(QColor(255, 255, 255, 235))
-        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        painter.drawRoundedRect(box, 6 * scale, 6 * scale)
+        x = box.left() + (width - text_w) / 2
+        baseline = box.top() + 4 * scale + fm_strong.ascent()
+        for text, role in runs:
+            painter.setFont(strong if role else plain)
+            painter.setPen(BADGE_OK if role == "ok" else BADGE_WARN if role == "warn" else QColor(255, 255, 255, 235))
+            painter.drawText(QPointF(x, baseline), text)
+            x += metrics(role).horizontalAdvance(text)
 
     def describe(self, sq: str) -> str:
         cell = self.cells.get(sq)

@@ -457,24 +457,27 @@ class StatisticsTab(QWidget):
         self.map.home, self.map.radius_km = home, grids.RADIUS_KM if grids.square(home) else None
         self.map.highlight = grids.conus() if self.region.currentData() == "conus" else frozenset()
         self.map.set_cells(cells)
-        self.map.badge = self.summary(cells, sources)
+        self.map.set_badge(self.summary(cells, sources))
         self.map.update()
 
-    def summary(self, cells: dict[str, grids.Square], sources: list[str]) -> str:
-        """The counts drawn in the map's corner (and in the saved PNG): confirmed by the ticked sources, worked only,
-        and the VUCC or GridMaster progress when the view has one."""
+    def summary(self, cells: dict[str, grids.Square], sources: list[str]) -> list[tuple[str, str]]:
+        """The counts drawn in the map's corner (and in the saved PNG), as ``(text, role)`` runs for
+        :meth:`GridMapView.set_badge`: the confirmed count in green, the worked-only count in amber, the VUCC or
+        GridMaster progress in bold, the words in white."""
         confirmed = sum(1 for c in cells.values() if c.confirmed)
-        parts = [f"{confirmed:,} " + tr("confirmed") + " (" +
-                 (" + ".join(SOURCE_NAMES[s] for s in sources) or tr("nothing ticked")) + ")",
-                 f"{len(cells) - confirmed:,} " + tr("worked only")]
+        runs = [(f"{confirmed:,}", "ok"),
+                (" " + tr("confirmed") + " (" + (" + ".join(SOURCE_NAMES[s] for s in sources) or tr("nothing ticked"))
+                 + ")", ""),
+                (" · ", ""), (f"{len(cells) - confirmed:,}", "warn"), (" " + tr("worked only"), "")]
         need = VUCC_NEEDS.get(self.band.currentData())
         if need:
-            parts.append(f"VUCC {self.band.currentText()}: {confirmed} / {need}")
+            runs += [(" · ", ""), (f"VUCC {self.band.currentText()}: ", ""), (f"{confirmed} / {need}", "strong")]
         if self.region.currentData() == "conus":
             us = grids.conus()
-            parts.append(tr("GridMaster:") + f" {sum(1 for s, c in cells.items() if s in us and c.confirmed)} / 488 " +
-                         tr("confirmed") + f", {sum(1 for s in cells if s in us)} " + tr("worked"))
-        return " · ".join(parts)
+            runs += [(" · ", ""), (tr("GridMaster:") + " ", ""),
+                     (f"{sum(1 for s, c in cells.items() if s in us and c.confirmed)} / 488", "strong"),
+                     (" " + tr("confirmed") + f", {sum(1 for s in cells if s in us)} " + tr("worked"), "")]
+        return runs
 
     # ------------------------------------------------------------------ the map in its own window
     def in_window(self) -> bool:
@@ -608,7 +611,9 @@ class StatisticsTab(QWidget):
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(500)
         progress.setValue(0)  # without a value Qt waits four seconds before showing it
-        snapshot = self._snapshot = GlobeSnapshot(self.map.export_view(), parent=self)
+        view = self.map.export_view()
+        view.caption = Path(self.png_name()).stem  # the band above the map carries the file's own name
+        snapshot = self._snapshot = GlobeSnapshot(view, parent=self)
 
         def done() -> None:
             self._snapshot = self._progress = None

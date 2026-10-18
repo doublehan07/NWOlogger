@@ -63,12 +63,17 @@ def test_the_counts_badge_is_drawn_in_the_corner_and_exported(tab):
     assert tab.map.badge.startswith("1 confirmed (LoTW) · 0 worked only · VUCC")
     view = tab.map.export_view()
     try:
-        assert view.badge == tab.map.badge
+        assert view.badge == tab.map.badge and view.badge_runs == tab.map.badge_runs
+        assert view.badge_scale == gridmap.EXPORT_BADGE_SCALE and tab.map.badge_scale == 1.0
+        assert tab.map.badge_runs[0] == ("1", "ok") and ("0", "warn") in tab.map.badge_runs
         image = view.snapshot()
         # the badge sits in the bottom right corner, in the sky: dark box with light text
-        corner = [image.pixelColor(image.width() - 30 - x, image.height() - 20 - y).lightness()
-                  for x in range(0, 300, 10) for y in range(0, 16, 4)]
+        corner = [image.pixelColor(image.width() - 30 - x, image.height() - 10 - y).lightness()
+                  for x in range(0, 300, 10) for y in range(0, 100, 5)]  # the export's badge is drawn larger
         assert max(corner) > 150, "no light text in the corner"
+        greens = [image.pixelColor(image.width() - 30 - x, image.height() - 10 - y)
+                  for x in range(0, 1600, 2) for y in range(0, 100, 2)]  # the whole badge; the "1" is a thin glyph
+        assert any(c.green() > 170 and c.green() > c.red() + 40 for c in greens), "the confirmed count is not green"
     finally:
         view.shutdown()
         view.deleteLater()
@@ -290,6 +295,7 @@ def test_a_slow_export_shows_its_progress_soon_and_keeps_it_with_the_map(tab, qt
     monkeypatch.setattr(statistics_tab, "GlobeSnapshot", Waiting)
     tab.save_png()
     progress = tab._progress
+    assert tab._snapshot.view.caption == tab.png_name()[:-4]  # the band above the map names the file
     qtbot.waitUntil(progress.isVisible, timeout=1500)  # within about half a second, not Qt's default four
     tab.save_png()  # asked again: no second file dialog, the same progress comes forward
     assert len(asked) == 1 and tab._progress is progress and progress.isVisible()

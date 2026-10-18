@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -41,7 +40,7 @@ from ..core.sync import positions, tqsl
 from . import theme
 from .prefs import DEFAULTS, SECRET_KEYS
 from .profiles_from_log import ProfilesFromLogDialog
-from .widgets import MODE_FIRST, ScrollArea, all_modes, fit_to_screen, mode_list, sat_list
+from .widgets import MODE_FIRST, ScrollArea, SideTabs, all_modes, fit_to_screen, mode_list, sat_list
 
 tr = i18n.tr
 log = logging.getLogger("nwologger.prefs")
@@ -655,9 +654,9 @@ class PrefsDialog(QDialog):
         super().__init__(parent)
         self.db, self.prefs = db, prefs
         self.setWindowTitle(tr("Preferences"))
-        self.resize(820, 600)
+        self.resize(900, 620)
         lay = QVBoxLayout(self)
-        self.tabs = QTabWidget()
+        self.tabs = SideTabs()  # the pages listed down the left side: all of them in view at any width
         lay.addWidget(self.tabs, 1)
 
         # General

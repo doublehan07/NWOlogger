@@ -46,7 +46,7 @@ The grid map (Statistics tab, Ctrl+4) shows every 4-character Maidenhead square 
 - **Filters:** a satellite or an orbit (LEO, MEO, HEO, GEO, or every satellite but the geostationary ones; the list holds every satellite with its QSO count), one band or all bands, and mode group. *Callsigns* and *Grids* list the station callsigns and the places your log says you operated from, with counts: tick several calls when you hold more than one, and *Within 200 km* ticks the places VUCC and GridMaster count (the default). The count line in the map's corner shows confirmed and worked squares and VUCC progress, and goes into the saved PNG.
 - **Regions:** around my grid, China & around, CONUS 488 (GridMaster's squares outlined, with the count), Europe, Japan, World.
 - **Moving around:** drag with the right or middle mouse button (Ctrl + drag on a trackpad) or use the arrow keys to rotate the globe; a left click shows the square's QSOs in the log. The wheel, a double-click or +/− zoom. *Open in a window* puts the map and its controls in a window of their own, whose size and place are remembered; its full-screen button or F11 fills the screen, and Esc comes back.
-- **Save as PNG:** the map as you see it, at twice its size in pixels, named after the ticked callsigns and places (`BI1NWO at ON80 - NWOlogger 0.1.9.png`, with *et al* when there are several), with NWOlogger and its version in a band above the map.
+- **Save as PNG:** the map as you see it, at twice its size in pixels, named after the ticked callsigns and places (`BI1NWO at ON80 - NWOlogger 0.1.9.png`, with *et al* when there are several), with that name in a band above the map and the counts, confirmed in green and worked only in amber, large in its corner.
 - **Day/night:** shades the night side for the current UTC time, squares included, with a clear edge along the grey line (as on PSK Reporter's map). It updates by itself and remembers whether it is on (on by default). Stars and a faint Milky Way sit behind the globe.
 - **Imagery** (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (a free developer key). Imagery, squares and the night side are drawn at your display's own resolution, Retina included. Tiles load in the background and are kept in the system cache folder (up to 300 MB), so views seen before open offline.
 
@@ -109,7 +109,7 @@ See [INSTALLATION.md](INSTALLATION.md) for setup, first-run steps, troubleshooti
   - Contest picked from a dropdown: CQ WW, CQ WPX, IARU HF, ARRL DX, ARRL 10 m, All Asian, CQ WW VHF, generic templates, and your own.
   - Live dupe check, Check Partial / N+1, and live score / multipliers / rate.
   - Cabrillo export.
-- **Modern UI** with light and dark themes, keyboard-first (command palette ⌘K / Ctrl+K), in **English and 简体中文**. Windows and Preferences fit the available desktop and scroll when needed, including at 250% display scaling.
+- **Modern UI** with light and dark themes, keyboard-first (command palette ⌘K / Ctrl+K), in **English and 简体中文**. Windows and Preferences fit the available desktop and scroll when needed, including at 250% display scaling; Preferences lists its pages down the left side, so every page stays in view at any width.
 
 No rig control, by design: NWOlogger never talks to a radio.
 

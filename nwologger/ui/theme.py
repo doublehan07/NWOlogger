@@ -174,6 +174,9 @@ QTableCornerButton::section {{ background: {t.surface_alt}; border: none; }}
 QListWidget, QTreeWidget {{ background: {t.surface}; border: 1px solid {t.border}; border-radius: 8px; }}
 QListWidget::item {{ padding: 5px 8px; border-radius: 4px; }}
 QListWidget::item:selected, QTreeWidget::item:selected {{ background: {t.accent_soft}; color: {t.text}; }}
+QListWidget#SideTabs {{ background: {t.surface_alt}; border: 1px solid {t.border}; border-radius: 10px; padding: 4px; }}
+QListWidget#SideTabs::item {{ padding: 7px 10px; margin: 1px 0; border-radius: 6px; }}
+QListWidget#SideTabs::item:selected {{ background: {t.accent_soft}; color: {t.accent}; }}
 
 QStatusBar {{ background: {t.surface}; border-top: 1px solid {t.border}; color: {t.muted}; }}
 QStatusBar QLabel {{ color: {t.muted}; padding: 0 8px; }}
