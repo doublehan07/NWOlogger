@@ -35,6 +35,14 @@ def shutdown() -> None:
         _POOL.shutdown(wait=False, cancel_futures=True)
 _PARALLEL_PIXELS = 60_000
 _FORMAT = QImage.Format.Format_ARGB32_Premultiplied
+# Satellite imagery shows the ocean nearly black (Blue Marble: about 12, 25, 50), so the night shade, which can
+# only darken, left no visible line over the sea. Dark, blue water is lifted toward this sea blue on the day side;
+# the night shade then shows the same day-to-night gradient over water as over land. Land, clouds and ice are
+# brighter or not bluer than green and red, and keep their colours.
+SEA = (46, 84, 140)
+SEA_LIFT = 0.62  # the share of the way to SEA for dark water
+SEA_LUMA = 90.0  # water this light or lighter is left alone (the lift fades out over the 25 units below it)
+SEA_BLUE_MAX = 120  # and so is anything bluer than the ocean ever is (a saturated blue is a drawing, not water)
 _PER_LON = 90 / math.pi  # square columns per radian of longitude (2° each)
 _PER_LAT = 180 / math.pi  # square rows per radian of latitude
 # Column of u = longitude / 2° + 180, which lies in (0, 360): positive, so truncation is floor.
@@ -126,6 +134,30 @@ class _Raster:
                 work(band)
 
 
+def lift_water(packed: np.ndarray) -> np.ndarray:
+    """Premultiplied ARGB pixels with dark, blue water lifted toward :data:`SEA` (see there); other pixels as is."""
+    a = packed >> 24
+    r = ((packed >> 16) & 255).astype(np.float32)
+    g = ((packed >> 8) & 255).astype(np.float32)
+    b = (packed & 255).astype(np.float32)
+    luma = 0.299 * r + 0.587 * g + 0.114 * b
+    # How much of a sea pixel this is: dark (fading out towards SEA_LUMA), not bluer than the ocean, and not
+    # clearly greener or redder than it is blue. The gates are wide and soft, so near-black shallow water, grey
+    # coastal pixels that mix land and water (they drew a dark rim around every coast) and sediment lift like the
+    # open ocean, while green forest, brown soil, red desert and bright pixels keep their colours.
+    dark = np.clip((SEA_LUMA - luma) / 25, 0, 1)
+    blue = np.clip((b - g + 16) / 16, 0, 1) * np.clip((b - r + 16) / 16, 0, 1)
+    k = (SEA_LIFT * dark * blue * (a > 0) * (b < SEA_BLUE_MAX)).astype(np.float32)
+    if not k.any():
+        return packed
+    scale = (a / 255).astype(np.float32)  # premultiplied: the lifted colour is scaled by the pixel's alpha
+    r = r + (SEA[0] * scale - r) * k
+    g = g + (SEA[1] * scale - g) * k
+    b = b + (SEA[2] * scale - b) * k
+    return ((a << 24) | (np.rint(r).astype(np.uint32) << 16) | (np.rint(g).astype(np.uint32) << 8)
+            | np.rint(b).astype(np.uint32))
+
+
 def _new_image(raster: _Raster) -> tuple[QImage, np.ndarray]:
     image = QImage(raster.width, raster.height, _FORMAT)
     return image, np.frombuffer(image.bits(), np.uint32).reshape(raster.height, raster.width)
@@ -179,7 +211,7 @@ class GlobeRaster:
             iy = np.floor(top - np.arctanh(np.clip(north, -.999999, .999999)) * per_radian).astype(np.int32)
             iy = iy.view(np.uint32)
             valid = (ix < width) & (iy < height)
-            sampled = pixels[np.minimum(iy, height - 1), np.minimum(ix, width - 1)]
+            sampled = lift_water(pixels[np.minimum(iy, height - 1), np.minimum(ix, width - 1)])
             _store(band, np.where(valid, sampled, np.uint32(0)), out)
 
         return consume, texture  # the texture must outlive the run

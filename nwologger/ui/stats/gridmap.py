@@ -834,8 +834,8 @@ class GridMapView(QWidget):
         sphere = QPainterPath()
         sphere.addEllipse(middle, radius, radius)
         base = QRadialGradient(middle - QPointF(radius * 0.25, radius * 0.25), radius * 1.5)
-        base.setColorAt(0, QColor("#25465c"))
-        base.setColorAt(1, QColor("#0b1e30"))
+        base.setColorAt(0, QColor("#356a95"))  # a sea the night side can darken visibly (grid only, and under
+        base.setColorAt(1, QColor("#163b5e"))  # the imagery's transparent corners)
         painter.fillPath(sphere, base)
         painter.save()
         try:
