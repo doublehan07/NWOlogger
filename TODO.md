@@ -26,9 +26,7 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 ## Next
 
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
-- [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
-- [ ] Check the release build (PyInstaller) uses the macOS Keychain / Windows Credential Manager backend
 - [ ] Measure the per-pixel globe renderer on the Windows test machine at 100% and 250% scaling (it took 106–242 ms per dense scene before; PLAN §15)
 
 ## M9 — Integrations (later)
@@ -46,6 +44,8 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Done in v0.1.8 (2026-10-18)
 
+- [x] **GitHub Actions:** CI runs ruff and pytest on Linux, macOS and Windows for every push (passing); the release workflow's first run, for the v0.1.8 tag, built a Linux `.tar.gz`, a macOS `.dmg` (Apple silicon) and a Windows installer and ZIP, started each built app off-screen, and put them in a draft pre-release (publish it on GitHub). Actions → Release → *Run workflow* builds them without a release
+- [x] **Keychain in the packaged builds:** the built macOS app uses the macOS Keychain and the built Windows app the Windows Credential Manager (`packaging/smoke_test.py`, from the start-up log's new *Keychain:* line); a build without its backend fails the release
 - [x] **Windows display scaling:** fit the main window and Preferences to the available desktop, with scrolling to reach clipped controls; checked in English and Chinese up to 250% scaling
 - [x] **Download retries and imports:** failed LoTW, eQSL and QRZ.com downloads do not start the download wait; adding downloaded QSOs to an empty log preserves their service confirmations; overlapping import dialogs merge contacts already added by another service
 - [x] **First LoTW download:** reuse the full accepted-QSO report for confirmations when its timestamps are complete, with a separate confirmation query when needed; skip matching against an empty log
