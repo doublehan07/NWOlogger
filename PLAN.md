@@ -1,11 +1,11 @@
 # NWOlogger — Design Plan
 
-Status: **v0.1.7** (2026-10-17): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1), the Device section, the Sync results window and the diagnostic log (v0.1.2), the LoTW / eQSL call lists for Similar calls and per-service sync history clearing (v0.1.3), and the fixes from testing 0.1.3: a quick Preferences → OK, language and theme switches without a restart, wildcards in the call field, sorting from the first row, new confirmations selected after a sync, and a more telling diagnostic log (v0.1.4), and the fixes from testing 0.1.4: no undo (backups instead), downloads that say what is new, Download everything again, and a wait between syncs (v0.1.5), and merging field by field, Ignore all marked dupes, Look up and fill with progress and safer bulk edit times (v0.1.6), and the grid map with satellite imagery (v0.1.7); see §14 for where the code differs from
+Status: **v0.1.8** (2026-10-18): milestones M0–M8 are built (v0.1.0), plus the credential fixes and real-account tests (v0.1.1), the Device section, the Sync results window and the diagnostic log (v0.1.2), the LoTW / eQSL call lists for Similar calls and per-service sync history clearing (v0.1.3), and the fixes from testing 0.1.3: a quick Preferences → OK, language and theme switches without a restart, wildcards in the call field, sorting from the first row, new confirmations selected after a sync, and a more telling diagnostic log (v0.1.4), and the fixes from testing 0.1.4: no undo (backups instead), downloads that say what is new, Download everything again, and a wait between syncs (v0.1.5), and merging field by field, Ignore all marked dupes, Look up and fill with progress and safer bulk edit times (v0.1.6), and the grid map with satellite imagery (v0.1.7), and the fixes from testing 0.1.7: the grid map as a globe drawn per pixel at the display's resolution, with a twilight fade and names and calls as in GridMaster, selected rows that keep their colour, a bulk edit preview that keeps up, all 33 bands with frequency units, a prompt for unsaved station profiles, windows that fit scaled Windows displays, safer download retries, and release builds for Linux, macOS and Windows (v0.1.8); see §14 for where the code differs from
 this plan, and [TODO.md](TODO.md) for what is left. Open questions are collected in §13.
 
 ## 1. Requirements
 
-A minimal, fast, cross-platform (macOS + Windows) amateur radio logger, modelled on
+A minimal, fast, cross-platform (macOS, Windows and Linux) amateur radio logger, modelled on
 **MacLoggerDX** for day-to-day logging and on **N1MM Logger+** for contesting.
 
 The project owner's requirements, grouped by topic. The rest of this plan is the design that meets them.
@@ -54,18 +54,18 @@ These may move to TODO later, but they are not part of the core.
 | App prefs | `QSettings` | Window layout and UI preferences |
 | i18n | Qt Linguist (`pyside6-lupdate` → `.ts` → `.qm`) | `en` source strings plus `zh_CN` |
 | Tests / lint | `pytest`, `pytest-qt`, `ruff` | |
-| Packaging | PyInstaller, one-folder → macOS `.app`/`.dmg`, Windows installer (Inno Setup) | Built by a GitHub Actions matrix |
+| Packaging | PyInstaller, one-folder → macOS `.app`/`.dmg`, Windows installer (Inno Setup) and ZIP, Linux `.tar.gz` | Built by a GitHub Actions matrix |
 
 ### 2.1 Versioning
 
 - **One source of truth:** the `version` in `pyproject.toml`, read at runtime through `importlib.metadata` and exposed as `nwologger.__version__`. Versions follow SemVer and start at `0.1.0`. While in `0.x`, a new milestone bumps the minor number and a fix bumps the patch number.
 - **Shown in the app** in four places:
-  - the window title (`NWOlogger v0.1.7 — nwolog.sqlite`)
+  - the window title (`NWOlogger v0.1.8 — nwolog.sqlite`)
   - the right end of the toolbar, as in MacLoggerDX
   - Help → About (version, Qt/PySide6 version, DB schema version, data-file path)
   - `nwologger --version`
-- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.7 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
-- **Releases:** a git tag such as `v0.1.7` triggers the release build. CI fails if the tag and `pyproject.toml` disagree.
+- **Sent outward:** the same string goes into ADIF `PROGRAMVERSION`, the service User-Agent (`NWOlogger/0.1.8 (BI1NWO)`), and the Cabrillo `CREATED-BY` line.
+- **Releases:** a git tag such as `v0.1.8` builds Linux (`.tar.gz`), macOS (`.dmg`, Apple silicon) and Windows (installer and ZIP), starts each built app once off-screen (`packaging/smoke_test.py`, which also checks that macOS and Windows builds keep passwords in the system keychain), and puts them in a draft pre-release to publish by hand. Actions → Release → *Run workflow* builds the same as downloadable artifacts, without a release. The build fails if the tag and `pyproject.toml` disagree. CI runs ruff and pytest on Linux, macOS and Windows for every push to `main`.
 
 Architecture rule: `nwologger/core/` never imports Qt. All logic lives there: DB, ADIF, search, dupes, DXCC, contest scoring and sync.
 The UI layer is thin, so the core is unit-testable and could also back a CLI.
@@ -241,7 +241,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 - **Keyboard-first:** every action has a shortcut, plus a command palette (⌘K / Ctrl+K).
 
 ```
-┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.7 ┐
+┌ Toolbar: [Log ▾ / Contest]  [Search]  [Sync ▾]  [Import]  [Export ▾]  [Prefs]  UTC 04:20:02  Local 12:20  v0.1.8 ┐
 ├ Entry panel ── [ DX | Contest ] ─────────────────────────────────────────────────────────────────────────────┤
 │ Call [______]  First  Last    │ Time On  2026-10-16 04:19:35   Time Off                                      │
 │ Address / City                │ MHz  [145.920] 2M   RX MHz [436.950] 70CM   Mode [FM ]                       │
@@ -679,7 +679,7 @@ The station profile editor tracks changes to its trimmed fields, station type an
 
 | # | Milestone | Done when |
 |---|---|---|
-| M0 | Scaffold | `uv run nwologger` opens an empty window showing its version (title, toolbar, About, `--version`); CI runs ruff + pytest on macOS and Windows |
+| M0 | Scaffold | `uv run nwologger` opens an empty window showing its version (title, toolbar, About, `--version`); CI runs ruff + pytest on Linux, macOS and Windows |
 | M1 | Core data | Schema + migrations, field registry, modes/bands, ADIF read/write, with round-trip tests |
 | M2 | Log view | Lazy table, sort by any column, column chooser, quick filter + advanced search (wildcards, vague mode), import with dupe marking, MacLoggerDX migration, export all/selected/filtered |
 | M3 | DX entry | Entry panel, `cty.csv` resolver, worked-before, dupe rules (30 s block, warning window), sticky fields, satellite list, edit/delete/undo |
@@ -758,7 +758,7 @@ Where the code differs from, or adds to, the plan above:
 - **Tester sample:** `tests/fixtures/sample.adi` is a synthetic 17-QSO log (satellite pass, HF, one strict and one suspicious dupe) for trying the app; a test keeps it importable.
 - **TQSL data:** the propagation list and five extra satellites come from TQSL's current configuration (`config.tq6` v11.34, lotw.arrl.org). RS95S is on LoTW's FAQ list but not yet in that configuration; both sources are kept.
 
-## 15. v0.1.7 testing and rendering checks (2026-10-18)
+## 15. Testing v0.1.7: fixes and rendering checks for v0.1.8 (2026-10-18)
 
 The latitude crash came from sampled line interpolation producing `90.00000000000001` instead of exactly `90`. `_samples` now returns exact endpoints and bounds its interior samples; `core/globe.py` retains strict latitude validation. Painter lifetimes and saved state use `try/finally` so a paint failure still releases Qt painting resources.
 
