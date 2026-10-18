@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -612,14 +613,40 @@ def flagged_ids(db, ids: list[int] | None = None) -> list[int]:
     return db.select_ids("dupe_flag IN ('DUPE', 'SUSPECT')", [], [("time_on", False)])
 
 
+def window_text(prefs) -> str:
+    """The dupe warning window as words: ``1 min``, ``90 s``."""
+    secs = prefs.warn_seconds()
+    return f"{secs / 60:g} min" if secs >= 60 else f"{secs:g} s"
+
+
+def cleared_text(res, prefs) -> str:
+    """What a rescan cleared, for the review and the status bar; "" when nothing was."""
+    if not res.cleared:
+        return ""
+    head = (tr("mark made under an earlier rule was cleared: those QSOs are more than") if res.cleared == 1
+            else tr("marks made under an earlier rule were cleared: those QSOs are more than"))
+    return f"{res.cleared} {head} {window_text(prefs)} " + tr("apart.")
+
+
 def show_review(parent, db, prefs, ids: list[int] | None = None, on_edit=None) -> None:
-    """Review marked QSOs (all, or the given ones), one dupe group at a time."""
+    """Review marked QSOs (all, or the given ones), one dupe group at a time. The marks are brought up to date
+    with the current windows first: a mark made under an earlier, wider window (24 hours before 0.1.9) would
+    otherwise stay in the log with no pair to show for it. The review says how many it cleared."""
     w = {"block_s": prefs.get("block_seconds"), "warn_s": prefs.warn_seconds()}
+    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    try:
+        res = dupes.rescan(db, **w)
+    finally:
+        QApplication.restoreOverrideCursor()
+    cleared = cleared_text(res, prefs)
     start = flagged_ids(db, ids) or (ids or [])
     groups = dupes.groups_for(db, start, **w)
     if not groups:
-        QMessageBox.information(parent, tr("Compare possible duplicates"), tr("No marked QSOs to review."))
+        QMessageBox.information(parent, tr("Compare possible duplicates"),
+                                (cleared + "\n\n" if cleared else "") + tr("No marked QSOs to review."))
         return
+    if cleared and hasattr(parent, "flash"):
+        parent.flash(cleared)
     dlg = DupeCompareDialog(db, prefs, groups=groups, parent=parent)
     if on_edit:
         dlg.edit_requested.connect(on_edit)

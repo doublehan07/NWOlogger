@@ -214,6 +214,7 @@ Two QSOs are compared when they have the same call and band, plus the same `sat_
 - **Windows:** the block window (30 s) and the warning window (1 minute since v0.1.9; a stored 24 h, the old default, becomes 1 min, any other value is kept, converted to minutes) are both set in Prefs. A minute is what a real re-log or a service's second copy of a QSO falls within; 24 h flagged every repeat contact over a day as suspect.
 - **Nothing is filtered out:** USB ≠ LSB and FT8 ≠ FT4. Related modes are never blocked or dropped, only warned about and marked.
 - **Import never skips:** every record is imported and every suspicious dupe is marked (§8.1).
+- **Marks follow the rule (v0.1.9):** *Review suspicious dupes*, *Find duplicates* and a change of the windows in Preferences rescan the whole log first (`dupes.rescan`, which clears marks the windows no longer make, keeps *Not a dupe* marks and counts what it cleared), and the review says so: the 24-hour window of 0.1.8 had left SUSPECT marks on pairs 20 minutes apart that the 1-minute window never shows. A rescan at every open was rejected as too costly for large logs.
 - **Marks are stored** in `dupe_flag` / `dupe_of`.
   - Marked rows are highlighted in the log, and a *Suspicious dupes* preset lists them.
   - Actions: *Not a dupe* (clears the mark), *Merge into the other QSO*, *Delete*.

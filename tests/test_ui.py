@@ -1196,3 +1196,34 @@ def test_the_regular_backup_plan_runs_from_the_window(win, monkeypatch):
     win._backup_plan()
     assert win._reminder is None  # Later: not again today
 
+
+def test_changing_the_dupe_windows_in_preferences_rescans_the_marks(win, monkeypatch):
+    from nwologger.core import qso as qsomod
+    from nwologger.ui import main_window as mw
+
+    db = win.db
+    a = db.insert(qsomod.normalize({"call": "VK6KFK", "time_on": "2024-01-11T10:37:14Z", "mode": "SSB", "band": "15m"}))
+    b = db.insert(qsomod.normalize({"call": "VK6KFK", "time_on": "2024-01-11T10:58:19Z", "mode": "SSB", "band": "15m"}))
+    db.update(b, {"dupe_flag": "SUSPECT", "dupe_of": a}, track_service=False, normalized=True)  # the 24 h rule's mark
+
+    class FakePrefs:  # Preferences saved with the same windows: no rescan
+        def __init__(self, *_a, **_k):
+            pass
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr(mw, "PrefsDialog", FakePrefs)
+    win.open_prefs()
+    assert db.get(b)["dupe_flag"] == "SUSPECT"
+
+    class Narrower(FakePrefs):  # the warning window changed: the marks follow
+        def exec(self):
+            win.prefs.set("warn_minutes", 5)
+            return 1
+
+    monkeypatch.setattr(mw, "PrefsDialog", Narrower)
+    win.open_prefs()
+    assert db.get(b)["dupe_flag"] is None
+    assert "1 cleared" in win.st_msg.text()
+

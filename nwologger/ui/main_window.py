@@ -638,11 +638,8 @@ class MainWindow(QMainWindow):
         self.flash(tr("Log file compacted") + f": {size(before)} → {size(after)}")
 
     def find_dupes(self) -> None:
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            d, s = dupes.rescan(self.db, block_s=self.prefs.get("block_seconds"), warn_s=self.prefs.warn_seconds())
-        finally:
-            QApplication.restoreOverrideCursor()
+        res = self.rescan_marks(quiet=True)
+        d, s = res.dupes, res.suspects
         if not (d or s):
             QMessageBox.information(self, tr("Find duplicates"), tr("No duplicates found."))
             return
@@ -651,6 +648,22 @@ class MainWindow(QMainWindow):
                                 ) == QMessageBox.StandardButton.Yes:
             self.review_dupes()
         self.filter.set_preset("suspicious")
+
+    def _dupe_windows(self) -> tuple:
+        return (self.prefs.get("block_seconds"), self.prefs.warn_seconds())
+
+    def rescan_marks(self, *, quiet: bool = False) -> dupes.RescanResult:
+        """Bring the dupe marks up to date with the current windows (after they changed in Preferences, and for
+        Find duplicates); the status bar says what the scan did unless ``quiet``."""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            res = dupes.rescan(self.db, block_s=self.prefs.get("block_seconds"), warn_s=self.prefs.warn_seconds())
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not quiet:
+            self.flash(tr("Dupe marks rescanned for the new windows:") + f" {res.dupes} " + tr("dupes") +
+                       f", {res.suspects} " + tr("suspicious dupes") + f", {res.cleared} " + tr("cleared"))
+        return res
 
     def not_dupe(self) -> None:
         ids = self.view.selected_ids()
@@ -900,6 +913,7 @@ class MainWindow(QMainWindow):
         self.sync.downloads(["lotw", "eqsl", "qrz"])
 
     def open_prefs(self, page: str | None = None) -> None:
+        windows = self._dupe_windows()
         dlg = PrefsDialog(self.db, self.prefs, self, page=page)
         if dlg.exec():
             with applog.timed("Preferences OK") as t:
@@ -916,6 +930,8 @@ class MainWindow(QMainWindow):
             self.stats.apply_provider()
             self.db.backup_keep = int(self.prefs.get("backup_keep") or 20)
             self.db.scheduled_keep = int(self.prefs.get("scheduled_keep") or 8)
+            if self._dupe_windows() != windows:  # the marks follow the rule
+                self.rescan_marks()
             if self.prefs.get("language") != i18n.lang():
                 self.request_rebuild()
         else:

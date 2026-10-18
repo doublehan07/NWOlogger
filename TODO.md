@@ -60,6 +60,7 @@ From the feedback on 0.1.8 (PLAN §16):
 - [x] **Regular backup plan:** every N days (default 7) a scheduled copy into backups/ when the QSOs changed, in a pool of its own (default 8), and a reminder window for a copy on another disk with *Back up to…*; checked a minute after the start and hourly
 - [x] **Grid search on the whole grid list:** any grid of a station on a grid line finds it, several grids in any order, a comma or semicolon alone lists the QSOs with several grids; a map click lists squares held only as VUCC grids; "/" in the Call box pinned by a test
 - [x] The map's own window keeps the tab's margins; the counts badge in colour and larger in the PNG, whose band carries the file's name; Preferences pages listed down the left side
+- [x] **Stale dupe marks:** the review, Find duplicates and a change of the windows rescan the marks first and say how many an earlier rule had left (0.1.8's 24-hour window marked pairs 20 minutes apart)
 - [x] Translations for everything above (简体中文)
 
 ## Done in v0.1.8 (2026-10-18)

@@ -89,7 +89,7 @@ See [INSTALLATION.md](INSTALLATION.md) for setup, first-run steps, troubleshooti
   - On a new UTC day or after a 3-hour break, the field turns amber once to be checked.
 - **Strict dupe checking:**
   - Only the same call, band and exact mode within 30 seconds blocks logging.
-  - The same mode within the next minute (the warning window, set in Preferences; an old 24-hour setting becomes 1 minute), or a related mode (SSB vs USB, USB vs LSB, FT8 vs FT4), only warns.
+  - The same mode within the next minute (the warning window, set in Preferences; an old 24-hour setting becomes 1 minute), or a related mode (SSB vs USB, USB vs LSB, FT8 vs FT4), only warns. Reviewing dupes or changing the windows rescans the marks first, so a mark an earlier window made does not linger.
   - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, merge them field by field (click the value to keep on each row that differs; confirmations and upload states are combined), delete one, or mark them as not dupes, also all of them at once (asks twice). Edit → Merge selected… merges 2–5 selected QSOs with the same call.
 - **Bulk edit** of a selection, with a preview that keeps up while you type, even for thousands of QSOs. A time or date it can't read is refused, never written. A backup is saved first.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.

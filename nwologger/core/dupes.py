@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import NamedTuple
 
 from . import modes, timeutil
 from .modes import Relation
@@ -114,8 +115,17 @@ def mark(db, ids: list[int], *, block_s: float = BLOCK_SECONDS, warn_s: float = 
     return d, s
 
 
-def rescan(db, *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS) -> tuple[int, int]:
-    """Re-check the whole log. The later QSO of each pair is marked; ``OK`` marks are kept."""
+class RescanResult(NamedTuple):
+    dupes: int  # QSOs marked DUPE after the scan
+    suspects: int  # QSOs marked SUSPECT after the scan
+    cleared: int  # marks the current rule no longer makes (a wider window before, or the partner is gone)
+    added: int  # QSOs newly marked
+
+
+def rescan(db, *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS) -> RescanResult:
+    """Re-check the whole log. The later QSO of each pair is marked; ``OK`` marks are kept. Marks the windows no
+    longer make are cleared and counted, so the caller can say so (0.1.8's 24-hour window left SUSPECT marks on
+    pairs the 1-minute window of 0.1.9 never shows)."""
     rows = [dict(r) for r in db.conn.execute(
         "SELECT id, call, band, prop_mode, sat_name, mode, submode, time_on, dupe_flag, dupe_of FROM qso "
         "WHERE call IS NOT NULL AND band IS NOT NULL AND time_on IS NOT NULL ORDER BY call, band, time_on, id")]
@@ -140,7 +150,7 @@ def rescan(db, *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS) 
                     best = (level, p["id"], secs)
             result[q["id"]] = (best[0], best[1]) if best else (None, None)
         i = j
-    d = s = 0
+    d = s = cleared = added = 0
     with db.batch("Find duplicates"):
         for q in rows:
             if q["dupe_flag"] == "OK":
@@ -151,8 +161,13 @@ def rescan(db, *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS) 
             elif flag == "SUSPECT":
                 s += 1
             if q["dupe_flag"] != flag or q["dupe_of"] != other:
+                was = q["dupe_flag"] in ("DUPE", "SUSPECT")
+                if was and flag is None:
+                    cleared += 1
+                elif flag is not None and not was:
+                    added += 1
                 db.update(q["id"], {"dupe_flag": flag, "dupe_of": other}, track_service=False, normalized=True)
-    return d, s
+    return RescanResult(d, s, cleared, added)
 
 
 def hits(db, q: dict, *, block_s: float = BLOCK_SECONDS, warn_s: float = WARN_SECONDS,
