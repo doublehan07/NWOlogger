@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -117,6 +118,7 @@ class MainWindow(QMainWindow):
         self.a_new_log = A("New log file…", self.new_log)
         self.a_open_log = A("Open log file…", self.open_log)
         self.a_backup = A("Back up now", lambda: self.flash(tr("Backup saved") + f": {self.db.backup('manual')}"))
+        self.a_compact = A("Compact log file…", self.compact_log)
         self.a_quit = A("Quit", self.close, QKeySequence.StandardKey.Quit)
         self.a_bulk = A("Bulk edit selected…", self.bulk_edit, "Ctrl+B", "pencil")
         self.a_edit = A("Edit QSO", self.edit_current, "Ctrl+E")
@@ -190,7 +192,7 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
         for a in (self.a_new_log, self.a_open_log, None, self.a_import, self.a_export_all, self.a_export_sel,
-                  self.a_export_flt, None, self.a_backup, self.a_cty, self.a_scp, self.a_lists, None,
+                  self.a_export_flt, None, self.a_backup, self.a_compact, self.a_cty, self.a_scp, self.a_lists, None,
                   self.a_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
@@ -583,6 +585,27 @@ class MainWindow(QMainWindow):
             return
         n = self.db.delete(ids, label=tr("Delete") + f" {len(ids)}")
         self.flash(tr("Deleted") + f" {n} " + tr("QSOs"))
+
+    def compact_log(self) -> None:
+        """Rebuild the log file without the space deleted QSOs left behind (and their old data), after a backup."""
+        def size(n: int) -> str:
+            return f"{n / 1e6:.1f} MB" if n >= 1e6 else f"{max(1, round(n / 1e3))} KB"
+
+        if QMessageBox.question(
+                self, tr("Compact log file"),
+                tr("Rebuild the log file without the space deleted QSOs left behind? Their old data is then gone from "
+                   "the file as well; backups keep theirs. A backup is saved first.") + "\n\n" +
+                tr("Size now:") + f" {size(self.db.file_size())}") != QMessageBox.StandardButton.Yes:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            before, after, _backup = self.db.compact()
+        except (sqlite3.Error, OSError, RuntimeError) as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, tr("Compact log file"), tr("Could not compact the log file:") + f"\n{e}")
+            return
+        QApplication.restoreOverrideCursor()
+        self.flash(tr("Log file compacted") + f": {size(before)} → {size(after)}")
 
     def find_dupes(self) -> None:
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)

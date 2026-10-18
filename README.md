@@ -59,6 +59,7 @@ See [INSTALLATION.md](INSTALLATION.md) for setup, first-run steps, troubleshooti
 - **One SQLite file** holds every QSO.
   - Columns are plain ADIF names, so the log can be queried with any SQLite tool.
   - The log is backed up automatically on open and before every import or bulk edit.
+  - Deleting QSOs doesn't shrink the file; File → Compact log file rebuilds it without the space they left, after a backup.
 - **ADIF import and export:** export all, selected, or filtered QSOs. Fields NWOlogger doesn't know are kept and written back out. A LoTW report saved from the LoTW website (`lotwreport.adi`) is applied like a LoTW download: the QSOs in your log get LoTW's confirmation and its date, and the ones not in your log are offered to add.
 - **MacLoggerDX migration** straight from its database. It keeps the LoTW, eQSL, QRZ and HRDLog upload history and the paper card dates that MLDX's own ADIF export drops.
   - MacLoggerDX only records the uploads it made itself. A QSO that LoTW or QRZ.com confirmed must have been uploaded there, so it is marked uploaded too (ADIF imports get the same rule); the import preview counts them. Download from LoTW and QRZ.com before your first upload to mark the rest.

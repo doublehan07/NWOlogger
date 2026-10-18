@@ -191,6 +191,26 @@ class LogDB:
                 pass
         return dest
 
+    def file_size(self) -> int:
+        """Bytes the log takes on disk: the file and its write-ahead log."""
+        wal = self.path.with_name(self.path.name + "-wal")
+        return sum(p.stat().st_size for p in (self.path, wal) if p.exists())
+
+    def compact(self) -> tuple[int, int, Path | None]:
+        """Rebuild the log file without the free space deleted QSOs leave behind: SQLite keeps it for reuse, so the
+        file never shrinks by itself, and their old bytes stay in it until overwritten. A ``compact`` backup first,
+        then VACUUM. Returns the size before and after (bytes) and the backup."""
+        if self._in_batch:
+            raise RuntimeError("The log file can't be compacted during a change")
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        before = self.file_size()
+        backup = self.backup("compact")
+        self.conn.execute("VACUUM")
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        after = self.file_size()
+        log.info("Log file compacted: %d → %d bytes", before, after)
+        return before, after, backup
+
     # ------------------------------------------------------------------ listeners
     def add_listener(self, fn: ChangeListener) -> None:
         self._listeners.append(fn)

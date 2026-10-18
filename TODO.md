@@ -56,6 +56,7 @@ From testing the first 0.1.8 build (the version stays 0.1.8):
 - [x] **Asking again while a run goes on:** a second download or upload with the same service shows "another download (upload) is still in progress", starts nothing and brings back its hidden progress window; Sync everything warns once for all still running
 - [x] Preferences: the language hint names the *Save* button (it said OK)
 - [x] The *Day/night* button looks selected while the night side is shown
+- [x] **File → Compact log file:** deleting QSOs never shrinks the SQLite file (and their old bytes stay in its free space); this rebuilds it with VACUUM after a backup and shows the size before and after
 - [x] **Importing a LoTW report** (`lotwreport.adi`): its `QSL_RCVD` / `QSLRDATE` are LoTW's confirmation and date, but File → Import wrote them into the paper QSL fields. Now it is applied like a LoTW download by default (confirmations with LoTW's date, uploads marked, new confirmations selected, the QSOs not in the log offered to add), or imported as QSOs into the LoTW fields; paper QSL fields are never touched. A QSO LoTW holds twice, with and without its satellite, now matches each copy
 
 Before that:

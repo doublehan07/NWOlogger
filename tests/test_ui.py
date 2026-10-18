@@ -1028,3 +1028,23 @@ def test_selected_confirmed_call_stays_green(qtbot, tmp_path, mode):
         db.close()
     finally:
         theme.apply(app, "light")
+
+
+def test_file_menu_compacts_the_log_after_asking(win, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from nwologger.ui import main_window
+
+    file_menu = win.menuBar().actions()[0].menu()
+    assert win.a_compact in file_menu.actions()
+    asked, flashed = [], []
+    monkeypatch.setattr(main_window.QMessageBox, "question",
+                        lambda _parent, _title, text: asked.append(text) or QMessageBox.StandardButton.No)
+    monkeypatch.setattr(win, "flash", flashed.append)
+    calls = []
+    monkeypatch.setattr(win.db, "compact", lambda: calls.append(True) or (3_400_000, 106_000, None))
+    win.compact_log()
+    assert asked and "Size now:" in asked[0] and not calls  # No: nothing done
+    monkeypatch.setattr(main_window.QMessageBox, "question", lambda *_a: QMessageBox.StandardButton.Yes)
+    win.compact_log()
+    assert calls and flashed[-1] == "Log file compacted: 3.4 MB → 106 KB"
