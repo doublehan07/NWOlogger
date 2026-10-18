@@ -110,7 +110,7 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
         path = db_path or prefs.get("db_path") or str(dbm.DEFAULT_PATH)
         applog.startup_banner(path)
         try:
-            logdb = dbm.LogDB(path, backup_keep=prefs.get("backup_keep"))
+            logdb = dbm.LogDB(path, backup_keep=prefs.get("backup_keep"), scheduled_keep=prefs.get("scheduled_keep"))
         except Exception as e:  # noqa: BLE001
             log.exception("Could not open the log file %s", applog.tidy_path(path))
             QMessageBox.critical(None, APP_NAME, f"Could not open the log file:\n{path}\n\n{e}")

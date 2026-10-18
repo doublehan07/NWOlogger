@@ -496,6 +496,7 @@ class StatisticsTab(QWidget):
         self._lay.removeWidget(pane)
         pane.setParent(None)
         pane.setWindowFlags(Qt.WindowType.Window)
+        pane.layout().setContentsMargins(8, 6, 8, 6)  # the tab's margins; its own layout has none
         pane.setWindowTitle("NWOlogger · " + tr("Grid map"))
         rect = _saved_rect(self.prefs.value("map/window_geometry"))
         screen = self.screen()
@@ -522,6 +523,7 @@ class StatisticsTab(QWidget):
             pane.showNormal()
         self.map.set_full_screen(False)
         pane.setWindowFlags(Qt.WindowType.Widget)
+        pane.layout().setContentsMargins(0, 0, 0, 0)  # back inside the tab's own margins
         self._lay.insertWidget(0, pane, 1)
         self._away_box.hide()
         self.window_btn.setText(tr("Open in a window"))

@@ -16,6 +16,11 @@ DEFAULTS: dict[str, Any] = {
     "theme": "system",
     "db_path": str(dbm.DEFAULT_PATH),
     "backup_keep": 20,
+    "backup_schedule_on": True,  # the regular backup plan (core/backup_plan.py)
+    "backup_every_days": 7,
+    "scheduled_keep": 8,
+    "backup_remind": True,
+    "external_backup_dir": "",
     "block_seconds": 30,
     "warn_minutes": 1,  # the dupe warning window; 0.1.8 kept it in hours (24), see Prefs._migrate
     "allow_dupes": False,

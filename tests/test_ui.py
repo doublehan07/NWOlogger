@@ -1169,3 +1169,30 @@ def test_the_first_run_step_stops_when_the_log_is_switched_under_it(qtbot, tmp_p
     w._first_run()  # a copy scheduled before the switch: nothing, not even the message
     assert opened == []
 
+
+def test_the_regular_backup_plan_runs_from_the_window(win, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from PySide6.QtWidgets import QApplication
+
+    from nwologger.core import backup_plan as plan
+
+    db = win.db
+    win.prefs.set("backup_every_days", 7)
+    ago = (datetime.now(UTC) - timedelta(days=8)).isoformat(timespec="seconds")
+    db.set_meta(plan.SCHEDULED_AT, ago)
+    db.set_meta(plan.SCHEDULED_FP, "something else")
+    db.set_meta(plan.EXTERNAL_AT, ago)
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: win))  # a dialog is open
+    win._backup_plan()
+    assert any(p.stem.endswith("-scheduled") for p in db.backups())  # the copy by itself
+    assert "Regular backup saved" in win.st_msg.text()
+    assert win._reminder is None  # not over another window
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
+    win._backup_plan()
+    assert win._reminder is not None and win._reminder.isVisible()
+    win._reminder.later()
+    assert win._reminder is None and db.meta(plan.ASKED_ON) is not None
+    win._backup_plan()
+    assert win._reminder is None  # Later: not again today
+

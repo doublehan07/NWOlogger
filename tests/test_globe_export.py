@@ -154,9 +154,20 @@ def test_open_in_a_window_and_esc_brings_it_back(tab, qtbot):
     assert pane.isWindow() and pane.isVisible() and tab.in_window() and m.parent() is pane
     assert not tab._away_box.isHidden() and tab.window_btn.text() == "Bring it back"
     assert pane.windowTitle().endswith("Grid map") and not pane.isFullScreen()
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QLabel, QPushButton
+
+    pane.resize(1200, 700)
+    qtbot.waitUntil(lambda: pane.width() == 1200)
+    first = next(w for w in pane.findChildren(QLabel) if w.text() == "Satellite")
+    last = next(b for b in pane.findChildren(QPushButton) if b.text() == "Save as PNG")
+    assert pane.layout().contentsMargins().left() == 8  # the window keeps the tab's margins
+    assert first.mapTo(pane, QPoint(0, 0)).x() >= 8
+    assert last.mapTo(pane, QPoint(last.width(), 0)).x() <= pane.width() - 8
     qtbot.keyClick(m, Qt.Key.Key_Escape)  # Esc in the window: back into the tab
     assert not pane.isWindow() and tab.layout().indexOf(pane) >= 0 and tab._away_box.isHidden()
     assert tab.window_btn.text() == "Open in a window" and m.isVisible()
+    assert pane.layout().contentsMargins().left() == 0  # the tab's layout has them again
 
 
 def test_the_window_remembers_its_geometry_and_its_close_button_brings_it_back(tab):

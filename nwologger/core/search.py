@@ -15,6 +15,7 @@ wildcards means *contains*.
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -76,6 +77,59 @@ def like_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+GRID_LISTS = {"gridsquare": "vucc_grids", "my_gridsquare": "my_vucc_grids"}  # one Grid field, two columns
+GRID_SPLIT = re.compile(r"[,;]")  # the separators a Grid search accepts ("/" and spaces are not, as asked)
+
+
+def grid_list_sql(col: str) -> str:
+    """A QSO's grids as one upper-case text: the grid, then a comma and its VUCC grids when it has any
+    (``OM88DA,OM88,OM89``); a QSO with one grid has no comma."""
+    vucc = GRID_LISTS[col]
+    return (f"UPPER(CASE WHEN {vucc} IS NOT NULL AND {vucc} != '' THEN COALESCE({col}, '') || ',' || {vucc} "
+            f"ELSE COALESCE({col}, '') END)")
+
+
+def grid_terms(text: str) -> list[str]:
+    """The grids a Grid search asks for: the typed text split on commas and semicolons, upper case."""
+    return [t.strip().upper() for t in GRID_SPLIT.split(text) if t.strip()]
+
+
+def grid_match(col: str, op: str, value: Any) -> tuple[str, list[Any]]:
+    """A Grid (or My grid) condition against the QSO's whole grid list, GRIDSQUARE and its VUCC_GRIDS, so a station
+    on a grid line is found by any of its grids: every typed grid must appear, in any order (``OM89, OM88`` finds
+    ``OM88,OM89``); ``is`` and ``starts`` apply to each grid of the list; a comma or semicolon alone asks for the
+    QSOs with several grids."""
+    vucc, expr = GRID_LISTS[col], grid_list_sql(col)
+    several = f"({vucc} IS NOT NULL AND {vucc} != '')"
+    if op == "empty":
+        return f"(({col} IS NULL OR {col} = '') AND NOT {several})", []
+    if op == "not_empty":
+        return f"(({col} IS NOT NULL AND {col} != '') OR {several})", []
+    v = str(value or "")
+    terms = grid_terms(v)
+    if not terms:
+        return (several, []) if ("," in v or ";" in v) else ("", [])
+    parts: list[str] = []
+    params: list[Any] = []
+    for t in terms:
+        if op == "matches" or has_wildcards(t):
+            parts.append(f"(',' || {expr} || ',') GLOB ?")
+            params.append(f"*,{glob_pattern(t)},*")
+        elif op == "is":
+            parts.append(f"(',' || {expr} || ',') LIKE ? ESCAPE '\\'")
+            params.append(f"%,{like_escape(t)},%")
+        elif op == "is_not":
+            parts.append(f"(',' || {expr} || ',') NOT LIKE ? ESCAPE '\\'")
+            params.append(f"%,{like_escape(t)},%")
+        elif op == "starts":
+            parts.append(f"(',' || {expr}) LIKE ? ESCAPE '\\'")
+            params.append(f"%,{like_escape(t)}%")
+        else:
+            parts.append(f"{expr} LIKE ? ESCAPE '\\'")
+            params.append(f"%{like_escape(t)}%")
+    return "(" + " AND ".join(parts) + ")", params
+
+
 def text_match(col: str, value: str) -> tuple[str, list[Any]]:
     v = value.strip()
     if has_wildcards(v):
@@ -120,6 +174,8 @@ def _day_bounds(d: str) -> tuple[str, str]:
 def condition(col: str, op: str, value: Any, *, mode_exact: bool = False) -> tuple[str, list[Any]]:
     if col not in BY_COL:
         return "", []
+    if col in GRID_LISTS:
+        return grid_match(col, op, value)
     f = BY_COL[col]
     if op == "empty":
         return f"({col} IS NULL OR {col} = '')", []

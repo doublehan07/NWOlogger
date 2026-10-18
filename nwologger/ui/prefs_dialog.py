@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
-from ..core import devices, dxcc, maptiles, sats, timeutil
+from ..core import backup_plan, devices, dxcc, maptiles, sats, timeutil
 from ..core import qso as qsomod
 from ..core import secrets as keychain
 from ..core.sync import positions, tqsl
@@ -854,11 +855,44 @@ class PrefsDialog(QDialog):
         self.keep = QSpinBox()
         self.keep.setRange(1, 500)
         self.keep.setValue(prefs.get("backup_keep"))
-        f.addRow(tr("Backups to keep"), self.keep)
+        f.addRow(tr("Copies at launch and on demand to keep"), self.keep)
         f.addRow("", self._hint(tr("A copy is made each time NWOlogger opens the log (skipped when nothing changed "
                                    "since the last copy) and when you choose Back up now. The last 10 copies made "
                                    "before an import, bulk edit, delete, merge or other change to many QSOs are kept "
                                    "as well: there is no undo, so a backup is the way back.")))
+        # The regular plan: a copy by itself every N days, and a reminder for a copy on another disk.
+        self.schedule_on = QCheckBox(tr("Every"))
+        self.schedule_on.setChecked(bool(prefs.get("backup_schedule_on")))
+        self.every = QSpinBox()
+        self.every.setRange(1, 365)
+        self.every.setSuffix(" " + tr("days"))
+        self.every.setValue(int(prefs.get("backup_every_days") or 7))
+        plan = QHBoxLayout()
+        plan.addWidget(self.schedule_on)
+        plan.addWidget(self.every)
+        plan.addWidget(QLabel(tr("a copy goes into backups/ by itself when the log changed")))
+        plan.addStretch(1)
+        f.addRow(tr("Regular backup"), plan)
+        self.sched_keep = QSpinBox()
+        self.sched_keep.setRange(1, 500)
+        self.sched_keep.setValue(int(prefs.get("scheduled_keep") or 8))
+        f.addRow(tr("Regular copies to keep"), self.sched_keep)
+        self.remind = QCheckBox(tr("Also remind me to copy the log to another disk or a cloud folder"))
+        self.remind.setChecked(bool(prefs.get("backup_remind")))
+        f.addRow("", self.remind)
+        self.ext_dir = QLineEdit(prefs.get("external_backup_dir") or "")
+        self.ext_dir.setReadOnly(True)
+        self.ext_dir.setPlaceholderText(tr("not chosen yet"))
+        choose = QPushButton(tr("Choose…"))
+        choose.clicked.connect(self._choose_external)
+        where = QHBoxLayout()
+        where.addWidget(self.ext_dir, 1)
+        where.addWidget(choose)
+        f.addRow(tr("Copies go to"), where)
+        last = db.meta(backup_plan.EXTERNAL_AT)
+        f.addRow("", self._hint((tr("Last copy to another disk:") + f" {last[:10]}. " if last else "") +
+                                tr("Regular copies are counted apart from the copies at launch, so neither pushes the "
+                                   "other out. The reminder comes at most once a day and never over another window.")))
         b = QHBoxLayout()
         now = QPushButton(tr("Back up now"))
         now.clicked.connect(self._backup)
@@ -1094,6 +1128,12 @@ class PrefsDialog(QDialog):
         if p:
             self.tqsl_path.setText(p)
 
+    def _choose_external(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, tr("Folder for copies of the log"),
+                                                  self.ext_dir.text() or str(Path.home()))
+        if folder:
+            self.ext_dir.setText(folder)
+
     def _backup(self) -> None:
         dest = self.db.backup("manual")
         QMessageBox.information(self, tr("Backup"), tr("Saved") + f"\n{dest}")
@@ -1115,6 +1155,11 @@ class PrefsDialog(QDialog):
         p.set("auto_lookup", self.auto_lookup.isChecked())
         p.set("lookup_ttl_days", self.ttl.value())
         p.set("backup_keep", self.keep.value())
+        p.set("backup_schedule_on", self.schedule_on.isChecked())
+        p.set("backup_every_days", self.every.value())
+        p.set("scheduled_keep", self.sched_keep.value())
+        p.set("backup_remind", self.remind.isChecked())
+        p.set("external_backup_dir", self.ext_dir.text().strip())
         old_users = {key: p.get(key) or "" for key in ("qrz_user", "hamqth_user", "lotw_user", "eqsl_user",
                                                          "hrdlog_call")}
         for key, edit in (("qrz_user", self.qrz_user), ("hamqth_user", self.ham_user), ("lotw_user", self.lotw_user),

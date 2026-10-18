@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__, applog, i18n
-from ..core import calllists, dupes, dxcc, exporter, net, regions, timeutil, uploads
+from ..core import backup_plan, calllists, dupes, dxcc, exporter, net, regions, timeutil, uploads
 from ..core import db as dbm
 from ..core.contest import scp as scpmod
 from ..core.fields import DEFAULT_LOG_COLUMNS
@@ -41,6 +41,7 @@ from ..core.operators import OperatorSession
 from ..core.sync import positions
 from . import theme
 from .about_dialog import AboutDialog
+from .backup_reminder import BackupReminder
 from .bulk_edit import BulkEditDialog
 from .command_palette import CommandPalette
 from .dupe_dialog import DupeCompareDialog, ignore_all, show_review
@@ -95,6 +96,12 @@ class MainWindow(QMainWindow):
         self._update_status()
         if first_run:
             QTimer.singleShot(0, self._first_run)
+        self._reminder: BackupReminder | None = None
+        self._plan_timer = QTimer(self)  # the regular backup plan: a minute after the start, then hourly
+        self._plan_timer.setInterval(3_600_000)
+        self._plan_timer.timeout.connect(self._backup_plan)
+        self._plan_timer.start()
+        QTimer.singleShot(60_000, self._backup_plan)
 
     # ------------------------------------------------------------------ build
     def act(self, text: str, slot, shortcut: str | QKeySequence | None = None, icon: str | None = None,
@@ -853,6 +860,7 @@ class MainWindow(QMainWindow):
         self.stats.shutdown()
         self.sync.stop_timers()
         self._clock_timer.stop()
+        self._plan_timer.stop()
         self.dx._clock.stop()
         self.dx._check_timer.stop()
         self.dx._lookup_timer.stop()
@@ -906,6 +914,8 @@ class MainWindow(QMainWindow):
                 self.model.refresh()
                 t.step("log table")
             self.stats.apply_provider()
+            self.db.backup_keep = int(self.prefs.get("backup_keep") or 20)
+            self.db.scheduled_keep = int(self.prefs.get("scheduled_keep") or 8)
             if self.prefs.get("language") != i18n.lang():
                 self.request_rebuild()
         else:
@@ -1105,6 +1115,31 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, tr("Call lists"), msg)
 
         run_async(calllists.download, folder, on_done=done, on_error=fail)
+
+    def _backup_plan(self) -> None:
+        """The regular backup plan (Preferences → Database): the scheduled copy when it is due, then the reminder
+        for a copy on another disk, never over another window, a running sync or the welcome of a first run."""
+        if getattr(self, "_shut", False) or not self.prefs.get("backup_schedule_on"):
+            return
+        every = int(self.prefs.get("backup_every_days") or 0)
+        try:
+            dest = backup_plan.run_scheduled(self.db, every)
+        except (sqlite3.Error, OSError) as e:
+            applog.log.warning("Regular backup failed: %s", e)
+            return
+        if dest is not None:
+            self.flash(tr("Regular backup saved") + f": {dest.name}")
+        if not self.prefs.get("backup_remind") or self._reminder is not None:
+            return
+        if QApplication.activeModalWidget() is not None or self.sync.running() or self.sync.waiting():
+            return
+        if not backup_plan.external_due(self.db, every):
+            return
+        dlg = self._reminder = BackupReminder(self.db, self.prefs, self)
+        dlg.copied.connect(lambda p: self.flash(tr("Copy of the log saved") + f": {p}"))
+        dlg.prefs_requested.connect(lambda: self.open_prefs("Database"))
+        dlg.finished.connect(lambda *_a: setattr(self, "_reminder", None))
+        dlg.show()
 
     def _first_run(self) -> None:
         """Scheduled from __init__; the log may have been closed meanwhile (Open log file restarts the app within

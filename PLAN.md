@@ -162,6 +162,7 @@ Notes on the model:
   - `manual` from File → Back up now and Preferences → Database;
   - `compact` before File → Compact log file.
   - Of `open`, `manual` and `compact`, the newest N are kept (Preferences, default 20). Restoring is opening a backup with File → Open log file.
+  - **Regular plan** (v0.1.9, `core/backup_plan.py`): every N days (Preferences → Database, default 7) a `scheduled` copy is made by itself when the QSOs' fingerprint (count, newest `updated_at`, highest id) changed since the last one, in a pool of its own (default 8); the dates and the fingerprint live in `meta`, so the plan follows the log file. A reminder window (`ui/backup_reminder.py`) asks for a copy on another disk or in a cloud folder: *Back up to…* copies the log there as `<log>-<stamp>-external.sqlite` and remembers the folder (a setting of the computer), *Later* postpones to the next day. Checked a minute after the window opens and hourly, never over a modal dialog, a running sync or the first-run welcome. The first check only starts the clock.
 - **Compact log file** (File menu, asks first, with the current size): SQLite keeps the space deleted QSOs leave for reuse, so the file never shrinks by itself (`auto_vacuum` is off), and unless the SQLite in use clears freed space (secure delete: off in the macOS build, on in the Linux CI's) their old bytes stay there until overwritten. After a `compact` backup it runs `VACUUM` and truncates the write-ahead log; the status bar gives the size before and after (`LogDB.compact`). Backups keep their own copies of deleted QSOs.
 - All writes happen in transactions.
 - Schema migrations are versioned.
@@ -414,6 +415,8 @@ With *Exact* ticked, a search finds only that mode and submode.
   - Search terms are converted to SQLite `GLOB` and `[` is escaped.
   - Text with no wildcards means *contains*.
 - **Export filtered** always uses the current filter. **Export selected** uses the current selection.
+
+- **Grids (v0.1.9):** a `gridsquare` or `my_gridsquare` condition runs on the QSO's whole grid list, `GRIDSQUARE` and `VUCC_GRIDS` as one upper-case text (`search.grid_match`): every typed grid must appear, in any order, split on commas and semicolons only; *is* and *starts with* apply to each grid of the list; a comma or semicolon alone asks for the QSOs with several grids. A click on a map square (a *starts with* condition) therefore lists a square held only as a second VUCC grid. `/` in the Call box compiles to `call LIKE '%/%'` and lists portable calls.
 
 ## 8. ADIF and sync
 
@@ -679,7 +682,7 @@ Cabrillo 3.0 export, with the header filled from the session, and ADIF export of
 | Lookup | QRZ XML user/password, HamQTH user/password, cache TTL, `cty.csv` update |
 | Services | LoTW user/password + TQSL path + station location per profile; eQSL user/password/QTH nickname; QRZ API key per logbook; HRDLog call + upload code (+ website login if download works); upload-on-log switches; satellite name map per service |
 | Secrets (Lookup, Services) | Saved passwords, codes and keys are never loaded into the form: a blank field keeps the saved one, *Forget* removes it on Save. QRZ API keys are typed in a password field and shown as dots. Renaming an account deletes the old account's entry (moved instead when only the case changed) |
-| Database | Path, backup count |
+| Database | Path; copies at launch and on demand to keep (20); the regular backup: every N days (7) with its own keep count (8), the reminder for a copy elsewhere and its folder (§4.3) |
 
 Since v0.1.9 the pages are listed down the left side (`widgets.SideTabs`, a QListWidget beside a QStackedWidget with QTabWidget's API): eleven tabs no longer fit a tab bar at every width or display scaling, and the hidden ones (Map, Sync positions) were only reachable through the bar's scroll arrows.
 
@@ -816,4 +819,5 @@ Eighteen points of feedback on 0.1.8, reviewed on a bilingual proposal page with
 - **Help menu:** Show log file folder, Show backups folder; the old *Show log folder* is *Show diagnostic log folder*. **About:** the BY1QH logo was designed by 王亦童 (BI1TYE); the log's provenance in System info.
 - **Log files** (from the other session's reports): `PRAGMA application_id` = `NWOL`, `user_version` = the schema version, and `meta` rows for the creating and last-writing NWOlogger; opening a log last written by a newer NWOlogger warns before anything is changed; *Open log file* refuses a SQLite file that is not an NWOlogger log instead of writing tables into it, and *Import* tells a SQLite file that is not a MacLoggerDX database from one with no records.
 - **Smaller:** the LoTW call lists are downloaded once per start; a flash on a closed window no longer raises; Preferences' satellite editor takes an orbit.
+- **After the first 0.1.9 build** (the same day): the counts badge in colour and larger in the PNG, whose band carries the file's name; the Preferences pages down the left side (§11); the map's own window keeps the tab's margins; the Grid search on the whole grid list (§7); the regular backup plan with its reminder (§4.3). Reviewed on a second page with five decisions.
 

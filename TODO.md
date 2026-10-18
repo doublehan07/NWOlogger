@@ -57,6 +57,9 @@ From the feedback on 0.1.8 (PLAN §16):
 - [x] **Paper QSL:** *Mark paper QSL not sent / not received*; *Queue replies to received cards…*
 - [x] **Help menu:** Show log file folder, Show backups folder, Show diagnostic log folder; **About:** the BY1QH logo designer, the log's provenance
 - [x] **Log files:** application id, user version and creating / last-writing NWOlogger in the file; a newer version's log warns; *Open log file* refuses a foreign SQLite file; *Import* tells a non-MacLoggerDX SQLite file from an empty one
+- [x] **Regular backup plan:** every N days (default 7) a scheduled copy into backups/ when the QSOs changed, in a pool of its own (default 8), and a reminder window for a copy on another disk with *Back up to…*; checked a minute after the start and hourly
+- [x] **Grid search on the whole grid list:** any grid of a station on a grid line finds it, several grids in any order, a comma or semicolon alone lists the QSOs with several grids; a map click lists squares held only as VUCC grids; "/" in the Call box pinned by a test
+- [x] The map's own window keeps the tab's margins; the counts badge in colour and larger in the PNG, whose band carries the file's name; Preferences pages listed down the left side
 - [x] Translations for everything above (简体中文)
 
 ## Done in v0.1.8 (2026-10-18)

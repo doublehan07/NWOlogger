@@ -147,12 +147,14 @@ def check_log_file(path: str | os.PathLike) -> str:
 class LogDB:
     """One open log file. Not thread-safe: use it from one thread (the GUI thread)."""
 
-    def __init__(self, path: str | os.PathLike, *, backup_on_open: bool = True, backup_keep: int = 20):
+    def __init__(self, path: str | os.PathLike, *, backup_on_open: bool = True, backup_keep: int = 20,
+                 scheduled_keep: int = 8):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         check_log_file(self.path)
         existed = self.path.exists() and self.path.stat().st_size > 0
-        self.backup_keep = backup_keep
+        self.backup_keep = backup_keep  # launch, manual and the like
+        self.scheduled_keep = scheduled_keep  # the regular plan's copies (core/backup_plan.py)
         self.conn = sqlite3.connect(str(self.path), isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -265,9 +267,10 @@ class LogDB:
 
     def backup(self, label: str = "manual") -> Path | None:
         """Copy the log file to ``backups/``. A launch copy (``open``) is not taken again while the log is unchanged
-        since the newest backup: that one is returned. Copies taken right before an import or a bulk edit are kept
-        apart (the newest :data:`SAFETY_KEEP`), so launches can't push them out; of the others the newest
-        ``backup_keep`` are kept."""
+        since the newest backup: that one is returned. Three pools, so none pushes another out: copies taken right
+        before an import or a bulk edit (the newest :data:`SAFETY_KEEP`), the regular plan's ``scheduled`` copies
+        (the newest ``scheduled_keep``; core/backup_plan.py decides when the log changed), and the rest, launch and
+        manual copies above all (the newest ``backup_keep``)."""
         if not self.path.exists():
             return None
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -289,14 +292,31 @@ class LogDB:
             log.info("No launch backup: the log is unchanged since %s", before[-1].name)
             return before[-1]
         log.info("Backup made: %s", dest.name)
-        safety, other = [], []
+        safety, scheduled, other = [], [], []
         for p in self.backups():
-            (safety if self._label(p) in SAFETY_LABELS else other).append(p)
-        for old in safety[:-SAFETY_KEEP] + other[:-self.backup_keep]:
+            kind = self._label(p)
+            (safety if kind in SAFETY_LABELS else scheduled if kind == "scheduled" else other).append(p)
+        for old in safety[:-SAFETY_KEEP] + scheduled[:-self.scheduled_keep] + other[:-self.backup_keep]:
             try:
                 old.unlink()
             except OSError:
                 pass
+        return dest
+
+    def backup_to(self, folder: str | os.PathLike) -> Path:
+        """A copy of the log in a folder of your choice (another disk, a cloud folder), named like the backups with
+        the reason ``external``; NWOlogger never prunes anything there."""
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        dest = folder / f"{self.path.stem}-{stamp}-external.sqlite"
+        out = sqlite3.connect(str(dest))
+        try:
+            with out:
+                self.conn.backup(out)
+        finally:
+            out.close()
+        log.info("Copy of the log saved outside: %s", dest)
         return dest
 
     # ------------------------------------------------------------------ downloads (service reports kept as files)
