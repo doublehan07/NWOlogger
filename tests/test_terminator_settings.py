@@ -90,11 +90,11 @@ def test_toggle_does_not_collect_filter_or_change_qso_counts(make_tab, monkeypat
     tab = make_tab()
     tab.refresh()
     assert list(tab.map.cells) == ["ON80"]
-    assert "1" in tab.count.text()
+    assert "1" in tab.map.badge
     original_cells = tab.map.cells
-    original_count = tab.count.text()
+    original_count = tab.map.badge
     original_sources = tab.sources()
-    original_state = (tab.band.currentData(), tab.mode.currentData(), tab.near.isChecked(), tab.radius.value(),
+    original_state = (tab.band.currentData(), tab.mode.currentData(), tab.calls.checked(), tab.places.checked(),
                       tab.home.text(), tab.region.currentData(), tab.map.view_state(), tab._dirty)
 
     def unexpected_collect(*_args, **_kwargs):
@@ -104,9 +104,9 @@ def test_toggle_does_not_collect_filter_or_change_qso_counts(make_tab, monkeypat
     qtbot.mouseClick(tab.terminator_btn, Qt.MouseButton.LeftButton)
     qtbot.mouseClick(tab.terminator_btn, Qt.MouseButton.LeftButton)
     assert tab.map.cells is original_cells
-    assert tab.count.text() == original_count
+    assert tab.map.badge == original_count
     assert tab.sources() == original_sources
-    assert (tab.band.currentData(), tab.mode.currentData(), tab.near.isChecked(), tab.radius.value(),
+    assert (tab.band.currentData(), tab.mode.currentData(), tab.calls.checked(), tab.places.checked(),
             tab.home.text(), tab.region.currentData(), tab.map.view_state(), tab._dirty) == original_state
 
 

@@ -8,6 +8,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelInd
 from PySide6.QtGui import QBrush, QColor
 
 from ... import applog, i18n
+from ...core import qso as qsomod
 from ...core import search, uploads
 from ...core.fields import BY_COL
 from .. import theme
@@ -138,6 +139,8 @@ class LogModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             if col == "mode":
                 return mode_text(q)
+            if col in qsomod.GRID_PAIRS:  # a station on a grid line: "OM88, OM89"
+                return qsomod.grids_text(q, col)
             return fmt(col, q.get(col))
         if role == IdRole:
             return q["id"]

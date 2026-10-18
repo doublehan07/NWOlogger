@@ -38,6 +38,7 @@ from ..core.contest import scp as scpmod
 from ..core.fields import DEFAULT_LOG_COLUMNS
 from ..core.lookup import clients as lookup_clients
 from ..core.operators import OperatorSession
+from ..core.sync import positions
 from . import theme
 from .about_dialog import AboutDialog
 from .bulk_edit import BulkEditDialog
@@ -77,6 +78,7 @@ class MainWindow(QMainWindow):
         self.sync.idle.connect(self._sync_idle)
         self.sync.confirmed.connect(self._select_confirmed)
         self.sync.select_requested.connect(self._show_ids)
+        self.sync.edit_requested.connect(self.edit_qso)  # Possible duplicates → Edit my QSO
         self._confirmed_sel: set[int] | None = None  # what the last download selected, while you haven't clicked
         self._lookup_clients: list | None = None
         self._screen = None
@@ -136,6 +138,10 @@ class MainWindow(QMainWindow):
                                                                             self.view.selected_ids(), "rcvd"))
         self.a_paper_queue = A("Queue paper QSL to send", lambda: mark_paper(self, self.db,
                                                                             self.view.selected_ids(), "queue"))
+        self.a_paper_not_sent = A("Mark paper QSL not sent", lambda: mark_paper(self, self.db,
+                                                                               self.view.selected_ids(), "not_sent"))
+        self.a_paper_not_rcvd = A("Mark paper QSL not received", lambda: mark_paper(self, self.db,
+                                                                                   self.view.selected_ids(), "not_rcvd"))
         self.a_recompute = A("Recompute country, DXCC and zones", self.recompute_dxcc)
         self.a_cty = A("Update country file (cty.csv)", lambda: self.update_cty(quiet=False))
         self.a_scp = A("Update MASTER.SCP (similar calls)", self.update_scp)
@@ -152,7 +158,9 @@ class MainWindow(QMainWindow):
         self.a_hist_tab = A("Show sync history", lambda: self.tabs.setCurrentIndex(2), "Ctrl+3")
         self.a_stats_tab = A("Show statistics (grid map)", lambda: self.tabs.setCurrentIndex(3), "Ctrl+4")
         self.a_about = A("About NWOlogger", self.about)
-        self.a_log_folder = A("Show log folder", self.show_log_folder)
+        self.a_logfile_folder = A("Show log file folder", self.show_logfile_folder)
+        self.a_backups_folder = A("Show backups folder", self.show_backups_folder)
+        self.a_log_folder = A("Show diagnostic log folder", self.show_log_folder)
         self.a_results = A("Show sync results", self.show_sync_results)
         self.a_clear_hist = A("Clear sync history…", self.clear_sync_history)
         self.a_clear_filters = A("Clear filters", lambda: self.filter.clear(), "Ctrl+Shift+K")
@@ -168,6 +176,10 @@ class MainWindow(QMainWindow):
             if svc in self.sync.RESUME_KEYS:
                 sync_acts[f"{svc}_again"] = A("Download everything again…",
                                               lambda s=svc: self.sync.download_all_again(s))
+            if svc == "lotw":
+                sync_acts["lotw_from"] = A("Download from a date…", lambda: self.sync.download_from_date("lotw"),
+                                           None, None, tr("A first download limited to QSOs made on or after a "
+                                                          "day, in yearly parts"))
         self.sync_acts = sync_acts
         self.a_sync_all = A("Sync everything", self.sync_all, "Ctrl+Shift+S", "refresh-cw",
                             tr("Download confirmations from LoTW, eQSL and QRZ.com. Nothing is uploaded: grey "
@@ -208,12 +220,13 @@ class MainWindow(QMainWindow):
                   None, self.a_search, self.a_clear_filters, self.a_suspicious, None, self.a_palette):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&QSL"))
-        for a in (self.a_paper_sent, self.a_paper_rcvd, self.a_paper_queue):
+        for a in (self.a_paper_sent, self.a_paper_rcvd, self.a_paper_not_sent, self.a_paper_not_rcvd,
+                  self.a_paper_queue):
             m.addAction(a)
         m.addSeparator()
         for svc in ("lotw", "eqsl", "qrz", "hrdlog"):
             sub = m.addMenu({"lotw": "LoTW", "eqsl": "eQSL", "qrz": "QRZ.com", "hrdlog": "HRDLog"}[svc])
-            for k in (f"{svc}_down", f"{svc}_again", f"{svc}_up", f"{svc}_up_sel"):
+            for k in (f"{svc}_down", f"{svc}_again", f"{svc}_from", f"{svc}_up", f"{svc}_up_sel"):
                 if k in sync_acts:
                     sub.addAction(sync_acts[k])
         m.addSeparator()
@@ -224,6 +237,8 @@ class MainWindow(QMainWindow):
         m.addAction(self.a_about)
         m.addAction(self.a_palette)
         m.addSeparator()
+        m.addAction(self.a_logfile_folder)
+        m.addAction(self.a_backups_folder)
         m.addAction(self.a_log_folder)
 
         # Toolbar
@@ -255,7 +270,7 @@ class MainWindow(QMainWindow):
         sm = QMenu(syn)
         for svc, name in (("lotw", "LoTW"), ("eqsl", "eQSL"), ("qrz", "QRZ.com"), ("hrdlog", "HRDLog")):
             sub = sm.addMenu(name)
-            for k in (f"{svc}_down", f"{svc}_again", f"{svc}_up", f"{svc}_up_sel"):
+            for k in (f"{svc}_down", f"{svc}_again", f"{svc}_from", f"{svc}_up", f"{svc}_up_sel"):
                 if k in sync_acts:
                     sub.addAction(sync_acts[k])
         sm.addSeparator()
@@ -432,7 +447,12 @@ class MainWindow(QMainWindow):
         self.st_stats.setText(f"DXCC {wkd} {tr('wkd')} / {cfm} {tr('cfm')}   ·   {calls:,} {tr('calls')}")
 
     def flash(self, text: str) -> None:
-        self.st_msg.setText(text)
+        if getattr(self, "_shut", False):
+            return  # a background task finishing after a restart: this window is gone
+        try:
+            self.st_msg.setText(text)
+        except RuntimeError:  # the label is already deleted
+            return
         # The label is the timer's context, so a window closed within 8 s doesn't get the call.
         QTimer.singleShot(8000, self.st_msg, lambda t=text: self.st_msg.setText("") if self.st_msg.text() == t
                           else None)
@@ -448,7 +468,8 @@ class MainWindow(QMainWindow):
     def _update_actions(self) -> None:
         n = len(self.view.selected_ids())
         for a in (self.a_bulk, self.a_delete, self.a_export_sel, self.a_paper_sent, self.a_paper_rcvd,
-                  self.a_paper_queue, self.a_recompute, self.a_lookup_fill, self.a_not_dupe):
+                  self.a_paper_not_sent, self.a_paper_not_rcvd, self.a_paper_queue, self.a_recompute,
+                  self.a_lookup_fill, self.a_not_dupe):
             a.setEnabled(n > 0)
         self.a_edit.setEnabled(n == 1)
         self.a_merge_sel.setEnabled(2 <= n <= 5)
@@ -531,6 +552,8 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction(self.a_paper_sent)
         m.addAction(self.a_paper_rcvd)
+        m.addAction(self.a_paper_not_sent)
+        m.addAction(self.a_paper_not_rcvd)
         m.addAction(self.a_paper_queue)
         up = m.addMenu(theme.icon("upload"), tr("Upload selected to"))
         for svc in ("lotw", "eqsl", "qrz", "hrdlog"):
@@ -610,8 +633,7 @@ class MainWindow(QMainWindow):
     def find_dupes(self) -> None:
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            d, s = dupes.rescan(self.db, block_s=self.prefs.get("block_seconds"),
-                                warn_s=self.prefs.get("warn_hours") * 3600)
+            d, s = dupes.rescan(self.db, block_s=self.prefs.get("block_seconds"), warn_s=self.prefs.warn_seconds())
         finally:
             QApplication.restoreOverrideCursor()
         if not (d or s):
@@ -777,6 +799,8 @@ class MainWindow(QMainWindow):
             return
         if not dlg.exec():
             return
+        if dlg.positions_set:
+            self.flash(tr("Downloads continue from") + " " + positions.describe(dlg.positions_set, tr))
         if dlg.lotw_result is not None:
             self.sync.lotw_report_applied(Path(path).name, dlg.lotw_result)
             return
@@ -852,8 +876,14 @@ class MainWindow(QMainWindow):
 
     def open_log(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, tr("Open log file"), str(dbm.DEFAULT_DIR), "SQLite (*.sqlite)")
-        if path:
-            self._switch_db(path)
+        if not path:
+            return
+        try:
+            dbm.check_log_file(path)  # another program's database is refused, and left as it is
+        except dbm.NotALogFile as e:
+            QMessageBox.critical(self, tr("Open log file"), str(e))
+            return
+        self._switch_db(path)
 
     # ------------------------------------------------------------------ misc
     def sync_all(self) -> None:
@@ -997,7 +1027,18 @@ class MainWindow(QMainWindow):
         AboutDialog(self.db, self).exec()
 
     def show_log_folder(self) -> None:
-        folder = applog.log_dir()
+        """The diagnostic log's folder (Help → Show diagnostic log folder)."""
+        self._open_folder(applog.log_dir())
+
+    def show_logfile_folder(self) -> None:
+        """The folder of the log file itself, nwolog.sqlite, with backups/ and downloads/ beside it."""
+        self._open_folder(self.db.path.parent)
+
+    def show_backups_folder(self) -> None:
+        self._open_folder(self.db.backup_dir)
+
+    @staticmethod
+    def _open_folder(folder: Path) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
@@ -1020,18 +1061,22 @@ class MainWindow(QMainWindow):
 
     def update_cty(self, quiet: bool = True) -> None:
         def done(n):
+            if self._shut:
+                return
             dxcc.default.cache_clear()
             self.dx.cty = dxcc.default()
             self.flash(tr("Country file updated") + f" ({n} " + tr("entities") + ")")
 
         def fail(msg):
-            if not quiet:
+            if not quiet and not self._shut:
                 QMessageBox.warning(self, tr("Country file"), msg)
 
         run_async(dxcc.download, on_done=done, on_error=fail)
 
     def update_scp(self) -> None:
         def done(n):
+            if self._shut:
+                return
             self.dx.reload_scp()
             if self.contest is not None:
                 self.contest._load_scp()
@@ -1045,11 +1090,15 @@ class MainWindow(QMainWindow):
         folder = calllists.folder_for(self.db.path)
 
         def done(counts: dict[str, int]) -> None:
+            if self._shut:
+                return
             self.dx.reload_call_lists()
             self.flash(tr("Call lists updated") + f": {counts.get('lotw', 0):,} " + tr("LoTW users") +
                        f", {counts.get('eqsl_ag', 0):,} " + tr("eQSL AG members"))
 
         def fail(msg: str) -> None:
+            if self._shut:
+                return
             if quiet:
                 self.flash(msg)
             else:

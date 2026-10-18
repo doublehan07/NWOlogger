@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -38,7 +39,8 @@ from .. import __version__, applog, i18n
 from ..core import adif, importer, net, sats, timeutil
 from ..core.sync import apply, services, tqsl
 from . import theme
-from .widgets import fmt, mode_text, run_async
+from .sync_dialogs import FromDateDialog, NearDuplicatesDialog
+from .widgets import run_async
 
 tr = i18n.tr
 log = logging.getLogger("nwologger.sync")
@@ -58,37 +60,6 @@ def _duration(t, seconds: float) -> str:
 
 RESULT_LABELS = {"ok": "Done", "info": "Note", "skipped": "Skipped", "failed": "Failed", "cancelled": "Stopped"}
 DIRECTIONS = {"up": "upload", "down": "download"}
-
-
-class UnmatchedDialog(QDialog):
-    def __init__(self, service: str, qsos: list[dict], parent=None):
-        super().__init__(parent)
-        self.qsos = qsos
-        self.setWindowTitle(tr("Not found in your log") + f" — {service}")
-        self.resize(720, 460)
-        lay = QVBoxLayout(self)
-        lab = QLabel(tr("These records did not match any QSO in your log. Select the ones to add."))
-        lab.setWordWrap(True)
-        lay.addWidget(lab)
-        self.table = QTableWidget(len(qsos), 5)
-        self.table.setHorizontalHeaderLabels([tr("Call"), tr("Time On"), tr("Band"), tr("Mode"), tr("Sat")])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        for i, q in enumerate(qsos):
-            for j, v in enumerate([q.get("call"), fmt("time_on", q.get("time_on")), fmt("band", q.get("band")),
-                                   mode_text(q), q.get("sat_name") or ""]):
-                self.table.setItem(i, j, QTableWidgetItem(v or ""))
-        lay.addWidget(self.table, 1)
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Close)
-        bb.button(QDialogButtonBox.StandardButton.Ok).setText(tr("Add selected to log"))
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
-    def selected(self) -> list[dict]:
-        rows = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
-        return [self.qsos[r] for r in rows]
 
 
 class SyncResults(QDialog):
@@ -267,6 +238,7 @@ class SyncController(QObject):
     idle = Signal()  # the last running upload or download has finished
     confirmed = Signal(str, list)  # service, the QSO ids a download confirmed for the first time
     select_requested = Signal(list)  # Sync results → Select them
+    edit_requested = Signal(int)  # Possible duplicates → Edit my QSO
 
     def __init__(self, db, prefs, parent: QWidget):
         super().__init__(parent)
@@ -456,7 +428,7 @@ class SyncController(QObject):
 
     def _fail(self, service: str, direction: str, started: str, dlg, msg: str, secrets=(), *,
               ref: str | None = None, quiet: bool = False) -> None:
-        dlg.close()
+        self._close(dlg)
         self._end(service, direction)
         msg = self._safe(msg, secrets)
         self._log(service, direction, started, errors=1, message=msg)
@@ -474,7 +446,7 @@ class SyncController(QObject):
         except Exception as e:  # noqa: BLE001 - a failed local apply must also be retryable
             self._fail(service, "download", started, dlg, str(e), secrets, ref=ref)
             return None
-        dlg.close()
+        self._close(dlg)
         self._end(service, "download")
         return result
 
@@ -490,45 +462,79 @@ class SyncController(QObject):
 
     def lotw_report_applied(self, name: str, res: apply.ApplyResult) -> None:
         """A LoTW report imported from a file and applied as a download: its summary in Sync results, its new
-        confirmations selected, and the records not in the log offered to add."""
+        confirmations selected, and the records not in the log added (or held as possible duplicates)."""
+        added, held = self._settle_unmatched("lotw", res.unmatched)
+
         def text(t) -> str:
             return f"{name}: " + apply.summary(t, res, new_one="new confirmation", new_many="new confirmations",
-                                               none="No new confirmations")
+                                               none="No new confirmations", added=len(added), held=held)
 
-        self.report("lotw", "ok", text, ids=res.confirmed, log_detail=f"LoTW report imported; {apply.counts(res)}")
+        self.report("lotw", "ok", text, ids=res.confirmed + added,
+                    log_detail=f"LoTW report imported; {apply.counts(res)}; added {len(added)}, held {held}")
         self.confirmed.emit("lotw", res.confirmed)
-        self._show_unmatched("lotw", res)
 
-    def _show_unmatched(self, service: str, res: apply.ApplyResult) -> None:
-        """Opened without blocking: other results keep arriving while you choose."""
-        if not res.unmatched:
+    # ------------------------------------------------------------------ records a download could not match
+    def _settle_unmatched(self, service: str, unmatched: list[dict], *, ref: str | None = None
+                          ) -> tuple[list[int], int]:
+        """Records a download could not match: added to the log after a backup, except those within a minute of a
+        QSO of the same call (a near-duplicate: the same contact logged with another band, mode or satellite),
+        which wait in a window for your decision. Returns (ids added, number held)."""
+        if not unmatched:
+            return [], 0
+        fresh, held = [], []
+        for q in unmatched:
+            near = importer.near_qsos(self.db, q)
+            if near:
+                held.append((q, near[0]))
+            else:
+                fresh.append(q)
+        added = self._add_records(service, fresh) if fresh else []
+        if held:
+            self._show_near_duplicates(service, held, added=len(added))
+        if added or held:
+            log.info("%s%s: %d records added to the log, %d held as possible duplicates", apply.SERVICES[service],
+                     f" (ref {ref})" if ref else "", len(added), len(held))
+        return added, len(held)
+
+    def _add_records(self, service: str, recs: list[dict]) -> list[int]:
+        """Add downloaded records as QSOs; a backup is saved first. A record that matches a QSO meanwhile (added
+        through another service's window) updates it instead. The records are sorted before anything is inserted,
+        so two distinct downloaded QSOs within the matcher's time tolerance are still added separately. Returns
+        the ids of the QSOs added."""
+        if not recs:
+            return []
+        existing, missing = [], []
+        for q in recs:
+            (missing if importer.find_match(self.db, q) is None else existing).append(q)
+        label = tr("Add from") + f" {apply.SERVICES[service]}"
+        windows = {"block_s": self.prefs.get("block_seconds"), "warn_s": self.prefs.warn_seconds()}
+        if existing:
+            importer.run(self.db, existing, merge=True, label=label, **windows)
+        if not missing:
+            return []
+        return importer.run(self.db, missing, label=label, backup=not existing, **windows).ids
+
+    def _added_later(self, service: str, recs: list[dict]) -> None:
+        """Records ticked in the Possible duplicates window."""
+        if not recs:
             return
-        dlg = UnmatchedDialog(apply.SERVICES[service], res.unmatched, self.win)
+        ids = self._add_records(service, recs)
+        text = tr("Added") + f" {len(ids)} " + tr("QSOs")
+        if len(recs) - len(ids):
+            text += f" · {len(recs) - len(ids)} " + tr("QSOs updated")
+        self.message.emit(text)
+        if ids:
+            self.select_requested.emit(ids)
+
+    def _show_near_duplicates(self, service: str, held: list[tuple[dict, dict]], *, added: int = 0) -> None:
+        """Opened without blocking: other results keep arriving while you choose."""
+        dlg = NearDuplicatesDialog(self.db, apply.SERVICES[service], held, self.win, added=added)
         dlg.setWindowModality(Qt.WindowModality.NonModal)
-        dlg.accepted.connect(lambda: self._add_unmatched(service, dlg.selected()))
+        dlg.add_requested.connect(lambda recs, s=service: self._added_later(s, recs))
+        dlg.edit_requested.connect(self.edit_requested)
+        dlg.message.connect(self.message)
         dlg.finished.connect(dlg.deleteLater)
         dlg.show()
-
-    def _add_unmatched(self, service: str, chosen: list[dict]) -> None:
-        if chosen:
-            # Another service's open import dialog may have added the same QSO meanwhile.
-            # Resolve those matches before inserting anything: two distinct downloaded
-            # QSOs within the matcher's time tolerance must still be added separately.
-            existing, missing = [], []
-            for q in chosen:
-                (missing if importer.find_match(self.db, q) is None else existing).append(q)
-            label = tr("Add from") + f" {apply.SERVICES[service]}"
-            added = updated = 0
-            if existing:
-                r = importer.run(self.db, existing, merge=True, label=label)
-                updated = r.merged
-            if missing:
-                r = importer.run(self.db, missing, label=label)
-                added = r.added
-            text = tr("Added") + f" {added} " + tr("QSOs")
-            if updated:
-                text += f" · {updated} " + tr("QSOs updated")
-            self.message.emit(text)
 
     # ------------------------------------------------------------------ upload
     def upload(self, service: str, ids: list[int] | None = None, *, quiet: bool = False) -> None:
@@ -616,7 +622,7 @@ class SyncController(QObject):
             return out
 
         def done(results):
-            dlg.close()
+            self._close(dlg)
             self._end("lotw", "upload")
             sent = 0
             for loc, ids, code, text in results:
@@ -657,38 +663,59 @@ class SyncController(QObject):
         chunks = [recs[i:i + 250] for i in range(0, len(recs), 250)]
         started = timeutil.now_iso()
         ref = self._start("eqsl", "upload", f"{len(recs)} QSOs")
-        dlg = self._progress("eqslup", tr("Uploading to eQSL…"))
+        dlg, stop = self._upload_progress("eqslup", tr("Uploading to eQSL…"), len(recs))
+        marks = _Marks(self.db, "eqsl")
+        state = {"ok": [], "bad": [], "problems": [], "stopped": False}
 
-        def work():
-            out = []
+        def work(event):
             for ch in chunks:
+                if stop.is_set():
+                    return "stopped"
                 added, total, lines = services.eqsl_upload(user, pw, [r for _, _, r in ch])
-                out.append((ch, added, total, lines))
-            return out
+                event((ch, added, total, lines))
+            return "done"
 
-        def done(results):
-            dlg.close()
+        def chunk_done(result):
+            ch, _added, _total, lines = result
+            bad_calls = set()
+            for ln in lines:
+                if ln.lower().startswith("error") or ("bad record" in ln.lower() and "duplicate" not in ln.lower()):
+                    state["problems"].append(ln)
+                    for _, call, _ in ch:
+                        if call and call in ln:
+                            bad_calls.add(call)
+            for qid, call, _ in ch:
+                (state["bad"] if call in bad_calls else state["ok"]).append(qid)
+            marks.add([qid for qid, call, _ in ch if call not in bad_calls])
+            marks.flush()  # a chunk the service accepted is marked at once: a broken connection keeps it
+            self._say(dlg, tr("Uploading to eQSL…") + f"\n{len(state['ok']) + len(state['bad']):,} / {len(recs):,}")
+
+        def finish(outcome):
+            self._close(dlg)
             self._end("eqsl", "upload")
-            ok_ids, bad, problems = [], [], []
-            for ch, _added, _total, lines in results:
-                bad_calls = set()
-                for ln in lines:
-                    if ln.lower().startswith("error") or ("bad record" in ln.lower() and "duplicate" not in ln.lower()):
-                        problems.append(ln)
-                        for _, call, _ in ch:
-                            if call and call in ln:
-                                bad_calls.add(call)
-                for qid, call, _ in ch:
-                    (bad if call in bad_calls else ok_ids).append(qid)
-            apply.mark_sent(self.db, "eqsl", ok_ids)
-            self._log("eqsl", "upload", started, sent=len(ok_ids), errors=len(bad), secrets=[pw],
-                      message="; ".join(problems)[:300])
-            self.report("eqsl", "failed" if bad else "ok", lambda t: f"{len(ok_ids)} " + t("QSOs uploaded") +
-                        (f", {len(bad)} " + t("rejected") + "\n" + "\n".join(problems[:3]) if bad else ""),
+            ok, bad, problems = state["ok"], state["bad"], state["problems"]
+            left = len(recs) - len(ok) - len(bad)
+            self._log("eqsl", "upload", started, sent=len(ok), errors=len(bad), secrets=[pw],
+                      message=("; ".join(problems)[:300]) if problems else
+                      (f"stopped with {left} QSOs still to send" if outcome == "stopped" else ""))
+            kind = "failed" if bad else "cancelled" if outcome == "stopped" else "ok"
+            self.report("eqsl", kind, lambda t: f"{len(ok)} " + t("QSOs uploaded") +
+                        (f", {len(bad)} " + t("rejected") + "\n" + "\n".join(problems[:3]) if bad else "") +
+                        (f" · {left} " + t("still to send (Upload pending sends them)") if left else ""),
                         ref=ref, quiet=quiet, secrets=[pw])
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "upload", started, dlg, m, [pw],
-                                                                     ref=ref, quiet=quiet))
+        def failed(msg):
+            marks.flush()
+            self._close(dlg)
+            self._end("eqsl", "upload")
+            sent = len(state["ok"])
+            self._log("eqsl", "upload", started, sent=sent, errors=1, secrets=[pw],
+                      message=f"{msg}; {sent} QSOs marked as uploaded before it")
+            self.report("eqsl", "failed", lambda t: self._safe(msg, [pw]) + f" · {sent} " +
+                        t("QSOs were accepted before it and are marked as uploaded; Upload pending sends the rest."),
+                        fix="Services" if "password" in msg.lower() else None, ref=ref, quiet=quiet)
+
+        run_async(work, on_done=finish, on_event=chunk_done, on_error=failed)
 
     def _upload_qrz(self, qsos: list[dict], quiet: bool) -> None:
         by_call: dict[str, list[dict]] = defaultdict(list)
@@ -706,36 +733,9 @@ class SyncController(QObject):
         cat = self.catalog()
         jobs = [(q["id"], c, keys[c], apply.upload_record(q, "qrz", cat),
                  q.get("qrzcom_qso_upload_status") == "M") for c, qs in by_call.items() if keys.get(c) for q in qs]
-        started = timeutil.now_iso()
-        ref = self._start("qrz", "upload", f"{len(jobs)} QSOs")
-        dlg = self._progress("qrzup", tr("Uploading to QRZ.com Logbook…"))
-
-        def work():
-            out = []
-            for qid, call, key, rec, replace in jobs:
-                try:
-                    ok, logid, reason = services.qrz_insert(key, rec, replace=replace, call=call)
-                except Exception as e:  # noqa: BLE001
-                    ok, logid, reason = False, None, str(e)
-                out.append((qid, ok, logid, self._safe(reason, [key])))
-            return out
-
-        def done(results):
-            dlg.close()
-            self._end("qrz", "upload")
-            ok = [r for r in results if r[1]]
-            bad = [r for r in results if not r[1]]
-            apply.mark_sent(self.db, "qrz", [r[0] for r in ok], logids={r[0]: r[2] for r in ok})
-            reasons = "; ".join(sorted({r[3] for r in bad}))[:300]
-            self._log("qrz", "upload", started, sent=len(ok), errors=len(bad), message=reasons)
-            def text(t):
-                return f"{len(ok)} " + t("QSOs uploaded") + (f"\n{len(bad)} " + t("failed") + ": " + reasons
-                                                             if bad else "")
-
-            self.report("qrz", "failed" if bad else "ok", text, ref=ref, quiet=quiet, secrets=list(keys.values()))
-
-        run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "upload", started, dlg, m,
-                                                                     list(keys.values()), ref=ref, quiet=quiet))
+        self._upload_one_by_one("qrz", jobs, quiet, secrets=list(keys.values()),
+                                text=tr("Uploading to QRZ.com Logbook…"),
+                                send=lambda job: services.qrz_insert(job[2], job[3], replace=job[4], call=job[1]))
 
     def _upload_hrdlog(self, qsos: list[dict], quiet: bool) -> None:
         call, code = self._account("hrdlog_call"), self._secret("hrdlog_code")
@@ -750,36 +750,93 @@ class SyncController(QObject):
                 on = timeutil.iso_to_adif(q.get("time_on"))
                 key = f"{q.get('call')}{on[0]}{on[1][:4]}" if on else None
             jobs.append((q["id"], rec, key))
+
+        def send(job):
+            ok, msg = services.hrdlog_upload(call, code, job[1], update_key=job[2])
+            return ok, None, msg
+
+        self._upload_one_by_one("hrdlog", jobs, quiet, secrets=[code], text=tr("Uploading to HRDLog…"), send=send)
+
+    def _upload_one_by_one(self, service: str, jobs: list, quiet: bool, *, secrets: list, text: str,
+                           send: Callable) -> None:
+        """QRZ.com and HRDLog take one record per request. Each QSO is marked as uploaded as soon as the service
+        accepts it (in small batches, so the log table is not refreshed for every record), so a connection lost
+        half-way keeps what was sent and *Stop* keeps it too; the rest stays pending."""
         started = timeutil.now_iso()
-        ref = self._start("hrdlog", "upload", f"{len(jobs)} QSOs")
-        dlg = self._progress("hrdlogup", tr("Uploading to HRDLog…"))
+        ref = self._start(service, "upload", f"{len(jobs)} QSOs")
+        dlg, stop = self._upload_progress(service + "up", text, len(jobs))
+        marks = _Marks(self.db, service)
+        state = {"ok": 0, "bad": [], "stopped": False}
 
-        def work():
-            out = []
-            for qid, rec, key in jobs:
+        def work(event):
+            for job in jobs:
+                if stop.is_set():
+                    return "stopped"
                 try:
-                    ok, msg = services.hrdlog_upload(call, code, rec, update_key=key)
-                except Exception as e:  # noqa: BLE001
-                    ok, msg = False, str(e)
-                out.append((qid, ok, self._safe(msg, [code])))
-            return out
+                    ok, logid, reason = send(job)
+                except Exception as e:  # noqa: BLE001 - one record's failure is reported with it
+                    ok, logid, reason = False, None, str(e)
+                event((job[0], ok, logid, self._safe(reason or "", secrets)))
+            return "done"
 
-        def done(results):
+        def one_done(result):
+            qid, ok, logid, reason = result
+            if ok:
+                state["ok"] += 1
+                marks.add([qid], logid=logid)
+            else:
+                state["bad"].append(reason)
+            if marks.pending >= 25:
+                marks.flush()
+            self._say(dlg, text + f"\n{state['ok'] + len(state['bad']):,} / {len(jobs):,}")
+
+        def finish(outcome):
+            marks.flush()
+            self._close(dlg)
+            self._end(service, "upload")
+            ok, bad = state["ok"], state["bad"]
+            left = len(jobs) - ok - len(bad)
+            reasons = "; ".join(sorted({r for r in bad if r}))[:300]
+            self._log(service, "upload", started, sent=ok, errors=len(bad),
+                      message=reasons or (f"stopped with {left} QSOs still to send" if outcome == "stopped" else ""))
+            kind = "failed" if bad else "cancelled" if outcome == "stopped" else "ok"
+            self.report(service, kind, lambda t: f"{ok} " + t("QSOs uploaded") +
+                        (f"\n{len(bad)} " + t("failed") + ": " + reasons if bad else "") +
+                        (f" · {left} " + t("still to send (Upload pending sends them)") if left else ""),
+                        ref=ref, quiet=quiet, secrets=secrets)
+
+        def failed(msg):
+            marks.flush()
+            self._close(dlg)
+            self._end(service, "upload")
+            self._log(service, "upload", started, sent=state["ok"], errors=1,
+                      message=f"{msg}; {state['ok']} QSOs marked as uploaded before it")
+            self.report(service, "failed", lambda t: self._safe(msg, secrets) + f" · {state['ok']} " +
+                        t("QSOs were accepted before it and are marked as uploaded; Upload pending sends the rest."),
+                        ref=ref, quiet=quiet)
+
+        run_async(work, on_done=finish, on_event=one_done, on_error=failed)
+
+    def _upload_progress(self, key: str, text: str, count: int) -> tuple[QProgressDialog, threading.Event]:
+        """An upload's progress window with a Stop button, which keeps what was sent, and the event it sets."""
+        stop = threading.Event()
+        dlg = self._progress(key, text + f"\n0 / {count:,}", cancel=tr("Stop"))
+        if hasattr(dlg, "canceled"):
+            dlg.canceled.connect(stop.set)
+        return dlg, stop
+
+    @staticmethod
+    def _close(dlg) -> None:
+        """Close a progress window that may already be gone (a run ending after its window's parent was deleted)."""
+        try:
             dlg.close()
-            self._end("hrdlog", "upload")
-            ok = [r[0] for r in results if r[1]]
-            bad = [r for r in results if not r[1]]
-            apply.mark_sent(self.db, "hrdlog", ok)
-            reasons = "; ".join(sorted({r[2] for r in bad}))[:300]
-            self._log("hrdlog", "upload", started, sent=len(ok), errors=len(bad), message=reasons)
-            def text(t):
-                return f"{len(ok)} " + t("QSOs uploaded") + (f"\n{len(bad)} " + t("failed") + ": " + reasons
-                                                             if bad else "")
+        except RuntimeError:
+            pass
 
-            self.report("hrdlog", "failed" if bad else "ok", text, ref=ref, quiet=quiet, secrets=[code])
-
-        run_async(work, on_done=done, on_error=lambda m: self._fail("hrdlog", "upload", started, dlg, m, [code],
-                                                                     ref=ref, quiet=quiet))
+    @staticmethod
+    def _say(dlg, text: str) -> None:
+        if hasattr(dlg, "setLabelText"):
+            dlg.setLabelText(text)
 
     # ------------------------------------------------------------------ download
     def download(self, service: str) -> None:
@@ -800,6 +857,24 @@ class SyncController(QObject):
             self._still_running(running, "download")
 
     RESUME_KEYS = {"lotw": ("last_qsl", "last_qsorx"), "eqsl": ("rcvd_since",)}
+    LOTW_PARTS_KEYS = ("run", "parts_floor", "parts_start", "parts_done", "parts_since_rx", "parts_since_qsl")
+    QRZ_RESUME = "after_logid:"  # + the station call: the log id an unfinished QRZ.com run continues from
+
+    @staticmethod
+    def new_run() -> str:
+        """The id of a download run, which names its files in downloads/."""
+        return timeutil.now_utc().strftime("%Y%m%d-%H%M%S")
+
+    def reset_positions(self, service: str) -> None:
+        """Forget where this service's downloads resume, and any run of it left unfinished."""
+        for k in self.RESUME_KEYS.get(service, ()):
+            self.db.sync_set(service, k, None)
+        if service == "lotw":
+            for k in self.LOTW_PARTS_KEYS:
+                self.db.sync_set("lotw", k, None)
+        if service == "qrz":
+            for k in self.db.sync_keys("qrz", self.QRZ_RESUME):
+                self.db.sync_set("qrz", k, None)
 
     def download_all_again(self, service: str) -> None:
         """Forget where downloads resume, so the next one starts from your first QSO (QRZ.com always does)."""
@@ -812,10 +887,27 @@ class SyncController(QObject):
                 (tr("Last time this took") + f" {_duration(tr, float(took))}." if took else
                  tr("For a large log this can take several minutes."))) != QMessageBox.StandardButton.Yes:
             return
-        for k in self.RESUME_KEYS[service]:
-            self.db.sync_set(service, k, None)
+        self.reset_positions(service)
         log.info("%s: download positions reset (download everything again)", name)
         self.download(service)
+
+    def download_from_date(self, service: str = "lotw") -> None:
+        """QSL → LoTW → Download from a date…: a first download limited to QSOs made on or after a day, in yearly
+        parts from this year back to it; the resume positions are set at its end like a full download's."""
+        dlg = FromDateDialog(self.win)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        day = dlg.date()
+        self.reset_positions(service)
+        self.db.sync_set("lotw", "parts_floor", str(day.year))
+        self.db.sync_set("lotw", "parts_start", day.isoformat())
+        log.info("LoTW: download positions reset; the next download asks for QSOs made from %s on", day.isoformat())
+        self.download(service)
+
+    def lotw_floor_year(self) -> int | None:
+        """The earliest year a first LoTW download asks for: the year of your first QSO (None for an empty log)."""
+        first = self.db.first_qso_time()
+        return int(first[:4]) if first else None
 
     def _download_lotw(self) -> None:
         user, pw = self._account("lotw_user"), self._secret("lotw_password")
@@ -823,14 +915,52 @@ class SyncController(QObject):
             return
         since_qsl = self.db.sync_get("lotw", "last_qsl")
         since_rx = self.db.sync_get("lotw", "last_qsorx")
+        unfinished = self.db.sync_get("lotw", "run")
+        floor = self.db.sync_get("lotw", "parts_floor") or self.lotw_floor_year()
+        if unfinished or (not since_qsl and not since_rx and floor is not None):
+            self._download_lotw_parts(user, pw, int(floor) if floor is not None else timeutil.now_utc().year)
+        else:
+            self._download_lotw_once(user, pw, since_qsl, since_rx)
+
+    def _apply_lotw_reports(self, h1, r1, h2, r2) -> tuple[apply.ApplyResult, apply.ApplyResult]:
+        """Apply the accepted-QSO report (upload states) and the confirmations, and move the positions to LoTW's
+        header values. Upload states only update existing contacts: on an empty log the records not in the log
+        already carry their uploaded flag."""
+        cat = self.catalog()
+        up = apply.apply_lotw_uploads(self.db, r2, cat) if self.db.count() else apply.ApplyResult()
+        a = apply.apply_lotw_qsls(self.db, r1, cat)
+        if h1.get("APP_LOTW_LASTQSL"):
+            self.db.sync_set("lotw", "last_qsl", h1["APP_LOTW_LASTQSL"])
+        if h2.get("APP_LOTW_LASTQSORX"):
+            self.db.sync_set("lotw", "last_qsorx", h2["APP_LOTW_LASTQSORX"])
+        return up, a
+
+    def _finish_lotw(self, a: apply.ApplyResult, up: apply.ApplyResult, started: str, ref: str, timing: str) -> None:
+        added, held = self._settle_unmatched("lotw", a.unmatched, ref=ref)
+
+        def text(t) -> str:
+            return apply.summary(t, a, new_one="new confirmation", new_many="new confirmations",
+                                 none="No new confirmations", uploaded=up, added=len(added), held=held)
+
+        self._log("lotw", "download", started, received=a.total, matched=a.matched, message=text(_as_is))
+        log.info("LoTW download (ref %s): upload states %s", ref, apply.counts(up))
+        self.report("lotw", "ok", text, ref=ref, ids=a.confirmed + added, log_detail=f"{apply.counts(a)}; {timing}")
+        self.confirmed.emit("lotw", a.confirmed)
+
+    def _download_lotw_once(self, user: str, pw: str, since_qsl: str | None, since_rx: str | None) -> None:
+        """One request for confirmations and one for uploads (an incremental download, or the first one on an
+        empty log, which has no year to go back to), streamed to files in downloads/ and applied together."""
         started = timeutil.now_iso()
+        run = self.new_run()
         ref = self._start("lotw", "download", f"confirmations since {since_qsl or 'the start'}, uploads since "
                                               f"{since_rx or 'the start'}")
         dlg = self._progress("lotwdown", tr("Downloading from LoTW…"))
         t0 = time.monotonic()
 
-        def work():
-            return services.lotw_sync_download(user, pw, since_qsl=since_qsl, since_rx=since_rx)
+        def work(event):
+            return services.lotw_sync_download(
+                user, pw, since_qsl=since_qsl, since_rx=since_rx, folder=self.db.downloads_dir, run=run,
+                progress=lambda got, _chunk: event(got))
 
         def done(res):
             h1, r1, h2, r2 = res
@@ -839,35 +969,188 @@ class SyncController(QObject):
             def save():
                 if not since_qsl and not since_rx:
                     self.db.sync_set("lotw", "full_seconds", str(round(t1 - t0)))
-                cat = self.catalog()
-                # Upload states only update existing contacts. On an empty log the
-                # confirmation import candidates already carry their uploaded flag.
-                up = apply.apply_lotw_uploads(self.db, r2, cat) if self.db.count() else apply.ApplyResult()
-                a = apply.apply_lotw_qsls(self.db, r1, cat)
-                if h1.get("APP_LOTW_LASTQSL"):
-                    self.db.sync_set("lotw", "last_qsl", h1["APP_LOTW_LASTQSL"])
-                if h2.get("APP_LOTW_LASTQSORX"):
-                    self.db.sync_set("lotw", "last_qsorx", h2["APP_LOTW_LASTQSORX"])
+                self.db.sync_set("lotw", "last_run", run)
+                return self._apply_lotw_reports(h1, r1, h2, r2)
+
+            saved = self._apply_download("lotw", started, dlg, save, ref=ref, secrets=[pw])
+            if saved is None:
+                return
+            up, a = saved
+            self._finish_lotw(a, up, started, ref, f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s")
+            self.db.prune_downloads("lotw", keep_runs=[run])
+
+        run_async(work, on_done=done, on_error=lambda m: self._fail("lotw", "download", started, dlg, m, [pw], ref=ref),
+                  on_event=lambda got: self._say(dlg, tr("Downloading from LoTW…") + f"\n{got / 1e6:.1f} MB"))
+
+    def _download_lotw_parts(self, user: str, pw: str, floor: int) -> None:
+        """A first download in yearly parts, newest year first, each applied as it arrives and recorded, so a
+        broken connection or a quit loses one part at most and the next download continues with the years still
+        missing. One short request at the end fetches what LoTW received while the parts ran and sets the
+        positions, which until then stay unset: the run can always be resumed."""
+        db = self.db
+        run = db.sync_get("lotw", "run") or self.new_run()
+        start_date = db.sync_get("lotw", "parts_start")
+        done_years = {int(y) for y in (db.sync_get("lotw", "parts_done") or "").split(",") if y.strip()}
+        this_year = timeutil.now_utc().year
+        years = [y for y in range(this_year, floor - 1, -1) if y not in done_years]
+        db.sync_set("lotw", "run", run)
+        db.sync_set("lotw", "parts_floor", str(floor))
+        started = timeutil.now_iso()
+        ref = self._start("lotw", "download", f"yearly parts: {len(years)} to fetch, back to {floor}"
+                                              f"{' from ' + start_date if start_date else ''}, {len(done_years)} done")
+        dlg = self._progress("lotwdown", tr("Downloading from LoTW…"))
+        t0 = time.monotonic()
+        totals = _Totals()
+        state = {"year": None, "records": 0}
+
+        def work(event):
+            for i, year in enumerate(years):
+                dest = db.download_path("lotw", run, str(year))
+                start = start_date if start_date and year == floor else f"{year}-01-01"
+                partial = None
+                try:
+                    header, records = services.lotw_download(
+                        user, pw, qsl=False, start=start, end=f"{year}-12-31", dest=dest,
+                        progress=lambda got, chunk, year=year, i=i: event(
+                            {"kind": "bytes", "year": year, "index": i, "bytes": got,
+                             "records": chunk.lower().count(b"<eor>")}))
+                except net.PartialDownload as e:
+                    partial = str(e)
+                    try:
+                        header, records, _info = services.read_report(e.path, partial=True)
+                    except services.ServiceError:
+                        header, records = {}, []
+                event({"kind": "part", "year": year, "index": i, "total": len(years), "header": header,
+                       "records": records, "info": services.report_info(dest), "partial": partial})
+                if partial:
+                    raise services.ServiceError(partial)
+            return len(years)
+
+        def on_event(ev):
+            if ev["kind"] == "bytes":
+                if ev["year"] != state["year"]:
+                    state.update(year=ev["year"], records=0)
+                state["records"] += ev["records"]
+                self._say(dlg, tr("Downloading from LoTW…") + f"\n{ev['year']} · " + tr("part") +
+                          f" {ev['index'] + 1} / {len(years)} · {totals.records + state['records']:,} " +
+                          tr("records") + f" · {(totals.bytes + ev['bytes']) / 1e6:.1f} MB")
+            elif ev["kind"] == "part":
+                self._lotw_part_arrived(ev, run, done_years, totals, ref)
+
+        def stopped(msg):
+            if totals.broken:
+                self._fail("lotw", "download", started, dlg, totals.broken, [pw], ref=ref)
+                return
+            if not done_years and not totals.records:  # nothing arrived: a plain failure, as before
+                self._fail("lotw", "download", started, dlg, msg, [pw], ref=ref)
+                return
+            self._close(dlg)
+            self._end("lotw", "download")
+            next_year = next((y for y in years if y not in done_years), None)
+            added, held = self._settle_unmatched("lotw", totals.unmatched, ref=ref)
+            res = totals.result()
+            done_text = ", ".join(str(y) for y in sorted(done_years, reverse=True))
+            self._log("lotw", "download", started, received=res.total, matched=res.matched, errors=1,
+                      message=f"{msg}; stopped after {len(done_years)} parts ({done_text or 'none'})")
+
+            def text(t) -> str:
+                return self._safe(msg, [pw]) + ". " + t("Years done:") + " " + (done_text or t("none")) + " · " + \
+                    apply.summary(t, res, new_one="new confirmation", new_many="new confirmations",
+                                  none="No new confirmations", added=len(added), held=held) + \
+                    (". " + t("Download from LoTW continues with") + f" {next_year}." if next_year else "")
+
+            self.report("lotw", "cancelled", text, ref=ref, ids=res.confirmed + added)
+            self.confirmed.emit("lotw", res.confirmed)
+            db.prune_downloads("lotw", keep_runs=[run, db.sync_get("lotw", "last_run")])
+
+        def fetched(_n):
+            if totals.broken:  # a part could not be applied: the run ends as a failure, to be retried
+                self._fail("lotw", "download", started, dlg, totals.broken, [pw], ref=ref)
+                return
+            self._lotw_close_parts(user, pw, run, started, ref, dlg, totals, t0)
+
+        run_async(work, on_done=fetched, on_event=on_event, on_error=stopped)
+
+    def _lotw_part_arrived(self, ev: dict, run: str, done_years: set[int], totals: _Totals, ref: str) -> None:
+        """One yearly part is in: apply it (every record is a QSO LoTW holds, a confirmed one with LoTW's date),
+        record the year as done, and take the closing request's starting points from the first (newest) part."""
+        year, records = ev["year"], ev["records"]
+        if totals.broken:
+            return
+        try:
+            with self.db.batch(f"LoTW part {year}"):
+                res = apply.apply_lotw_report(self.db, records, self.catalog())
+                if not ev["partial"]:
+                    done_years.add(year)
+                    self.db.sync_set("lotw", "parts_done", ",".join(str(y) for y in sorted(done_years, reverse=True)))
+                    if self.db.sync_get("lotw", "parts_since_rx") is None:
+                        header, info = ev["header"], ev["info"]
+                        since_rx = header.get("APP_LOTW_LASTQSORX") or info.get("generated")
+                        stamps = [timeutil.parse_iso(r.get("APP_LOTW_RXQSL")) for r in records
+                                  if (r.get("QSL_RCVD") or "").upper() == "Y"]
+                        stamps = [s for s in stamps if s is not None]
+                        since_qsl = max(stamps).strftime("%Y-%m-%d %H:%M:%S") if stamps else info.get("generated")
+                        if since_rx:
+                            self.db.sync_set("lotw", "parts_since_rx", since_rx)
+                        if since_qsl:
+                            self.db.sync_set("lotw", "parts_since_qsl", since_qsl)
+        except Exception as e:  # noqa: BLE001 - a part that can't be applied ends the run as a failure
+            log.exception("LoTW part %s (ref %s) could not be applied", year, ref)
+            totals.broken = str(e)
+            return
+        totals.add(res, records=len(records))
+        log.info("LoTW part %s (ref %s): %s%s", year, ref, apply.counts(res), " (partial)" if ev["partial"] else "")
+
+    def _lotw_close_parts(self, user: str, pw: str, run: str, started: str, ref: str, dlg, totals: _Totals,
+                          t0: float) -> None:
+        """Every part is in: one short request for what LoTW received while they ran, then the positions."""
+        since_rx = self.db.sync_get("lotw", "parts_since_rx")
+        since_qsl = self.db.sync_get("lotw", "parts_since_qsl") or since_rx
+        since_rx = since_rx or since_qsl
+        self._say(dlg, tr("Downloading from LoTW…") + "\n" + tr("Last step: what LoTW received while the parts ran"))
+
+        def work():
+            return services.lotw_sync_download(user, pw, since_qsl=since_qsl, since_rx=since_rx,
+                                               folder=self.db.downloads_dir, run=run)
+
+        def done(res):
+            h1, r1, h2, r2 = res
+            t1 = time.monotonic()
+
+            def save():
+                up, a = self._apply_lotw_reports(h1, r1, h2, r2)
+                if since_qsl and not self.db.sync_get("lotw", "last_qsl"):
+                    self.db.sync_set("lotw", "last_qsl", since_qsl)
+                if since_rx and not self.db.sync_get("lotw", "last_qsorx"):
+                    self.db.sync_set("lotw", "last_qsorx", since_rx)
+                for k in self.LOTW_PARTS_KEYS:
+                    self.db.sync_set("lotw", k, None)
+                self.db.sync_set("lotw", "full_seconds", str(round(t1 - t0)))
+                self.db.sync_set("lotw", "last_run", run)
                 return up, a
 
             saved = self._apply_download("lotw", started, dlg, save, ref=ref, secrets=[pw])
             if saved is None:
                 return
             up, a = saved
-            timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
-            self._log("lotw", "download", started, received=a.total, matched=a.matched,
-                      message=apply.summary(_as_is, a, new_one="new confirmation", new_many="new confirmations",
-                                            none="No new confirmations", uploaded=up))
-            log.info("LoTW download (ref %s): upload states %s", ref, apply.counts(up))
-            self.report("lotw", "ok", lambda t: apply.summary(t, a, new_one="new confirmation",
-                                                              new_many="new confirmations",
-                                                              none="No new confirmations", uploaded=up),
-                        ref=ref, ids=a.confirmed, log_detail=f"{apply.counts(a)}; {timing}")
-            self.confirmed.emit("lotw", a.confirmed)
-            self._show_unmatched("lotw", a)
+            totals.add(a)
+            self._finish_lotw(totals.result(), up, started, ref, f"download {t1 - t0:.1f} s in parts")
+            self.db.prune_downloads("lotw", keep_runs=[run])
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("lotw", "download", started, dlg, m, [pw],
-                                                                     ref=ref))
+        def failed(msg):
+            self._close(dlg)
+            self._end("lotw", "download")
+            res = totals.result()
+            added, held = self._settle_unmatched("lotw", res.unmatched, ref=ref)
+            self._log("lotw", "download", started, received=res.total, matched=res.matched, errors=1,
+                      message=f"{msg}; every part is applied, the last step is still to do")
+            self.report("lotw", "cancelled", lambda t: self._safe(msg, [pw]) + ". " + apply.summary(
+                t, res, new_one="new confirmation", new_many="new confirmations", none="No new confirmations",
+                added=len(added), held=held) + ". " + t("Every part is applied; Download from LoTW does the last "
+                                                        "step."), ref=ref, ids=res.confirmed + added)
+            self.confirmed.emit("lotw", res.confirmed)
+
+        run_async(work, on_done=done, on_error=failed)
 
     def _download_eqsl(self) -> None:
         user, pw = self._account("eqsl_user"), self._secret("eqsl_password")
@@ -882,43 +1165,78 @@ class SyncController(QObject):
             return
         since = self.db.sync_get("eqsl", "rcvd_since")
         started = timeutil.now_iso()
+        run = self.new_run()
         ref = self._start("eqsl", "download", f"{len(nicks)} QTH nickname(s), since {since or 'the start'}")
         dlg = self._progress("eqsldown", tr("Downloading from eQSL…"))
         t0 = time.monotonic()
 
-        def work():
-            out = []
+        def work(event):
+            out, partial, got_one = [], [], False
             for n in nicks:
-                _, recs = services.eqsl_download(user, pw, since=since, qth_nickname=n)
+                dest = self.db.download_path("eqsl", run, n)
+                try:
+                    _, recs = services.eqsl_download(user, pw, since=since, qth_nickname=n, dest=dest,
+                                                     progress=lambda got, _c, n=n: event((n, got)))
+                    got_one = True
+                except net.PartialDownload as e:
+                    with open(e.path, "rb") as fh:
+                        _, recs = adif.parse(fh.read(), complete_only=True)
+                    partial.append(f"{n}: {e}")
+                except net.NetError as e:  # one nickname failed for good: the others still count
+                    partial.append(f"{n}: {e}")
+                    recs = []
                 out.extend(recs)
-            return out
+            if partial and not got_one and not out:
+                raise services.ServiceError("; ".join(partial))
+            return out, partial
 
-        def done(recs):
+        def done(res):
+            recs, partial = res
             t1 = time.monotonic()
 
             def save():
                 if not since:
                     self.db.sync_set("eqsl", "full_seconds", str(round(t1 - t0)))
                 a = apply.apply_eqsl(self.db, recs, self.catalog())
-                # RcvdSince is a date: overlap a day to include cards arriving later today.
-                self.db.sync_set("eqsl", "rcvd_since",
-                                 (timeutil.now_utc() - timedelta(days=1)).strftime("%Y%m%d"))
+                if not partial:
+                    # RcvdSince is a date: overlap a day to include cards arriving later today.
+                    self.db.sync_set("eqsl", "rcvd_since",
+                                     (timeutil.now_utc() - timedelta(days=1)).strftime("%Y%m%d"))
+                    self.db.sync_set("eqsl", "last_run", run)
                 return a
 
-            a = self._apply_download("eqsl", started, dlg, save, ref=ref, secrets=[pw])
-            if a is None:
-                return
+            if partial:
+                # What arrived is applied; the position stays, so the next download fetches the rest.
+                try:
+                    with self.db.batch("eQSL download (partial)"):
+                        a = save()
+                except Exception as e:  # noqa: BLE001
+                    self._fail("eqsl", "download", started, dlg, str(e), [pw], ref=ref)
+                    return
+                self._close(dlg)
+                self._end("eqsl", "download")
+            else:
+                a = self._apply_download("eqsl", started, dlg, save, ref=ref, secrets=[pw])
+                if a is None:
+                    return
+            added, held = self._settle_unmatched("eqsl", a.unmatched, ref=ref)
             timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
-            self._log("eqsl", "download", started, received=a.total, matched=a.matched,
-                      message=apply.summary(_as_is, a, new_one="new card", new_many="new cards", none="No new cards"))
-            self.report("eqsl", "ok", lambda t: apply.summary(t, a, new_one="new card", new_many="new cards",
-                                                              none="No new cards"),
-                        ref=ref, ids=a.confirmed, log_detail=f"{apply.counts(a)}; {timing}")
-            self.confirmed.emit("eqsl", a.confirmed)
-            self._show_unmatched("eqsl", a)
+            msg = "; ".join(self._safe(p, [pw]) for p in partial)
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "download", started, dlg, m, [pw],
-                                                                     ref=ref))
+            def text(t) -> str:
+                return (msg + ". " + t("The cards that arrived are in your log; the next download fetches the rest.")
+                        + " · " if partial else "") + apply.summary(
+                    t, a, new_one="new card", new_many="new cards", none="No new cards", added=len(added), held=held)
+
+            self._log("eqsl", "download", started, received=a.total, matched=a.matched, errors=len(partial),
+                      message=text(_as_is))
+            self.report("eqsl", "cancelled" if partial else "ok", text, ref=ref, ids=a.confirmed + added,
+                        log_detail=f"{apply.counts(a)}; {timing}")
+            self.confirmed.emit("eqsl", a.confirmed)
+            self.db.prune_downloads("eqsl", keep_runs=[run] if not partial else [run, self.db.sync_get("eqsl", "last_run")])
+
+        run_async(work, on_done=done, on_error=lambda m: self._fail("eqsl", "download", started, dlg, m, [pw], ref=ref),
+                  on_event=lambda ev: self._say(dlg, tr("Downloading from eQSL…") + f"\n{ev[0]} · {ev[1] / 1e6:.1f} MB"))
 
     def _download_qrz(self) -> None:
         calls = sorted({p.get("station_callsign") for p in self.db.profiles() if p.get("station_callsign")})
@@ -930,38 +1248,143 @@ class SyncController(QObject):
                         fix="Services")
             return
         started = timeutil.now_iso()
-        ref = self._start("qrz", "download", f"{len(keys)} logbook(s)")
+        run = self.new_run()
+        resume = {c: int(self.db.sync_get("qrz", self.QRZ_RESUME + c) or 0) for c in keys}
+        ref = self._start("qrz", "download", f"{len(keys)} logbook(s)" +
+                          (", continuing " + ", ".join(f"{c} from log id {a}" for c, a in resume.items() if a)
+                           if any(resume.values()) else ""))
         dlg = self._progress("qrzdown", tr("Downloading from QRZ.com Logbook…"))
         t0 = time.monotonic()
+        totals = _Totals()
+        state = {"pages": 0}
 
-        def work():
-            out = []
+        def work(event):
             for c, k in keys.items():
-                out.extend(services.qrz_fetch(k, call=c))
-            return out
+                dest = self.db.download_path("qrz", run, c)
 
-        def done(recs):
+                def on_page(after, recs, text, c=c, dest=dest):
+                    with open(dest, "a", encoding="utf-8") as fh:
+                        fh.write(text + "\n")  # every page received stays on disk, whatever happens next
+                    event({"call": c, "after": after, "records": recs})
+
+                services.qrz_fetch(k, call=c, after=resume[c], on_page=on_page)
+            return True
+
+        def on_event(ev):
+            if totals.broken:
+                return
+            try:
+                with self.db.batch("QRZ.com page"):
+                    a = apply.apply_qrz(self.db, ev["records"], self.catalog())
+                    self.db.sync_set("qrz", self.QRZ_RESUME + ev["call"], str(ev["after"]))
+            except Exception as e:  # noqa: BLE001 - a page that can't be applied ends the run as a failure
+                log.exception("QRZ.com page for %s (ref %s) could not be applied", ev["call"], ref)
+                totals.broken = str(e)
+                return
+            totals.add(a, records=len(ev["records"]))
+            state["pages"] += 1
+            self._say(dlg, tr("Downloading from QRZ.com Logbook…") + f"\n{ev['call']} · {totals.records:,} " +
+                      tr("records") + f" · {state['pages']} " + tr("pages"))
+
+        def done(_ok):
             t1 = time.monotonic()
-            a = self._apply_download("qrz", started, dlg, lambda: apply.apply_qrz(self.db, recs, self.catalog()),
-                                     ref=ref, secrets=list(keys.values()))
+            if totals.broken:
+                self._fail("qrz", "download", started, dlg, totals.broken, list(keys.values()), ref=ref)
+                return
+
+            def save():
+                for c in keys:
+                    self.db.sync_set("qrz", self.QRZ_RESUME + c, None)  # the run is complete: the next starts over
+                self.db.sync_set("qrz", "last_run", run)
+                return totals.result()
+
+            a = self._apply_download("qrz", started, dlg, save, ref=ref, secrets=list(keys.values()))
             if a is None:
                 return
-            timing = f"download {t1 - t0:.1f} s, apply {time.monotonic() - t1:.2f} s"
-            self._log("qrz", "download", started, received=a.total, matched=a.matched,
-                      message=apply.summary(_as_is, a, new_one="new confirmation", new_many="new confirmations",
-                                            none="No new confirmations"))
-            self.report("qrz", "ok", lambda t: apply.summary(t, a, new_one="new confirmation",
-                                                             new_many="new confirmations",
-                                                             none="No new confirmations"),
-                        ref=ref, ids=a.confirmed, log_detail=f"{apply.counts(a)}; {timing}")
-            self.confirmed.emit("qrz", a.confirmed)
-            self._show_unmatched("qrz", a)
+            added, held = self._settle_unmatched("qrz", a.unmatched, ref=ref)
+            timing = f"download {t1 - t0:.1f} s"
 
-        run_async(work, on_done=done, on_error=lambda m: self._fail("qrz", "download", started, dlg, m,
-                                                                     list(keys.values()), ref=ref))
+            def text(t) -> str:
+                return apply.summary(t, a, new_one="new confirmation", new_many="new confirmations",
+                                     none="No new confirmations", added=len(added), held=held)
+
+            self._log("qrz", "download", started, received=a.total, matched=a.matched, message=text(_as_is))
+            self.report("qrz", "ok", text, ref=ref, ids=a.confirmed + added, log_detail=f"{apply.counts(a)}; {timing}")
+            self.confirmed.emit("qrz", a.confirmed)
+            self.db.prune_downloads("qrz", keep_runs=[run])
+
+        def stopped(msg):
+            if not state["pages"]:  # nothing arrived: a plain failure, as before
+                self._fail("qrz", "download", started, dlg, msg, list(keys.values()), ref=ref)
+                return
+            self._close(dlg)
+            self._end("qrz", "download")
+            res = totals.result()
+            added, held = self._settle_unmatched("qrz", res.unmatched, ref=ref)
+            where = ", ".join(f"{c} {a}" for c in keys if (a := self.db.sync_get("qrz", self.QRZ_RESUME + c)))
+            self._log("qrz", "download", started, received=res.total, matched=res.matched, errors=1,
+                      message=f"{msg}; {state['pages']} pages applied; continues from log id {where or '0'}")
+            self.report("qrz", "cancelled", lambda t: self._safe(msg, list(keys.values())) + f". {state['pages']} " +
+                        t("pages are applied") + " · " + apply.summary(
+                            t, res, new_one="new confirmation", new_many="new confirmations",
+                            none="No new confirmations", added=len(added), held=held) + ". " +
+                        t("Download from QRZ.com continues from log id") + f" {where or 0}.",
+                        ref=ref, ids=res.confirmed + added)
+            self.confirmed.emit("qrz", res.confirmed)
+            self.db.prune_downloads("qrz", keep_runs=[run, self.db.sync_get("qrz", "last_run")])
+
+        run_async(work, on_done=done, on_event=on_event, on_error=stopped)
 
     def upload_on_log(self, qid: int) -> None:
         on = self.prefs.get("upload_on_log") or {}
         for svc in ("qrz", "eqsl", "hrdlog"):
             if on.get(svc):
                 self.upload(svc, [qid], quiet=True)
+
+
+class _Totals:
+    """What a download in parts or pages has applied so far."""
+
+    def __init__(self) -> None:
+        self.total = self.matched = self.changed = 0
+        self.confirmed: list[int] = []
+        self.unmatched: list[dict] = []
+        self.records = 0
+        self.bytes = 0
+        self.broken: str | None = None  # a part or page could not be applied: the run ends as a failure
+
+    def add(self, res: apply.ApplyResult, *, records: int = 0) -> None:
+        self.total += res.total
+        self.matched += res.matched
+        self.changed += res.changed
+        self.confirmed.extend(res.confirmed)
+        self.unmatched.extend(res.unmatched)
+        self.records += records
+
+    def result(self) -> apply.ApplyResult:
+        return apply.ApplyResult(total=self.total, matched=self.matched, changed=self.changed,
+                                 unmatched=list(self.unmatched), confirmed=list(self.confirmed))
+
+
+class _Marks:
+    """QSOs a service accepted, marked as uploaded in small batches while the upload goes on."""
+
+    def __init__(self, db, service: str) -> None:
+        self.db, self.service = db, service
+        self.ids: list[int] = []
+        self.logids: dict[int, str] = {}
+
+    @property
+    def pending(self) -> int:
+        return len(self.ids)
+
+    def add(self, ids: list[int], *, logid: str | None = None) -> None:
+        self.ids.extend(ids)
+        if logid:
+            for qid in ids:
+                self.logids[qid] = logid
+
+    def flush(self) -> None:
+        if self.ids:
+            apply.mark_sent(self.db, self.service, list(self.ids), logids=self.logids or None)
+            self.ids, self.logids = [], {}

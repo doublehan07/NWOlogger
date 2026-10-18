@@ -17,7 +17,7 @@ DEFAULTS: dict[str, Any] = {
     "db_path": str(dbm.DEFAULT_PATH),
     "backup_keep": 20,
     "block_seconds": 30,
-    "warn_hours": 24,
+    "warn_minutes": 1,  # the dupe warning window; 0.1.8 kept it in hours (24), see Prefs._migrate
     "allow_dupes": False,
     "sticky": ["freq", "mode", "sat", "device"],
     "auto_lookup": True,
@@ -60,6 +60,22 @@ class Prefs:
         if settings is None and path:
             settings = QSettings(path, QSettings.Format.IniFormat)
         self.s = settings or QSettings("NWOlogger", "NWOlogger")
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """0.1.8 kept the dupe warning window in hours, default 24; 0.1.9 keeps it in minutes, default 1. The old
+        default becomes the new one, a value set on purpose is kept, converted to minutes."""
+        if self.s.contains("warn_hours") and not self.s.contains("warn_minutes"):
+            try:
+                hours = int(self.s.value("warn_hours"))
+            except (TypeError, ValueError):
+                hours = 24
+            self.s.setValue("warn_minutes", 1 if hours == 24 else max(0, hours * 60))
+            self.s.remove("warn_hours")
+
+    def warn_seconds(self) -> float:
+        """The dupe warning window in seconds."""
+        return 60.0 * max(0, int(self.get("warn_minutes") or 0))
 
     def get(self, key: str) -> Any:
         default = DEFAULTS.get(key)

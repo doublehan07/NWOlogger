@@ -36,7 +36,7 @@ def sync(qtbot, tmp_path, monkeypatch):
     ctrl = sync_controller.SyncController(db, prefs, parent)
     tasks, warnings, outcomes = [], [], []
     monkeypatch.setattr(sync_controller, "run_async",
-                        lambda work, *, on_done, on_error: tasks.append((work, on_done, on_error)))
+                        lambda work, *, on_done, on_error, on_event=None: tasks.append((work, on_done, on_error, on_event)))
     monkeypatch.setattr(sync_controller.QMessageBox, "warning",
                         lambda _parent, _title, text: warnings.append(text))
     monkeypatch.setattr(ctrl, "report", lambda svc, kind, *_a, **_k: outcomes.append((svc, kind)))
@@ -94,6 +94,6 @@ def test_a_finished_run_forgets_its_progress_window(sync, monkeypatch):
     ctrl = sync.ctrl
     monkeypatch.setattr(services, "eqsl_download", lambda *_a, **_k: ({}, []))
     ctrl.download("eqsl")
-    work, done, _error = sync.tasks.pop()
-    done(work())
+    work, done, _error, on_event = sync.tasks.pop()
+    done(work(event=on_event) if on_event is not None else work())
     assert "eqsldown" not in ctrl.progress and not ctrl.busy

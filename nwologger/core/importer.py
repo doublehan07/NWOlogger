@@ -62,7 +62,7 @@ def apply_profile(q: dict, profile: dict | None) -> dict:
     """Give records without a station callsign the chosen station profile."""
     if not profile or q.get("station_callsign"):
         return q
-    for col in ("station_callsign", "operator", "my_gridsquare"):
+    for col in ("station_callsign", "operator", "my_gridsquare", "my_vucc_grids"):
         if not q.get(col) and profile.get(col):
             q[col] = profile[col]
     if profile.get("id"):
@@ -102,6 +102,25 @@ def find_match(db, q: dict, window: float = MATCH_WINDOW) -> int | None:
     return best
 
 
+NEAR_SECONDS = 60.0
+
+
+def near_qsos(db, q: dict, seconds: float = NEAR_SECONDS) -> list[dict]:
+    """QSOs with the same call within ``seconds`` of ``q``, whatever their band, mode or satellite, nearest first.
+    A record a download could not match that has one of these is a near-duplicate (the same contact logged with
+    another band, mode or satellite), not a new contact: it waits for a decision instead of being added."""
+    call = (q.get("call") or "").upper()
+    t = timeutil.parse_iso(q.get("time_on"))
+    if not call or t is None:
+        return []
+    lo = timeutil.to_iso(t - timedelta(seconds=seconds))
+    hi = timeutil.to_iso(t + timedelta(seconds=seconds))
+    rows = [{k: r[k] for k in r.keys()} for r in db.conn.execute(
+        "SELECT * FROM qso WHERE call = ? AND time_on BETWEEN ? AND ?", (call, lo, hi))]
+    rows.sort(key=lambda o: timeutil.seconds_between(q["time_on"], o["time_on"]))
+    return rows
+
+
 def merge_changes(existing: dict, incoming: dict) -> dict:
     """Fill empty fields and take newer confirmation data. Never overwrites typed data with blanks."""
     ch: dict = {}
@@ -130,7 +149,7 @@ def merge_changes(existing: dict, incoming: dict) -> dict:
 def run(db, qsos: Iterable[dict], *, merge: bool = False, dry_run: bool = False, label: str = "Import",
         profile: dict | None = None, fill: bool = True, key_tag: str | None = None,
         block_s: float = dupes.BLOCK_SECONDS, warn_s: float = dupes.WARN_SECONDS,
-        progress: Callable[[int, int], None] | None = None) -> ImportResult:
+        progress: Callable[[int, int], None] | None = None, backup: bool = True) -> ImportResult:
     """Import normalised QSO dicts.
 
     * merge=False: every record is added; suspicious dupes are marked.
@@ -138,10 +157,11 @@ def run(db, qsos: Iterable[dict], *, merge: bool = False, dry_run: bool = False,
     * key_tag: an ``extra`` tag (e.g. ``APP_MLDX_PK``) that identifies records from an earlier run; matching
       QSOs are updated, so re-running an import does not duplicate.
     * dry_run: do everything in a transaction and roll it back; the result has the counts.
+    * backup: save a copy of the log first (off for the second of two runs made as one change).
     """
     items = list(qsos)
     res = ImportResult(total=len(items))
-    if not dry_run:
+    if not dry_run and backup:
         db.backup("import")
     try:
         with db.batch(label):

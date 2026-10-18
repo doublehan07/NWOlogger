@@ -7,13 +7,14 @@ import pytest
 from PySide6.QtCore import QBuffer, QIODevice, QPointF, QSettings, Qt
 from PySide6.QtGui import QImage
 
+from nwologger import __version__
 from nwologger.core import db as dbm
 from nwologger.core import grids, maptiles
 from nwologger.core import qso as qsomod
 from nwologger.ui.prefs import Prefs
 from nwologger.ui.stats import gridmap, statistics_tab
 from nwologger.ui.stats.gridmap import GlobeSnapshot, GridMapView
-from nwologger.ui.stats.statistics_tab import StatisticsTab
+from nwologger.ui.stats.statistics_tab import StatisticsTab, png_file_name
 
 
 @pytest.fixture
@@ -36,16 +37,41 @@ def tab(qtbot, tmp_path):
     db.close()
 
 
-@pytest.mark.parametrize(("operator", "station", "name"), [
-    ("BI1ZZZ", "BY1ZZ", "BI1ZZZ-grid-map-NWOlogger.png"),
-    ("", "BY1ZZ", "BY1ZZ-grid-map-NWOlogger.png"),
-    ("bi1zzz/p", "", "BI1ZZZ-P-grid-map-NWOlogger.png"),
-    ("", "", "grid-map-NWOlogger.png"),
+@pytest.mark.parametrize(("operator", "station", "home", "name"), [
+    ("BI1ZZZ", "BY1ZZ", "ON80da", "BI1ZZZ at ON80 - NWOlogger {v}.png"),
+    ("", "BY1ZZ", "ON80", "BY1ZZ at ON80 - NWOlogger {v}.png"),
+    ("bi1zzz/p", "", "", "BI1ZZZ-P - NWOlogger {v}.png"),
+    ("", "", "", "NWOlogger {v}.png"),
 ])
-def test_png_is_named_after_the_operator(tab, operator, station, name):
+def test_png_is_named_after_the_operator_and_the_home_grid(tab, operator, station, home, name):
     profile = tab.db.default_profile()
     tab.db.save_profile({**profile, "operator": operator, "station_callsign": station})
-    assert tab.png_name() == name
+    tab.home.setText(home)
+    assert tab.png_name() == name.format(v=__version__)
+
+
+def test_png_file_name_says_et_al_for_more_calls_or_grids():
+    assert png_file_name(["BI1NWO"], ["ON80"], "0.1.9") == "BI1NWO at ON80 - NWOlogger 0.1.9.png"
+    assert png_file_name(["BI1NWO", "AI6OT"], ["ON80", "CM87", "ON70"], "0.1.9") == \
+        "BI1NWO et al at ON80 et al - NWOlogger 0.1.9.png"
+    assert png_file_name(["VR2/BD1AJF"], [], "0.1.9") == "VR2-BD1AJF - NWOlogger 0.1.9.png"
+    assert png_file_name([], ["ON80"], "0.1.9") == "ON80 - NWOlogger 0.1.9.png"
+    assert png_file_name(["", None], [""], "0.1.9") == "NWOlogger 0.1.9.png"
+
+
+def test_the_counts_badge_is_drawn_in_the_corner_and_exported(tab):
+    assert tab.map.badge.startswith("1 confirmed (LoTW) · 0 worked only · VUCC")
+    view = tab.map.export_view()
+    try:
+        assert view.badge == tab.map.badge
+        image = view.snapshot()
+        # the badge sits in the bottom right corner, in the sky: dark box with light text
+        corner = [image.pixelColor(image.width() - 30 - x, image.height() - 20 - y).lightness()
+                  for x in range(0, 300, 10) for y in range(0, 16, 4)]
+        assert max(corner) > 150, "no light text in the corner"
+    finally:
+        view.shutdown()
+        view.deleteLater()
 
 
 def test_save_as_png_keeps_the_view_as_you_see_it_at_twice_its_size(tab, monkeypatch, tmp_path):
@@ -62,7 +88,7 @@ def test_save_as_png_keeps_the_view_as_you_see_it_at_twice_its_size(tab, monkeyp
     state = m.view_state()
     on_screen = m.grab().toImage()
     tab.save_png()
-    assert asked[0][0] is tab and asked[0][1].endswith("BI1ZZZ-grid-map-NWOlogger.png")
+    assert asked[0][0] is tab and asked[0][1].endswith(f"BI1ZZZ - NWOlogger {__version__}.png")
     image = QImage(str(tmp_path / "mine.png"))
     scale, band = gridmap.EXPORT_SCALE, gridmap.CAPTION_PX
     assert (image.width(), image.height()) == (m.width() * scale, (m.height() + band) * scale)
@@ -117,43 +143,60 @@ def test_snapshot_draws_without_tiles_that_failed(qtbot, monkeypatch):
     source.shutdown()
 
 
-def test_full_screen_shows_the_map_alone_and_esc_brings_it_back(tab, qtbot):
+def test_open_in_a_window_and_esc_brings_it_back(tab, qtbot):
+    pane, m = tab.pane, tab.map
+    tab.toggle_window()
+    assert pane.isWindow() and pane.isVisible() and tab.in_window() and m.parent() is pane
+    assert not tab._away_box.isHidden() and tab.window_btn.text() == "Bring it back"
+    assert pane.windowTitle().endswith("Grid map") and not pane.isFullScreen()
+    qtbot.keyClick(m, Qt.Key.Key_Escape)  # Esc in the window: back into the tab
+    assert not pane.isWindow() and tab.layout().indexOf(pane) >= 0 and tab._away_box.isHidden()
+    assert tab.window_btn.text() == "Open in a window" and m.isVisible()
+
+
+def test_the_window_remembers_its_geometry_and_its_close_button_brings_it_back(tab):
+    tab.toggle_window()
+    width = tab.pane.minimumSizeHint().width() + 100  # above the controls' minimum, whatever the font's width
+    tab.pane.setGeometry(120, 90, width, 600)
+    tab.pane.close()  # the window's own close button comes back too
+    assert not tab.pane.isWindow() and tab.pane.isVisible()
+    assert tab.prefs.value("map/window_geometry") == f"120,90,{width},600"
+    tab.window_btn.click()
+    assert tab.in_window() and (tab.pane.width(), tab.pane.height()) == (width, 600)
+    tab.bring_back()
+
+
+def test_full_screen_fills_the_window_and_esc_leaves_it_first(tab, qtbot):
     m = tab.map
-    tab.toggle_full_screen()
-    assert m.isWindow() and m.isFullScreen()
-    assert m._leave.isVisible() and m._save.isVisible() and tab.away.isVisible()
+    tab.toggle_full_screen()  # from the tab: the window opens and fills the screen
+    assert tab.in_window() and tab.pane.isFullScreen() and tab.is_full_screen()
+    assert m._leave.isVisible() and m._save.isVisible()
     assert m._save.geometry().right() < m._leave.geometry().left()  # side by side in the top right corner
     assert m._leave.geometry().right() <= m.width() - 10 and m._leave.geometry().top() <= 20
     qtbot.keyClick(m, Qt.Key.Key_Escape)
-    assert not m.isWindow() and m.parent() is tab and m.isVisible()
-    assert not m._leave.isVisible() and not m._save.isVisible() and not tab.away.isVisible()
-    assert tab.layout().indexOf(m) >= 0
+    assert tab.in_window() and not tab.pane.isFullScreen() and not m._leave.isVisible()
+    qtbot.keyClick(m, Qt.Key.Key_Escape)
+    assert not tab.in_window()
 
 
-def test_full_screen_button_and_closing_the_window(tab):
-    tab.full_btn.click()
-    assert tab.map.isWindow()
-    tab.map.close()  # the full-screen window's own close comes back too
-    assert not tab.map.isWindow() and tab.map.isVisible()
-
-
-def test_clicking_a_square_in_full_screen_comes_back_to_show_its_qsos(tab, qtbot):
+def test_clicking_a_square_in_the_window_shows_its_qsos_and_keeps_the_window(tab, qtbot):
     shown = []
     tab.show_square.connect(shown.append)
     tab.refresh()
-    tab.toggle_full_screen()
+    tab.toggle_window()
     m = tab.map
     lat, lon = grids.center("ON80")
     m.set_view_state((6, lon, lat))
     pos = m.to_screen(lon, lat).toPoint()
     qtbot.mouseClick(m, Qt.MouseButton.LeftButton, pos=pos)
-    assert shown == ["ON80"] and not m.isWindow()
+    assert shown == ["ON80"] and tab.in_window()
+    tab.bring_back()
 
 
-def test_shutdown_in_full_screen_puts_the_map_back(tab):
-    tab.toggle_full_screen()
+def test_shutdown_in_a_window_puts_the_map_back(tab):
+    tab.toggle_window()
     tab.shutdown()
-    assert not tab.map.isWindow()
+    assert not tab.pane.isWindow()
 
 
 def test_halo_and_stars_frame_the_globe(qtbot):
@@ -194,7 +237,7 @@ def test_save_as_png_from_the_full_screen_map_opens_on_its_window(tab, monkeypat
     monkeypatch.setattr(statistics_tab.QFileDialog, "getSaveFileName", save_dialog)
     tab.toggle_full_screen()
     tab.map._save.click()
-    assert parents == [tab.map] and tab.map.isWindow()  # it stays full screen
+    assert parents == [tab.pane] and tab.is_full_screen()  # it stays full screen, in the map's own window
     image = QImage(str(tmp_path / "full.png"))
     assert image.width() == tab.map.width() * gridmap.EXPORT_SCALE
 
@@ -251,8 +294,10 @@ def test_a_slow_export_shows_its_progress_soon_and_keeps_it_with_the_map(tab, qt
     tab.save_png()  # asked again: no second file dialog, the same progress comes forward
     assert len(asked) == 1 and tab._progress is progress and progress.isVisible()
     tab.toggle_full_screen()
-    assert progress.parentWidget() is tab.map and progress.isVisible()  # on the full-screen window
+    assert progress.parentWidget() is tab.pane and progress.isVisible()  # on the full-screen window
     tab.toggle_full_screen()
+    assert tab.in_window() and progress.parentWidget() is tab.pane and progress.isVisible()  # still its window
+    tab.bring_back()
     assert progress.parentWidget() is tab and progress.isVisible()
     snapshot = tab._snapshot
     from PySide6.QtWidgets import QPushButton

@@ -34,11 +34,13 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
-from ..core import devices, dxcc, maptiles, sats
+from ..core import devices, dxcc, maptiles, sats, timeutil
+from ..core import qso as qsomod
 from ..core import secrets as keychain
-from ..core.sync import tqsl
+from ..core.sync import positions, tqsl
 from . import theme
 from .prefs import DEFAULTS, SECRET_KEYS
+from .profiles_from_log import ProfilesFromLogDialog
 from .widgets import MODE_FIRST, ScrollArea, all_modes, fit_to_screen, mode_list, sat_list
 
 tr = i18n.tr
@@ -64,7 +66,7 @@ def describe_changes(before: dict, after: dict, secrets: list[str]) -> str:
 
 PROFILE_FIELDS = [
     ("name", "Profile name"), ("station_callsign", "Station callsign"), ("operator", "Operator (personal station)"),
-    ("my_gridsquare", "My grid"), ("my_vucc_grids", "My VUCC grids"), ("my_cq_zone", "My CQ zone"),
+    ("my_gridsquare", "My grid"), ("my_cq_zone", "My CQ zone"),
     ("my_itu_zone", "My ITU zone"), ("my_dxcc", "My DXCC"), ("my_state", "My province"), ("my_cnty", "My county"),
     ("my_rig", "Rig"), ("my_antenna", "Antenna"), ("tx_pwr", "Default power (W)"), ("my_pota_ref", "My POTA"),
     ("my_sota_ref", "My SOTA"), ("my_wwff_ref", "My WWFF"), ("lotw_location", "TQSL station location"),
@@ -184,6 +186,11 @@ class ProfilesPage(QWidget):
         row.addWidget(add)
         row.addWidget(rm)
         left.addLayout(row)
+        self.from_log_btn = QPushButton(tr("Add from my log…"))
+        self.from_log_btn.setToolTip(tr("A profile for each station callsign and grid your QSOs carry, the ones "
+                                        "you tick"))
+        self.from_log_btn.clicked.connect(self._from_log)
+        left.addWidget(self.from_log_btn)
         lay.addLayout(left, 1)
         right = QVBoxLayout()
         form = QFormLayout()
@@ -203,6 +210,9 @@ class ProfilesPage(QWidget):
                 e = QLineEdit()
             if key == "eqsl_qth_nickname":
                 e.setPlaceholderText(tr("as on eQSL.cc → My Profile; needed for eQSL"))
+            if key == "my_gridsquare":
+                e.setToolTip(tr("Your grid, or the two or four grids of a station on a grid line, comma separated "
+                                "(OM88, OM89): the first goes to MY_GRIDSQUARE, all of them to MY_VUCC_GRIDS."))
             self.edits[key] = e
             form.addRow(tr(label), e)
             if key == "station_callsign":
@@ -254,6 +264,7 @@ class ProfilesPage(QWidget):
         for k, e in self.edits.items():
             v = p.get(k)
             e.setText("" if v is None else str(v))
+        self.edits["my_gridsquare"].setText(qsomod.grids_text(p, "my_gridsquare"))  # with the VUCC grids
         self.station_type.setCurrentIndex(max(0, self.station_type.findData(p.get("station_type") or "personal")))
         self.default.setChecked(bool(p.get("is_default")))
         self._type_changed()
@@ -301,6 +312,7 @@ class ProfilesPage(QWidget):
         if not data.get("station_callsign"):
             QMessageBox.warning(self, tr("Station profile"), tr("Enter the station callsign."))
             return False
+        data.update(qsomod.grid_columns(data.get("my_gridsquare"), "my_gridsquare"))  # "OM88, OM89": both fields
         data["station_callsign"] = data["station_callsign"].upper()
         for k in ("my_cq_zone", "my_itu_zone", "my_dxcc"):
             if data.get(k):
@@ -327,6 +339,13 @@ class ProfilesPage(QWidget):
         self._reload(select=pid)
         self.changed.emit()
         return True
+
+    def _from_log(self) -> None:
+        """Station profiles for the callsign + grid pairs your QSOs carry, the ones you tick."""
+        dlg = ProfilesFromLogDialog(self.db, self)
+        if dlg.exec() and dlg.created:
+            self._reload(select=dlg.created[-1])
+            self.changed.emit()
 
     def _call_used(self, call: str) -> bool:
         return any((p.get("station_callsign") or "").upper() == call for p in self.db.profiles())
@@ -506,6 +525,131 @@ class DevicesPage(QWidget):
         prefs.set("setups", self.setups_value())
 
 
+class PositionsPage(QWidget):
+    """Preferences → Sync positions: where each service's next download starts, read-only behind one button with
+    two states. *Unlock* shows a danger zone and makes the three positions editable; the same button, *Lock and
+    save*, checks the dates, saves a backup, writes the changes, logs them and locks again. *Cancel* restores the
+    stored values. The dialog's own Save and Cancel do the same for a page left unlocked."""
+
+    def __init__(self, db, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.db = db
+        self.unlocked = False
+        self.rows: list[dict] = []
+        lay = QVBoxLayout(self)
+        intro = QLabel(tr("Where the next download of each service starts. Downloads set these; an imported log sets "
+                          "the ones that are empty; a LoTW report file sets LoTW's. Unlock to change them by hand."))
+        intro.setWordWrap(True)
+        intro.setObjectName("Hint")
+        lay.addWidget(intro)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels([tr("Service"), tr("Position"), tr("Value (UTC)"), tr("Set by")])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        lay.addWidget(self.table, 1)
+        self.danger = QLabel(tr("Danger zone: you are editing where downloads continue. A later date skips "
+                                "confirmations until Download everything again; an earlier date only re-downloads; "
+                                "empty means from the start. A backup of the log is saved when you lock."))
+        self.danger.setWordWrap(True)
+        self.danger.setObjectName("Danger")
+        self.danger.setStyleSheet("QLabel#Danger { background: #FCE8E8; color: #8B1A1A; border: 1px solid #C42727; "
+                                  "border-radius: 6px; padding: 8px; }")
+        self.danger.hide()
+        lay.addWidget(self.danger)
+        row = QHBoxLayout()
+        self.lock_btn = QPushButton(tr("Unlock"))
+        self.lock_btn.clicked.connect(self.toggle)
+        self.cancel_btn = QPushButton(tr("Cancel"))
+        self.cancel_btn.clicked.connect(self.cancel_edit)
+        self.cancel_btn.hide()
+        row.addWidget(self.lock_btn)
+        row.addWidget(self.cancel_btn)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.refresh()
+
+    def refresh(self) -> None:
+        self.rows = positions.read(self.db)
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(self.rows))
+        for i, r in enumerate(self.rows):
+            origin = r["origin"]
+            if r["editable"] and r["value"] and not origin:
+                origin = tr("a download")
+            cells = (QTableWidgetItem(positions.SERVICE_NAMES.get(r["service"], r["service"])),
+                     QTableWidgetItem(tr(r["label"])),
+                     QTableWidgetItem(r["value"] or (tr("the start") if r["editable"] else "—")),
+                     QTableWidgetItem(origin or (tr("no download yet") if r["editable"] else "")))
+            cells[2].setFont(theme.mono_font())
+            cells[2].setData(Qt.ItemDataRole.UserRole, r["value"])
+            for col, it in enumerate(cells):
+                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(i, col, it)
+        self.table.blockSignals(False)
+        self._apply_lock()
+
+    def _apply_lock(self) -> None:
+        for i, r in enumerate(self.rows):
+            it = self.table.item(i, 2)
+            if r["editable"] and self.unlocked:
+                if not r["value"]:
+                    it.setText("")  # the placeholder "the start" is not a value to edit
+                it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
+            else:
+                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.danger.setVisible(self.unlocked)
+        self.cancel_btn.setVisible(self.unlocked)
+        self.lock_btn.setText(tr("Lock and save") if self.unlocked else tr("Unlock"))
+        self.lock_btn.setProperty("primary", self.unlocked)
+        self.lock_btn.style().unpolish(self.lock_btn)
+        self.lock_btn.style().polish(self.lock_btn)
+
+    def toggle(self) -> None:
+        if self.unlocked:
+            self.lock_and_save()
+        else:
+            self.unlock()
+
+    def unlock(self) -> None:
+        self.unlocked = True
+        self._apply_lock()
+
+    def changes(self) -> dict[tuple[str, str], str]:
+        """The edited values, as typed: (service, key) → text."""
+        out = {}
+        for i, r in enumerate(self.rows):
+            if not r["editable"]:
+                continue
+            text = (self.table.item(i, 2).text() or "").strip()
+            if text != (r["value"] or ""):
+                out[r["service"], r["key"]] = text
+        return out
+
+    def has_unsaved_changes(self) -> bool:
+        return self.unlocked and bool(self.changes())
+
+    def lock_and_save(self) -> bool:
+        """Check and write the edited positions; False (and still unlocked) when a value is not a date."""
+        changes = self.changes()
+        try:
+            positions.write(self.db, changes, origin=tr("edited in Preferences") + " " +
+                            timeutil.now_iso()[:16].replace("T", " "))
+        except ValueError as e:
+            QMessageBox.warning(self, tr("Sync positions"), tr("Could not read a date:") + f" {e}\n" +
+                                tr("Use YYYY-MM-DD HH:MM:SS for LoTW and YYYY-MM-DD for eQSL; empty means from "
+                                   "the start."))
+            return False
+        self.unlocked = False
+        self.refresh()
+        return True
+
+    def cancel_edit(self) -> None:
+        self.unlocked = False
+        self.refresh()
+
+
 class PrefsDialog(QDialog):
     def __init__(self, db, prefs, parent=None, page: str | None = None):
         super().__init__(parent)
@@ -550,9 +694,9 @@ class PrefsDialog(QDialog):
         self.block.setSuffix(" s")
         self.block.setValue(prefs.get("block_seconds"))
         self.warn = QSpinBox()
-        self.warn.setRange(0, 24 * 30)
-        self.warn.setSuffix(" h")
-        self.warn.setValue(prefs.get("warn_hours"))
+        self.warn.setRange(0, 60 * 24 * 30)
+        self.warn.setSuffix(" min")
+        self.warn.setValue(prefs.get("warn_minutes"))
         self.allow = QCheckBox(tr("Allow logging strict dupes (they are marked DUPE)"))
         self.allow.setChecked(prefs.get("allow_dupes"))
         self.auto_lookup = QCheckBox(tr("Look up calls automatically while typing"))
@@ -750,6 +894,10 @@ class PrefsDialog(QDialog):
         f.addRow(tr("Map cache"), clear_tiles)
         self.tabs.addTab(ScrollArea(mp), tr("Map"))
 
+        # Sync positions (where downloads continue)
+        self.positions_page = PositionsPage(db)
+        self.tabs.addTab(ScrollArea(self.positions_page), tr("Sync positions"))
+
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         bb.button(QDialogButtonBox.StandardButton.Save).setProperty("primary", True)
         bb.accepted.connect(self._save)
@@ -818,10 +966,15 @@ class PrefsDialog(QDialog):
         name.setPlaceholderText(tr("Name as LoTW / TQSL will expect it, e.g. SO-125"))
         up.setPlaceholderText(tr("MHz you transmit on"))
         down.setPlaceholderText(tr("MHz you receive on"))
+        orbit = QComboBox()
+        for code, label in sats.default().orbits.items():
+            orbit.addItem(f"{code} · {tr(label)}", code)
+        orbit.setToolTip(tr("The grid map's satellite categories go by this; nearly every amateur satellite is LEO."))
         f.addRow(tr("Name"), name)
         f.addRow(tr("Description"), desc)
         f.addRow(tr("Uplink (TX MHz)"), up)
         f.addRow(tr("Downlink (RX MHz)"), down)
+        f.addRow(tr("Orbit"), orbit)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
@@ -837,7 +990,7 @@ class PrefsDialog(QDialog):
 
         self.user_sats = [s for s in self.user_sats if (s.get("name") or "").upper() != name.text().strip().upper()]
         self.user_sats.append({"name": name.text().strip().upper(), "description": desc.text().strip(),
-                               "uplink": num(up), "downlink": num(down)})
+                               "uplink": num(up), "downlink": num(down), "orbit": orbit.currentData()})
         self.sat_checked.add(name.text().strip().upper())
         self._fill_satmap()
 
@@ -860,6 +1013,7 @@ class PrefsDialog(QDialog):
     def reject(self) -> None:
         if not self._confirm_profile_changes():
             return
+        self.positions_page.cancel_edit()  # positions left unlocked are not written
         if self.theme.currentData() != self._theme_at_open:
             theme.apply(QApplication.instance(), self._theme_at_open)
         super().reject()
@@ -948,13 +1102,16 @@ class PrefsDialog(QDialog):
     def _save(self) -> None:
         if not self._confirm_profile_changes():
             return
+        if self.positions_page.unlocked and not self.positions_page.lock_and_save():
+            self.tabs.setCurrentWidget(self.positions_page.parentWidget().parentWidget())
+            return
         p = self.prefs
         before = {k: p.get(k) for k in DEFAULTS}
         touched: list[str] = []  # secrets written or forgotten (never their values)
         p.set("language", self.lang.currentData())
         p.set("theme", self.theme.currentData())
         p.set("block_seconds", self.block.value())
-        p.set("warn_hours", self.warn.value())
+        p.set("warn_minutes", self.warn.value())
         p.set("allow_dupes", self.allow.isChecked())
         p.set("auto_lookup", self.auto_lookup.isChecked())
         p.set("lookup_ttl_days", self.ttl.value())

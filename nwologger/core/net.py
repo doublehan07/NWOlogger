@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 import re
 import threading
 import time
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from urllib.parse import quote, quote_plus, unquote
 
 import httpx
@@ -175,6 +177,84 @@ def request(service: str, method: str, url: str, *, secrets: Iterable[str | None
         msg = describe(service, e)
     log.warning("%s %s %s failed after %.1f s: %s", NAMES[service], method, where, time.monotonic() - t0, msg)
     # Raised outside the handler so the original exception, which holds the URL, is not chained.
+    raise NetError(msg)
+
+
+class PartialDownload(NetError):
+    """A transfer that broke and could not be completed: ``path`` holds everything received, ``received`` bytes.
+    The caller applies the complete records in it and keeps the file."""
+
+    def __init__(self, message: str, path: Path, received: int):
+        super().__init__(message)
+        self.path, self.received = path, received
+
+
+RETRY_WAITS = (5.0, 15.0, 45.0)  # before the second, third and fourth attempt
+IDLE_SECONDS = 60.0  # a connection that sends nothing for this long is given up (and retried)
+_RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
+retry_sleep: Callable[[float], None] = time.sleep  # the wait between attempts; tests put a no-op here
+
+
+def download(service: str, method: str, url: str, *, dest: str | os.PathLike, secrets: Iterable[str | None] = (),
+             call: str | None = None, timeout: float = IDLE_SECONDS, redirects: bool = False, resume: bool = True,
+             waits: tuple[float, ...] = RETRY_WAITS, progress: Callable[[int, bytes], None] | None = None,
+             sleep: Callable[[float], None] | None = None, **kw) -> int:
+    """Stream a response to the file ``dest`` as it arrives, so a large report never sits whole in memory and a
+    broken transfer leaves everything received on disk. Returns the number of bytes written.
+
+    A network failure or a 5xx / 429 answer is retried after each of ``waits`` seconds; when the server allows
+    ranges (``Accept-Ranges: bytes`` or a 206 answer) and ``resume`` is set, the retry continues where the
+    transfer stopped with a ``Range`` request, otherwise it starts the file over. ``timeout`` is the idle time
+    allowed between two reads, not a limit on the whole transfer. When the retries are spent,
+    :class:`PartialDownload` is raised if anything was received (the file is kept), else :class:`NetError`.
+    ``progress(received_bytes, chunk)`` is called for every chunk written."""
+    path = Path(dest)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    level = logging.DEBUG if service in _QUIET else logging.INFO
+    where = _where(url)
+    sleep = sleep or retry_sleep
+    headers_in = dict(kw.pop("headers", None) or {})
+    received, ranges_ok, attempt = 0, False, 0
+    t0 = time.monotonic()
+    while True:
+        msg, retryable = None, False
+        start = received if resume and ranges_ok and received else 0
+        headers = {**headers_in, **({"Range": f"bytes={start}-"} if start else {})}
+        try:
+            with in_flight(secrets), client(service, call=call, timeout=httpx.Timeout(timeout, connect=30.0),
+                                            redirects=redirects) as c, \
+                    c.stream(method, url, headers=headers, **kw) as r:
+                if start and r.status_code == 206:
+                    mode = "ab"
+                else:
+                    r.raise_for_status()
+                    mode, received = "wb", 0
+                ranges_ok = r.status_code == 206 or r.headers.get("accept-ranges", "").lower() == "bytes"
+                with open(path, mode) as fh:
+                    for chunk in r.iter_bytes():
+                        fh.write(chunk)
+                        received += len(chunk)
+                        if progress is not None:
+                            progress(received, chunk)
+            log.log(level, "%s %s %s: HTTP %s, %d bytes to a file, %.1f s", NAMES[service], method, where,
+                    r.status_code, received, time.monotonic() - t0)
+            return received
+        except (httpx.HTTPError, BlockedURL) as e:
+            msg = describe(service, e)
+            retryable = isinstance(e, httpx.TransportError) or (
+                isinstance(e, httpx.HTTPStatusError) and e.response.status_code in _RETRY_STATUS)
+        if not retryable or attempt >= len(waits):
+            break
+        log.warning("%s %s %s: %s after %d bytes; attempt %d of %d in %.0f s, %s", NAMES[service], method, where,
+                    msg, received, attempt + 2, len(waits) + 1, waits[attempt],
+                    "continuing where it stopped" if resume and ranges_ok and received else "from the start")
+        sleep(waits[attempt])
+        attempt += 1
+    log.warning("%s %s %s failed after %.1f s and %d bytes: %s", NAMES[service], method, where,
+                time.monotonic() - t0, received, msg)
+    # Raised outside the handler so the original exception, which holds the URL, is not chained.
+    if received and path.exists():
+        raise PartialDownload(msg, path, received)
     raise NetError(msg)
 
 

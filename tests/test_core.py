@@ -148,7 +148,7 @@ def test_sat_dupes_need_same_satellite(db):
 def test_import_marks_but_keeps_everything(db):
     recs = [qso.normalize(make("BA1AA", "2026-10-10T15:19:00Z", "FT8", "20m")),
             qso.normalize(make("BA1AA", "2026-10-10T15:19:00Z", "FT8", "20m")),
-            qso.normalize(make("BA1AA", "2026-10-10T15:25:00Z", "FT4", "20m"))]
+            qso.normalize(make("BA1AA", "2026-10-10T15:19:40Z", "FT4", "20m"))]  # a sibling mode within the minute
     preview = importer.run(db, recs, dry_run=True)
     assert preview.added == 3 and db.count() == 0
     res = importer.run(db, recs)

@@ -298,6 +298,9 @@ class DXPanel(QWidget):
         zw.setLayout(zones)
         s.row(6, tr("Zones"), zw)
         self.w["gridsquare"] = AutoLineEdit(mono=True)
+        self.w["gridsquare"].setToolTip(tr("One grid, or the two or four grids of a station on a grid line, comma "
+                                           "separated (OM88, OM89): the first goes to GRIDSQUARE, all of them to "
+                                           "VUCC_GRIDS."))
         self.w["gridsquare"].textChanged.connect(lambda *_: self._check_timer.start())
         s.row(7, tr("Grid"), self.w["gridsquare"])
         s.grid.setColumnStretch(1, 1)
@@ -395,9 +398,10 @@ class DXPanel(QWidget):
         self.matrix.setMaximumHeight(118)
         self.matrix.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         wb.add(self.matrix)
-        self.history = QTableWidget(0, 5)
-        self.history.setHorizontalHeaderLabels([tr("Time On"), tr("Band"), tr("Mode"), tr("Sat"), tr("Confirmed")])
-        self.history.horizontalHeaderItem(4).setToolTip(tr("L = LoTW, E = eQSL, Q = QRZ.com, P = paper card"))
+        self.history = QTableWidget(0, 6)
+        self.history.setHorizontalHeaderLabels([tr("Time On"), tr("Band"), tr("Mode"), tr("Sat"), tr("Grid"),
+                                                tr("Confirmed")])
+        self.history.horizontalHeaderItem(5).setToolTip(tr("L = LoTW, E = eQSL, Q = QRZ.com, P = paper card"))
         self.history.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.history.verticalHeader().setVisible(False)
         self.history.verticalHeader().setDefaultSectionSize(20)
@@ -752,6 +756,7 @@ class DXPanel(QWidget):
         q: dict[str, Any] = {"call": callsign.clean(self.call.text()) or None}
         for col in TEXT_COLS:
             q[col] = self._get(col)
+        q.update(qsomod.grid_columns(q.get("gridsquare")))  # "OM88, OM89": the first grid, and all to VUCC grids
         q["time_on"] = self._get("time_on")
         q["time_off"] = self._get("time_off")
         m, s = modes.normalize(self._get("mode"))
@@ -846,7 +851,8 @@ class DXPanel(QWidget):
             if last:
                 for col in FROM_LOG_COLS:
                     if last.get(col):
-                        self._set(col, last[col], auto=True, source=tr("your log"))
+                        self._set(col, qsomod.grids_text(last) if col == "gridsquare" else last[col], auto=True,
+                                  source=tr("your log"))
 
     # ------------------------------------------------------------------ live checks
     def _freq_changed(self) -> None:
@@ -930,8 +936,8 @@ class DXPanel(QWidget):
         q = qsomod.normalize(self.values())
         if not q.get("call") or not q.get("band"):
             return None
-        return dupes.check(self.db, q, block_s=self.prefs.get("block_seconds"),
-                           warn_s=self.prefs.get("warn_hours") * 3600, exclude_id=self.edit_id)
+        return dupes.check(self.db, q, block_s=self.prefs.get("block_seconds"), warn_s=self.prefs.warn_seconds(),
+                           exclude_id=self.edit_id)
 
     @applog.timed("Entry form checks")
     def _refresh_checks(self) -> None:
@@ -1107,10 +1113,10 @@ class DXPanel(QWidget):
             cfm = "".join(letter for col, letter in (("lotw_qsl_rcvd", "L"), ("eqsl_qsl_rcvd", "E"),
                                                     ("qrz_qsl_rcvd", "Q"), ("qsl_rcvd", "P")) if r.get(col) == "Y")
             vals = [fmt("time_on", r.get("time_on"))[:16], bands.display_band(r.get("band")), mode_text(r),
-                    r.get("sat_name") or "", cfm]
+                    r.get("sat_name") or "", qsomod.grids_text(r), cfm]
             for j, v in enumerate(vals):
                 it = QTableWidgetItem(v)
-                if j == 4 and v:
+                if j == 5 and v:
                     it.setForeground(QColor(t.ok))
                 if j == 0:
                     it.setFont(theme.mono_font())
@@ -1296,6 +1302,7 @@ class DXPanel(QWidget):
         self.rx_sync.blockSignals(False)
         for col in TEXT_COLS:
             self._set(col, q.get(col))
+        self._set("gridsquare", qsomod.grids_text(q))  # with its other VUCC grids
         self._set_device({"rig": q.get("my_rig"), "antenna": q.get("my_antenna"), "power": q.get("tx_pwr")})
         self.w["time_on"].set_iso(q.get("time_on"))
         self.w["time_off"].set_iso(q.get("time_off") or q.get("time_on"))

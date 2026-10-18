@@ -227,21 +227,49 @@ def test_an_ordinary_adif_file_is_imported_as_before(qtbot, tmp_path, log):
     assert dlg.ok.text() == "Import" and not dlg.merge.isChecked()
 
 
+def test_a_complete_report_moves_the_positions_and_a_filtered_one_does_not(dialog, qtbot, tmp_path):
+    make, db, _ids = dialog
+    dlg = make()
+    box = dlg.positions_box
+    assert box.isChecked() and box.isEnabled()
+    assert "LoTW uploads from 2026-10-16" in box.text() and "LoTW confirmations from 2026-10-15" in box.text()
+    dlg._run()
+    assert db.sync_get("lotw", "last_qsorx") == "2026-10-16 14:37:32"  # LoTW's own header value
+    assert db.sync_get("lotw", "last_qsl") == "2026-10-15 13:53:39"  # the newest confirmation it holds
+    assert db.sync_get("lotw", "last_qsl:origin") == "report lotwreport.adi"
+    assert set(dlg.positions_set) == {("lotw", "last_qsl"), ("lotw", "last_qsorx")}
+    filtered = tmp_path / "part.adi"
+    filtered.write_text(REPORT.replace("QSO RX SINCE: 1900-01-01 00:00:00 (user supplied value)",
+                                       "QSO START DATE: 2026-10-01 (user supplied value)\nQSO RX SINCE: 1900-01-01 "
+                                       "00:00:00 (user supplied value)"), encoding="utf-8")
+    prefs = Prefs(QSettings(str(tmp_path / "settings2.ini"), QSettings.Format.IniFormat))
+    dlg = import_dialog.ImportDialog(db, prefs, str(filtered))
+    qtbot.addWidget(dlg)
+    assert not dlg.positions_box.isEnabled() and "filter" in dlg.positions_box.text() and dlg.proposed == {}
+
+
 # ------------------------------------------------------------------ after applying
-def test_an_applied_report_is_reported_selected_and_its_missing_qsos_offered(qtbot, log, monkeypatch, tmp_path):
+def test_an_applied_report_is_reported_selected_and_its_missing_qsos_added(qtbot, log, monkeypatch, tmp_path):
+    """The records not in the log are added by themselves (none is within a minute of a QSO of its call), with
+    LoTW's states: C confirmed, D only uploaded; the row selects the new confirmation and the added QSOs."""
     db, ids = log
     prefs = Prefs(QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
     parent = QWidget()
     qtbot.addWidget(parent)
     ctrl = sync_controller.SyncController(db, prefs, parent)
-    reports, selected, offered = [], [], []
+    reports, selected = [], []
     monkeypatch.setattr(ctrl, "report", lambda svc, kind, text, **kw: reports.append((svc, kind, text(str), kw)))
-    monkeypatch.setattr(ctrl, "_show_unmatched", lambda svc, res: offered.append((svc, len(res.unmatched))))
     ctrl.confirmed.connect(lambda svc, got: selected.append((svc, got)))
     res = apply.apply_lotw_report(db, _records(), sats.load())
+    before = db.count()
     ctrl.lotw_report_applied("lotwreport.adi", res)
     svc, kind, text, kw = reports[0]
-    assert (svc, kind) == ("lotw", "ok") and kw["ids"] == [ids["A"]]
-    assert text.startswith("lotwreport.adi: 1 new confirmation") and text.endswith("2 not in your log")
-    assert selected == [("lotw", [ids["A"]])] and offered == [("lotw", 2)]
+    assert (svc, kind) == ("lotw", "ok") and kw["ids"][0] == ids["A"] and len(kw["ids"]) == 3
+    assert text.startswith("lotwreport.adi: 1 new confirmation") and text.endswith("2 QSOs added to your log")
+    assert selected == [("lotw", [ids["A"]])] and db.count() == before + 2
+    by_call = {q["call"]: q for q in db.iter_all()}
+    c, d = by_call["BH4TSC"], by_call["BD7TSD"]
+    assert (c["lotw_qsl_rcvd"], c["lotw_qslrdate"], c["lotw_qsl_sent"]) == ("Y", "2026-10-15", "Y")
+    assert (d["lotw_qsl_rcvd"], d["lotw_qsl_sent"], d["qsl_rcvd"], d["mode"]) == (None, "Y", None, "FT8")
+    assert len(list(db.backups())) == 1  # the adding saved a backup first
 

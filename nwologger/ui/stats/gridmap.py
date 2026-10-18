@@ -135,9 +135,12 @@ class GridMapView(QWidget):
         self._pix: OrderedDict[tuple, QPixmap] = OrderedDict()
         self.fetcher = maptiles.Fetcher(lambda *a: self._emit_tile(*a))
         self._tile_arrived.connect(self._store_tile, Qt.ConnectionType.QueuedConnection)
-        self._drag: QPointF | None = None
+        self._drag: QPointF | None = None  # a rotation in progress, with the right or middle button
+        self._press: QPointF | None = None  # a left press, which selects a square on release unless it moved
         self._moved = False
         self._hover: str | None = None
+        self.badge: str | None = None  # the counts shown in the bottom right corner, in the sky
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)  # the right button rotates
         self._mono = theme.mono_font()
         self._geometry_key = None
         self._geometry: dict[tuple, object] = {}
@@ -304,7 +307,7 @@ class GridMapView(QWidget):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
         if self.isWindow() and self._full_screen:
-            event.ignore()  # closing the full-screen window brings the map back to its tab
+            event.ignore()  # closing the full-screen window (an export view) brings the map back
             self.full_screen_toggled.emit()
             return
         super().closeEvent(event)
@@ -320,6 +323,7 @@ class GridMapView(QWidget):
         view.caption = f"{APP_NAME} {__version__}"
         view.zoom, view.center_lon, view.center_lat = self.view_state()
         view.home, view.radius_km, view.highlight = self.home, self.radius_km, self.highlight
+        view.badge = self.badge
         view.set_cells(self.cells)
         view.provider, view.api_key = self.provider, self.api_key
         view._pix = OrderedDict(self._pix)  # the tiles already here; the rest come from the cache or the provider
@@ -861,7 +865,7 @@ class GridMapView(QWidget):
         painter.setPen(_hairline(QColor(150, 195, 225, 120)))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(sphere)
-        self._draw_credit(painter)
+        self._draw_badge(painter, self._draw_credit(painter))
 
     def _night_image(self) -> QImage:
         """The night side, with a narrow, clear edge at the terminator (see :func:`GlobeRaster.night`)."""
@@ -945,6 +949,9 @@ class GridMapView(QWidget):
             font.setBold(True)
             font.setPixelSize(100)
             path = QPainterPath()
+            # The bold system font on macOS draws M, N and P (also A, B, K, Q, X) with strokes that overlap each
+            # other; Qt's default odd-even rule leaves those overlaps unfilled, so the letters showed notches.
+            path.setFillRule(Qt.FillRule.WindingFill)
             path.addText(QPointF(), font, field)
             self._field_glyphs[field] = path, path.boundingRect()
         path, bounds = self._field_glyphs[field]
@@ -1095,7 +1102,8 @@ class GridMapView(QWidget):
                 self._label_text(painter, QPointF(cx, base), call, self._label_font("call", pt, not sure),
                                  call_color if sure else worked_color, center, ("call", pt, sure, call))
 
-    def _draw_credit(self, painter: QPainter) -> None:
+    def _draw_credit(self, painter: QPainter) -> QRectF:
+        """The imagery credit in the bottom left corner; returns its box."""
         if self.provider is None:
             text = tr("Grid only: no imagery (Preferences → Map)")
         elif self.provider.key in self.fetcher.stopped:
@@ -1108,11 +1116,34 @@ class GridMapView(QWidget):
         metrics = painter.fontMetrics()
         width = min(self.width() - 12, metrics.horizontalAdvance(text) + 12)
         text = metrics.elidedText(text, Qt.TextElideMode.ElideRight, max(1, width - 12))
-        box = QRectF(self.width() - width - 6, self.height() - metrics.height() - 8, width, metrics.height() + 4)
+        box = QRectF(6, self.height() - metrics.height() - 8, width, metrics.height() + 4)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(0, 0, 0, 120))
         painter.drawRoundedRect(box, 4, 4)
         painter.setPen(QColor(255, 255, 255, 220))
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        return box
+
+    def _draw_badge(self, painter: QPainter, credit: QRectF) -> None:
+        """The counts (confirmed, worked only, VUCC or GridMaster) in the bottom right corner, in the sky outside the
+        globe, so they cover no square; above the credit when the view is too narrow for both side by side."""
+        if not self.badge:
+            return
+        font = QFont(self.font())
+        font.setPointSizeF(10)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        width = min(self.width() - 12, metrics.horizontalAdvance(self.badge) + 18)
+        text = metrics.elidedText(self.badge, Qt.TextElideMode.ElideRight, max(1, width - 18))
+        bottom = self.height() - 8
+        if self.width() - width - 8 < credit.right() + 8:
+            bottom = credit.top() - 6
+        box = QRectF(self.width() - width - 8, bottom - metrics.height() - 8, width, metrics.height() + 8)
+        painter.setPen(QPen(QColor(255, 255, 255, 70), 1))
+        painter.setBrush(QColor(0, 0, 0, 140))
+        painter.drawRoundedRect(box, 6, 6)
+        painter.setPen(QColor(255, 255, 255, 235))
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def describe(self, sq: str) -> str:
@@ -1179,10 +1210,14 @@ class GridMapView(QWidget):
     def wheelEvent(self, event) -> None:  # noqa: N802 - Qt API
         self.zoom_at(event.position(), event.angleDelta().y() / 120 * 0.35)
 
+    DRAG_BUTTONS = (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.setFocus()
+        self.setFocus()
+        if event.button() in self.DRAG_BUTTONS:
             self._drag, self._moved = event.position(), False
+        elif event.button() == Qt.MouseButton.LeftButton:
+            self._press = event.position()  # a click selects a square; a drag with the left button does nothing
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt API
         if self._drag is not None:
@@ -1205,23 +1240,29 @@ class GridMapView(QWidget):
                 QToolTip.hideText()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if event.button() == Qt.MouseButton.LeftButton and self._drag is not None:
-            if not self._moved:
+        if event.button() in self.DRAG_BUTTONS and self._drag is not None:
+            self._drag = None
+            self.update()  # Restore full image quality after interactive rotation.
+        elif event.button() == Qt.MouseButton.LeftButton and self._press is not None:
+            moved = (event.position() - self._press).manhattanLength() > 4
+            self._press = None
+            if not moved:
                 sq = self.square_at(event.position())
                 if sq in self.cells:
                     self.square_clicked.emit(sq)
-            self._drag = None
-            self.update()  # Restore full image quality after interactive rotation.
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt API
-        self.zoom_at(event.position(), 1)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.zoom_at(event.position(), 1)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
         mid = QPointF(self.width() / 2, self.height() / 2)
         key = event.key()
         if event.matches(QKeySequence.StandardKey.FullScreen) or key == Qt.Key.Key_F11 or \
-                (key == Qt.Key.Key_Escape and self.isWindow() and self._full_screen):
+                (key == Qt.Key.Key_Escape and self._full_screen):
             self.full_screen_toggled.emit()
+        elif key == Qt.Key.Key_Escape:
+            event.ignore()  # the pane decides: back into the tab when it is a window
         elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.zoom_at(mid, 0.5)
         elif key == Qt.Key.Key_Minus:

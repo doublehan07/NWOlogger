@@ -35,6 +35,31 @@ def logfile(tmp_path):
     applog.shutdown()
 
 
+def test_a_crash_file_from_the_last_run_is_reported_and_kept(tmp_path):
+    """faulthandler writes a crash's native stack beside the log; the next start notes it and keeps it."""
+    import faulthandler
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / applog.CRASH_FILE).write_text("Fatal Python error: Segmentation fault\n", encoding="utf-8")
+    path = applog.setup(directory=logs)
+    try:
+        assert faulthandler.is_enabled()
+        text = _text(path)
+        assert "The last run ended in a crash" in text and applog.PREVIOUS_CRASH_FILE in text
+        assert (logs / applog.PREVIOUS_CRASH_FILE).read_text(encoding="utf-8").startswith("Fatal Python error")
+        assert (logs / applog.CRASH_FILE).stat().st_size == 0  # this run's, empty so far
+    finally:
+        applog.shutdown()
+    assert not (logs / applog.CRASH_FILE).exists()  # a clean run leaves nothing behind
+    path.unlink()
+    path = applog.setup(directory=logs)
+    try:
+        assert "ended in a crash" not in _text(path)
+    finally:
+        applog.shutdown()
+
+
 def _text(path) -> str:
     for h in logging.getLogger().handlers:
         h.flush()

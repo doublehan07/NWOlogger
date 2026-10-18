@@ -171,11 +171,11 @@ def test_overlapping_service_imports_merge_confirmations_and_preserve_local_edit
 
     changes_before = db.conn.total_changes
     for service in DOWNLOADS:
-        controller._add_unmatched(service, [])
+        controller._added_later(service, [])
     assert db.conn.total_changes == changes_before
     assert list(db.iter_all()) == [] and messages == []
 
-    controller._add_unmatched("lotw", candidates["lotw"])
+    controller._added_later("lotw", candidates["lotw"])
     qid = list(db.iter_all())[0]["id"]
     extra = qso.load_extra(db.get(qid))
     extra["APP_LOCAL_REFERENCE"] = "added while dialogs are open"
@@ -183,8 +183,8 @@ def test_overlapping_service_imports_merge_confirmations_and_preserve_local_edit
                     "gridsquare": "OM89aa", "extra": qso.dump_extra(extra)}, track_service=False)
 
     # The remaining dialogs contain stale copies of the original contact details.
-    controller._add_unmatched("eqsl", candidates["eqsl"])
-    controller._add_unmatched("qrz", candidates["qrz"])
+    controller._added_later("eqsl", candidates["eqsl"])
+    controller._added_later("qrz", candidates["qrz"])
 
     saved = list(db.iter_all())
     assert len(saved) == 1 and saved[0]["id"] == qid
@@ -226,7 +226,7 @@ def test_service_import_preserves_distinct_contacts_within_match_window(db, qtbo
         existing_id = db.insert(qso.from_adif(record(call, TIME_ON="161900", NOTES="Typed locally",
                                                     NAME="Local Operator", GRIDSQUARE="OM89aa")))
 
-    controller._add_unmatched("lotw", candidates)
+    controller._added_later("lotw", candidates)
 
     rows = list(db.iter_all())
     assert len(rows) == (2 if initial_state == "empty" else 3)

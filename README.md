@@ -43,10 +43,10 @@ The grid map (Statistics tab, Ctrl+4) shows every 4-character Maidenhead square 
 | *Zoomed in: names and calls at full size. A worked-only square's call is in italics. Your square is outlined, and the dashed circle marks 200 km around it.* | *All bands on the whole globe. The night side for the current UTC time ends at a clear grey line.* |
 
 - **Squares:** green when confirmed by the sources you tick (LoTW by default; any mix of eQSL, QRZ.com and paper), amber when only worked, each with the first call. Names and calls appear about half a zoom step inside a whole-country view and grow as you zoom in. Every call has the same size and thin type, so a short call is no larger than a long one and all of them appear together. Worked squares get a light edge once they are big enough, so neighbours stay apart. Two-letter field names sit at 8% opacity over their 100 squares.
-- **Filters:** satellite, one band or all bands, and mode group. By default only QSOs made within 200 km of your grid count (VUCC, GridMaster). The count line shows confirmed and worked squares and VUCC progress.
+- **Filters:** a satellite or an orbit (LEO, MEO, HEO, GEO, or every satellite but the geostationary ones; the list holds every satellite with its QSO count), one band or all bands, and mode group. *Callsigns* and *Grids* list the station callsigns and the places your log says you operated from, with counts: tick several calls when you hold more than one, and *Within 200 km* ticks the places VUCC and GridMaster count (the default). The count line in the map's corner shows confirmed and worked squares and VUCC progress, and goes into the saved PNG.
 - **Regions:** around my grid, China & around, CONUS 488 (GridMaster's squares outlined, with the count), Europe, Japan, World.
-- **Moving around:** drag or the arrow keys rotate the globe. The wheel, a double-click or +/− zoom. A click shows the square's QSOs in the log. *Full screen* shows the map alone, with *Save as PNG* in its corner (Esc comes back).
-- **Save as PNG:** the map as you see it, at twice its size in pixels, named after you (`<call>-grid-map-NWOlogger.png`), with NWOlogger and its version in a band above the map.
+- **Moving around:** drag with the right or middle mouse button (Ctrl + drag on a trackpad) or use the arrow keys to rotate the globe; a left click shows the square's QSOs in the log. The wheel, a double-click or +/− zoom. *Open in a window* puts the map and its controls in a window of their own, whose size and place are remembered; its full-screen button or F11 fills the screen, and Esc comes back.
+- **Save as PNG:** the map as you see it, at twice its size in pixels, named after the ticked callsigns and places (`BI1NWO at ON80 - NWOlogger 0.1.9.png`, with *et al* when there are several), with NWOlogger and its version in a band above the map.
 - **Day/night:** shades the night side for the current UTC time, squares included, with a clear edge along the grey line (as on PSK Reporter's map). It updates by itself and remembers whether it is on (on by default). Stars and a faint Milky Way sit behind the globe.
 - **Imagery** (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (a free developer key). Imagery, squares and the night side are drawn at your display's own resolution, Retina included. Tiles load in the background and are kept in the system cache folder (up to 300 MB), so views seen before open offline.
 
@@ -60,7 +60,8 @@ See [INSTALLATION.md](INSTALLATION.md) for setup, first-run steps, troubleshooti
   - Columns are plain ADIF names, so the log can be queried with any SQLite tool.
   - The log is backed up automatically on open and before every import or bulk edit.
   - Deleting QSOs doesn't shrink the file; File → Compact log file rebuilds it without the space they left, after a backup.
-- **ADIF import and export:** export all, selected, or filtered QSOs. Fields NWOlogger doesn't know are kept and written back out. A LoTW report saved from the LoTW website (`lotwreport.adi`) is applied like a LoTW download: the QSOs in your log get LoTW's confirmation and its date, and the ones not in your log are offered to add.
+  - The file records which NWOlogger created it and last wrote it (About → System info). Opening it with an older NWOlogger than the one that last wrote it warns first, and a file that is not an NWOlogger log is refused rather than altered. Help → Show log file folder and Show backups folder open the folders.
+- **ADIF import and export:** export all, selected, or filtered QSOs. Fields NWOlogger doesn't know are kept and written back out. A LoTW report saved from the LoTW website (`lotwreport.adi`) is applied like a LoTW download: the QSOs in your log get LoTW's confirmation and its date, and the ones not in your log are added (a possible duplicate waits to be ticked). An imported log also sets where downloads resume, from the confirmations it holds (a day before the newest one, never later than a position you already have); a LoTW report uses its own header timestamps.
 - **MacLoggerDX migration** straight from its database. It keeps the LoTW, eQSL, QRZ and HRDLog upload history and the paper card dates that MLDX's own ADIF export drops.
   - MacLoggerDX only records the uploads it made itself. A QSO that LoTW or QRZ.com confirmed must have been uploaded there, so it is marked uploaded too (ADIF imports get the same rule); the import preview counts them. Download from LoTW and QRZ.com before your first upload to mark the rest.
 - **Search** across several criteria at once, with `?` / `*` wildcards on callsigns. Mode search is vague by default (`SSB` finds USB/LSB, `DIGI` finds FT8), with an *Exact* option. Searches can be saved.
@@ -76,30 +77,33 @@ See [INSTALLATION.md](INSTALLATION.md) for setup, first-run steps, troubleshooti
   - Time Off follows Time On + 1 min. A Time Off earlier than Time On is refused. *Now* next to Time On goes back to the live clock.
   - Fields stay set for a whole satellite pass (*Keep*). *Clear* empties the contact and keeps your Device section.
   - An empty rig, antenna or power uses the station profile's, shown in grey.
+  - One *Grid* field takes the two or four grids of a station on a grid line (`OM88, OM89`, also with `;` or `/`): the first goes to `GRIDSQUARE`, all of them to `VUCC_GRIDS`, and the form, the log's Grid column, the compare window and Worked before show them together. Your own grids in the station profile work the same way.
 - **Grid map** (Statistics tab, Ctrl+4): every square you worked on a rotatable globe over satellite imagery, confirmed in green and worked in amber, with the first call in each square. See [Grid map](#grid-map) above.
 - **Similar calls** in Worked before, while you type: the same call, calls that start with or contain what you typed, and calls one character away (a typo, or a missing letter or digit). Your log comes first (most recent first), then calls QRZ.com / HamQTH know, then the calls of ARRL's [LoTW user list](https://lotw.arrl.org/lotw-user-activity.csv) and eQSL's AG member list (about 320,000 calls, with the date of each call's last LoTW upload), then MASTER.SCP. When a call is not found on QRZ.com / HamQTH, up to three MASTER.SCP calls one letter away are looked up there. With `*` or `?` the call field searches every source like the log's search box (`BA*K` → BA1PK, BA8BLK).
   - QRZ.com and HamQTH can only look up a complete call, so the lists are downloaded instead (next to the log file, refreshed weekly; File → Update LoTW and eQSL call lists) and searched on your computer while you type.
-- **Station profiles:** closing Preferences with unsaved station changes offers Save, Discard or Cancel, including when you use the window's close button or Esc.
+- **Station profiles:** *Add from my log…* lists every station callsign + grid pair your QSOs carry, with counts, and creates a profile for each one you tick. Importing never moves a QSO to a profile: a record keeps the station callsign and grid it came with, and the import preview says how many records have none (the only ones the chosen profile fills). Closing Preferences with unsaved station changes offers Save, Discard or Cancel, including when you use the window's close button or Esc.
 - **Operators:** an Operator field in the entry form.
   - Personal stations fill in your call.
   - Club stations must enter the operator, which then stays for the session.
   - On a new UTC day or after a 3-hour break, the field turns amber once to be checked.
 - **Strict dupe checking:**
   - Only the same call, band and exact mode within 30 seconds blocks logging.
-  - The same mode later, or a related mode (SSB vs USB, USB vs LSB, FT8 vs FT4), only warns.
+  - The same mode within the next minute (the warning window, set in Preferences; an old 24-hour setting becomes 1 minute), or a related mode (SSB vs USB, USB vs LSB, FT8 vs FT4), only warns.
   - A side-by-side compare window shows a whole group of possible dupes, one column per QSO. Edit the cells there, merge them field by field (click the value to keep on each row that differs; confirmations and upload states are combined), delete one, or mark them as not dupes, also all of them at once (asks twice). Edit → Merge selected… merges 2–5 selected QSOs with the same call.
 - **Bulk edit** of a selection, with a preview that keeps up while you type, even for thousands of QSOs. A time or date it can't read is refused, never written. A backup is saved first.
 - **Electronic confirmations, tracked per service:** LoTW (via TQSL), eQSL and QRZ.com Logbook (upload and download), and HRDLog.net (upload only). Satellite names are translated per service: the ISS is `ARISS` for LoTW and `ISS` for eQSL.
   - A call is **green** when LoTW confirmed the QSO (eQSL, QRZ.com and paper cards don't make it green). It stays green, and a dupe red, when the row is selected.
   - **Uploads are always your choice.** *Sync everything* only downloads. QSOs not yet uploaded to all four services are shown in grey (the tooltip names the missing services); the preset *Not uploaded to every service* lists them, and *Upload selected* sends them.
   - Downloads also record what is already uploaded: LoTW's report of accepted QSOs and the QRZ.com logbook mark those QSOs as uploaded. eQSL (it only offers your inbox) and HRDLog (no download) can't tell NWOlogger what you uploaded there before.
-  - Adding downloaded QSOs to an empty log keeps their LoTW, eQSL or QRZ.com confirmations. Failed downloads can be retried immediately; only a successfully applied download starts the wait between downloads.
+  - **Downloaded QSOs not in your log are added** (LoTW, eQSL, QRZ.com, and a LoTW report imported from a file), with the service's confirmation. A record within a minute of a logged QSO with the same call, whatever its band, mode or satellite, waits in a *Possible duplicates* window instead: tick the ones to add, or open the QSO it may duplicate. Adding downloaded QSOs to an empty log keeps their LoTW, eQSL or QRZ.com confirmations.
+  - **Downloads survive a bad connection:** every download goes to a file next to the log first (`downloads/`, beside `backups/`; the last complete file per service and any unfinished one are kept), with retries and continuation where the service allows it: LoTW in yearly parts, eQSL by byte range, QRZ.com page by page. What arrived is applied even when the rest fails, and the next run continues from there. Failed downloads can be retried immediately; only a successfully applied download starts the wait between downloads. *Download from a date…* fetches LoTW confirmations from a day you choose.
+  - **Sync positions** (Preferences → Sync positions) show where each service's next download continues: LoTW's confirmation and upload timestamps, eQSL's day, QRZ.com's last log id. They are locked; *Unlock* lets you move one, in a red danger zone, and *Lock and save* writes it.
   - The first LoTW download reuses its full QSO report for confirmations when the report provides the required timestamps, avoiding a second full download.
   - Every outcome goes to one **Sync results** window that never blocks the app (QSL → Show sync results). A row that a setting can fix has *Open Preferences*.
   - **Sync history** keeps every run; *Clear history…* (or QSL → Clear sync history…) deletes it for the services you choose, e.g. only QRZ.com. Your QSOs and their upload and confirmation status are not touched.
   - Checked before anything is sent: the TQSL station location (Preferences offers the locations TQSL has) and the eQSL QTH nickname of each station profile.
   - TQSL can wait in its own window (e.g. for your certificate passphrase); *Cancel* stops it, and quitting NWOlogger asks first, then stops it instead of waiting.
-- **Paper QSL cards** tracked separately (sent and received dates, via bureau, direct or manager), with a "to send" queue.
+- **Paper QSL cards** tracked separately (sent and received dates, via bureau, direct or manager), with a "to send" queue. *Queue replies to received cards…* puts the QSOs with a card received and none sent in the queue; the context menu's *Mark paper QSL not sent / not received* clear one direction.
 - **Callsign lookup:** offline country file (`cty.csv`, updated weekly), then QRZ.com XML with HamQTH as fallback. Chinese provinces are normalised to standard codes (BJ, SC, …).
 - **Contest mode (N1MM style):**
   - Contest picked from a dropdown: CQ WW, CQ WPX, IARU HF, ARRL DX, ARRL 10 m, All Asian, CQ WW VHF, generic templates, and your own.
@@ -146,23 +150,24 @@ NWOlogger/
 │   │   ├── grids.py, globe.py, solar.py              grid statistics, spherical projection, solar position
 │   │   ├── similar.py         similar calls for Worked before (log, QRZ.com / HamQTH cache, call lists, MASTER.SCP)
 │   │   ├── calllists.py       LoTW user and eQSL AG member lists: download and fast search
-│   │   ├── net.py, secrets.py HTTPS to the services only, no secrets in messages; keychain access
+│   │   ├── net.py, secrets.py HTTPS to the services only, downloads to files with retries and resume, no secrets in messages; keychain access
 │   │   ├── sats.py, propagation.py                satellites and per-service names; TQSL propagation modes
 │   │   ├── operators.py       personal / club station operator
 │   │   ├── devices.py         rigs, antennas and setups for the Device section
 │   │   ├── lookup/            QRZ.com XML, HamQTH
-│   │   ├── sync/              LoTW + TQSL, eQSL, QRZ.com Logbook, HRDLog; applying confirmations
+│   │   ├── sync/              LoTW + TQSL, eQSL, QRZ.com Logbook, HRDLog; applying confirmations; positions.py: where downloads resume
 │   │   └── contest/           scoring engine, built-in definitions (defs/*.json), Check Partial, Cabrillo
 │   ├── ui/                    Qt windows and widgets
 │   │   ├── main_window.py     toolbar, menus, tabs, actions
 │   │   ├── entry/dx_panel.py  the DX entry form
 │   │   ├── log/               log table model / view, filter bar, advanced search
 │   │   ├── contest/           contest entry line and panes, setup, user-defined contests
-│   │   ├── stats/             globe view (gridmap.py); imagery, squares and night per pixel (globeraster.py); outlines (globegeometry.py)
+│   │   ├── stats/             the Statistics tab's filters and the map in its own window (statistics_tab.py); globe view (gridmap.py); imagery, squares and night per pixel (globeraster.py); outlines (globegeometry.py)
 │   │   ├── dupe_dialog.py     side-by-side dupe groups: compare, edit, merge field by field
 │   │   ├── operator_field.py  the Operator field (personal / club station rules)
 │   │   ├── list_picker.py     "Other mode… / Other satellite…" search
-│   │   ├── bulk_edit.py, qsl_paper.py, import_dialog.py, prefs_dialog.py, about_dialog.py, …
+│   │   ├── sync_controller.py, sync_dialogs.py   downloads and uploads from the window; possible duplicates among downloaded QSOs
+│   │   ├── bulk_edit.py, qsl_paper.py, import_dialog.py, prefs_dialog.py, profiles_from_log.py, about_dialog.py, …
 │   │   └── theme.py           colours, light / dark stylesheet, icons
 │   └── resources/             cty.csv, sats.json, icons (Lucide), brand/ (app icon), translations/zh_CN.json
 ├── tests/                     pytest suite; fixtures/sample.adi is a synthetic log for trying the app
@@ -189,7 +194,7 @@ NWOlogger/
 ## Credits
 
 - **Authors:** Han Zhang (BI1NWO), Claude Opus 5.5 Extra High (Anthropic), and GPT-6.1 Sol Ultra (OpenAI). Copyright © 2026 Han Zhang.
-- **Special thanks** to the [BY1QH](https://www.qrz.com/db/BY1QH) club station.
+- **Special thanks** to the [BY1QH](https://www.qrz.com/db/BY1QH) club station, whose logo is the NWOlogger icon. The logo was designed by 王亦童 (BI1TYE).
 - **Data:** AD1C country files ([country-files.com](https://www.country-files.com/)), ARRL LoTW / TQSL lists, Super Check Partial.
 - **Software:** icons by [Lucide](https://lucide.dev/) (ISC); Qt for Python (PySide6).
 - **Grid-map visualization** inspired by [GridmasterMap (FG8OJ)](https://gridmaster.fr/) and [GridTracker](https://gridtracker.org/).

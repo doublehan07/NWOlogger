@@ -161,14 +161,31 @@ def test_drag_rotates_globe_while_preserving_grabbed_point(view, qtbot):
     start = QPoint(view.width() // 2 + 30, view.height() // 2 - 20)
     end = start + QPoint(90, 35)
     anchor = view.to_lonlat(QPointF(start))
-    qtbot.mousePress(view, Qt.MouseButton.LeftButton, pos=start)
+    qtbot.mousePress(view, Qt.MouseButton.RightButton, pos=start)
     qtbot.mouseMove(view, pos=end)
-    qtbot.mouseRelease(view, Qt.MouseButton.LeftButton, pos=end)
+    qtbot.mouseRelease(view, Qt.MouseButton.RightButton, pos=end)
     assert view.center_lon != 0 and view.center_lat != 25
     new_pos = view.to_screen(*anchor)
     assert new_pos.x() == pytest.approx(end.x(), abs=1e-3)
     assert new_pos.y() == pytest.approx(end.y(), abs=1e-3)
     assert view._drag is None
+
+
+def test_left_button_never_rotates_and_the_middle_button_does(view, qtbot):
+    view.zoom = 4
+    view.center_lat = 25
+    before = view.view_state()
+    start = QPoint(view.width() // 2 + 30, view.height() // 2 - 20)
+    end = start + QPoint(90, 35)
+    qtbot.mousePress(view, Qt.MouseButton.LeftButton, pos=start)
+    qtbot.mouseMove(view, pos=end)
+    qtbot.mouseRelease(view, Qt.MouseButton.LeftButton, pos=end)
+    assert view.view_state() == before and view._drag is None and view._press is None
+    qtbot.mousePress(view, Qt.MouseButton.MiddleButton, pos=start)
+    qtbot.mouseMove(view, pos=end)
+    qtbot.mouseRelease(view, Qt.MouseButton.MiddleButton, pos=end)
+    assert view.view_state() != before and view._drag is None
+    assert view.contextMenuPolicy() == Qt.ContextMenuPolicy.NoContextMenu  # the right button is for rotating
 
 
 def test_keyboard_rotates_and_zooms_and_restored_state_is_validated(view, qtbot):
@@ -416,14 +433,14 @@ def test_scaled_display_renders_at_its_own_resolution_up_to_twice(view, monkeypa
     assert view._raster_scale(frame) == frame
     start = QPoint(view.width() // 2, view.height() // 2)
     end = start + QPoint(60, 25)
-    qtbot.mousePress(view, Qt.MouseButton.LeftButton, pos=start)
+    qtbot.mousePress(view, Qt.MouseButton.RightButton, pos=start)
     qtbot.mouseMove(view, pos=end)
     view.grab()
     # Lines and text stay sharp while dragging; imagery and squares are computed at one pixel per point.
     assert view._frame.devicePixelRatio() == frame
     assert view._raster_scale(frame, moving=True) == 1.0
     before_release = len(updates)
-    qtbot.mouseRelease(view, Qt.MouseButton.LeftButton, pos=end)
+    qtbot.mouseRelease(view, Qt.MouseButton.RightButton, pos=end)
     assert len(updates) > before_release
     view.grab()
     assert view._frame.devicePixelRatio() == frame

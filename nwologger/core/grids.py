@@ -145,13 +145,82 @@ def _confirmed_by(q: dict, sources: Iterable[str]) -> str | None:
     return None
 
 
+def location_key(q: dict) -> str:
+    """Where a QSO was made, as the log records it: its MY_VUCC_GRIDS (``OM32,OM33``, a station on a grid line)
+    or its MY_GRIDSQUARE, upper case; "" when the log doesn't say."""
+    vucc = (q.get("my_vucc_grids") or "").upper().replace(" ", "")
+    return vucc or (q.get("my_gridsquare") or "").strip().upper()
+
+
+def my_station_places(db) -> list[tuple[str, str, int]]:
+    """Every station callsign + place pair in the log with its QSO count, most QSOs first; the place is the
+    :func:`location_key` (case folded, so ON80eb and ON80EB are one row), "" when the QSOs don't say.
+    Preferences → Station profiles → Add from my log… offers a profile for each."""
+    counts: dict[tuple[str, str], int] = {}
+    for call, grid, vucc, n in db.conn.execute(
+            "SELECT UPPER(station_callsign), UPPER(COALESCE(my_gridsquare, '')), UPPER(COALESCE(my_vucc_grids, '')), "
+            "COUNT(*) FROM qso WHERE station_callsign IS NOT NULL AND station_callsign != '' GROUP BY 1, 2, 3"):
+        key = (call, location_key({"my_gridsquare": grid, "my_vucc_grids": vucc}))
+        counts[key] = counts.get(key, 0) + n
+    return sorted(((c, p, n) for (c, p), n in counts.items()), key=lambda r: (-r[2], r[0], r[1]))
+
+
+def my_stations(db) -> list[tuple[str, int]]:
+    """Every station callsign in the log with its QSO count, most QSOs first: one operator often holds more than
+    one call (BI1NWO is also AI6OT), and a portable call (VR2/BD1AJF) is its own entry, as logged."""
+    rows = db.conn.execute("SELECT UPPER(station_callsign) AS c, COUNT(*) FROM qso WHERE station_callsign IS NOT NULL "
+                           "AND station_callsign != '' GROUP BY c ORDER BY 2 DESC, c")
+    return [(r[0], r[1]) for r in rows]
+
+
+def my_locations(db, calls: Iterable[str] | None = None) -> list[tuple[str, int]]:
+    """Every place the log says you operated from (see :func:`location_key`), with its QSO count, most QSOs first,
+    limited to the given station calls when some are given."""
+    calls = [c.upper() for c in calls] if calls is not None else None
+    sql = ("SELECT k, COUNT(*) FROM (SELECT UPPER(COALESCE(NULLIF(REPLACE(my_vucc_grids, ' ', ''), ''), "
+           "my_gridsquare)) AS k, UPPER(station_callsign) AS c FROM qso) WHERE k IS NOT NULL AND k != ''")
+    args: list = []
+    if calls:
+        sql += f" AND (c IS NULL OR c = '' OR c IN ({','.join('?' * len(calls))}))"
+        args.extend(calls)
+    rows = db.conn.execute(sql + " GROUP BY k ORDER BY 2 DESC, k", args)
+    return [(r[0], r[1]) for r in rows]
+
+
+def distance_from(home: str | None, key: str) -> float | None:
+    """Kilometres from the home grid's centre to a location's first grid: 0 inside the home square, which VUCC
+    counts as one place; None without a home or a readable grid."""
+    first = key.split(",")[0].strip() if key else ""
+    if not home or not first:
+        return None
+    if square(home) is not None and square(home) == square(first):
+        return 0.0
+    a, b = geo.grid_to_latlon(home), geo.grid_to_latlon(first)
+    return geo.distance_km(a, b) if a is not None and b is not None else None
+
+
+def within(keys: Iterable[str], home: str | None, radius_km: float = RADIUS_KM) -> list[str]:
+    """The locations whose first grid lies within ``radius_km`` of the home grid: what VUCC and GridMaster count."""
+    out = []
+    for k in keys:
+        d = distance_from(home, k)
+        if d is not None and d <= radius_km:
+            out.append(k)
+    return out
+
+
 def collect(db, *, sources: Iterable[str] = ("lotw",), band: str | None = None, mode_group: str | None = None,
-            home: str | None = None, radius_km: float | None = RADIUS_KM) -> dict[str, Square]:
+            home: str | None = None, radius_km: float | None = RADIUS_KM, sat_names: Iterable[str] | None = None,
+            station_calls: Iterable[str] | None = None, my_grids: Iterable[str] | None = None) -> dict[str, Square]:
     """Every square in the log, with its first worked and first confirmed QSO.
 
     ``band``: ``"SAT"`` for satellite QSOs, a band (``"2m"``) for that band without satellites, None for all.
-    ``home`` / ``radius_km``: only QSOs made within that distance of the home square (a QSO without your grid counts
-    as made at home); ``radius_km=None`` counts every location."""
+    ``sat_names``: only QSOs via these satellites (upper-case names; a category's names from the catalog).
+    ``station_calls``: only QSOs made under these calls (a QSO without a station call counts for any).
+    ``my_grids``: only QSOs made from these locations (:func:`location_key`; a QSO without your grid counts for
+    any), which is how VUCC's 200 km rule is applied: tick the locations within it.
+    ``home`` / ``radius_km``: the older rule, only QSOs made within that distance of the home square; ``None``
+    counts every location."""
     sources = [s for s in ("lotw", "eqsl", "qrz", "paper") if s in set(sources)]
     where = ["((gridsquare IS NOT NULL AND gridsquare != '') OR (vucc_grids IS NOT NULL AND vucc_grids != ''))"]
     args: list = []
@@ -163,14 +232,28 @@ def collect(db, *, sources: Iterable[str] = ("lotw",), band: str | None = None, 
     if mode_group:
         where.append("mode_group = ?")
         args.append(mode_group)
-    cols = "id, call, time_on, band, mode, submode, sat_name, gridsquare, vucc_grids, my_gridsquare, " + \
-           ", ".join(c for c, _y in SOURCES.values())
+    if sat_names is not None:
+        names = sorted({n.upper() for n in sat_names})
+        where.append(f"UPPER(sat_name) IN ({','.join('?' * len(names))})" if names else "0")
+        args.extend(names)
+    calls = {c.upper() for c in station_calls} if station_calls is not None else None
+    places = {k.upper() for k in my_grids} if my_grids is not None else None
+    cols = "id, call, time_on, band, mode, submode, sat_name, gridsquare, vucc_grids, my_gridsquare, " \
+           "my_vucc_grids, station_callsign, " + ", ".join(c for c, _y in SOURCES.values())
     rows = db.conn.execute(f"SELECT {cols} FROM qso WHERE {' AND '.join(where)} ORDER BY time_on, id", args)
     home_ll = geo.grid_to_latlon(home) if square(home) else None
     near: dict[str, bool] = {}
     out: dict[str, Square] = {}
     for r in rows:
         q = dict(r)
+        if calls is not None:
+            mine_call = (q.get("station_callsign") or "").upper()
+            if mine_call and mine_call not in calls:
+                continue
+        if places is not None:
+            key = location_key(q)
+            if key and key not in places:
+                continue
         if radius_km is not None and home_ll is not None:
             mine = (q.get("my_gridsquare") or "").strip().upper()
             if mine and mine not in near:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import plistlib
@@ -10,7 +11,7 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+from PySide6.QtCore import QEvent, QLibraryInfo, QLocale, QTranslator
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -99,6 +100,7 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
 
     theme.watch_system(app)
     threading.Thread(target=eject_installer_image, name="eject", daemon=True).start()
+    first_window = True  # the first-run checks (country file, call lists) run once per process, not after a restart
     while True:
         prefs = Prefs()
         language = lang or prefs.get("language")
@@ -114,8 +116,14 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
             QMessageBox.critical(None, APP_NAME, f"Could not open the log file:\n{path}\n\n{e}")
             return 1
         with applog.timed("Window ready", at_least=0):
-            win = MainWindow(logdb, prefs, app)
+            win = MainWindow(logdb, prefs, app, first_run=first_window and not os.environ.get("NWOLOGGER_SELF_TEST"))
             win.show()
+        first_window = False
+        if logdb.newer_version:
+            QMessageBox.warning(win, APP_NAME, i18n.tr("This log was last written by a newer NWOlogger") +
+                                f" ({logdb.newer_version}). " +
+                                i18n.tr("Some of its data may not show in this version, and what it writes stays "
+                                        "readable to the newer one."))
         current = {"win": win, "qt_tr": qt_tr}
 
         def rebuild(old: MainWindow, prefs=prefs, current=current) -> None:
@@ -127,11 +135,12 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
             current["win"] = new
 
         win.rebuild_requested.connect(lambda w=win: rebuild(w))
+        if os.environ.get("NWOLOGGER_SELF_TEST"):
+            _self_test(win, os.environ["NWOLOGGER_SELF_TEST"])
         applog.start_watchdog()
         code = app.exec()
         applog.stop_watchdog()
-        current["win"].deleteLater()
-        app.removeTranslator(current["qt_tr"])
+        _tear_down(app, current)
         try:
             logdb.close()
         except Exception:  # noqa: BLE001 - already closed when switching files
@@ -139,6 +148,60 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
         if code != RESTART:
             return code
         db_path = None  # take the newly chosen file from prefs
+
+
+def _tear_down(app: QApplication, current: dict) -> None:
+    """Destroy the window, its dialogs and the worker pools while the application object still exists. Left to the
+    interpreter's exit, they went in whatever order the garbage collector chose, after the QApplication was gone,
+    which is how a run that had opened Preferences could end in a crash after its last log line."""
+    from .ui import widgets  # noqa: PLC0415
+    from .ui.stats import globeraster  # noqa: PLC0415
+
+    win = current.pop("win", None)
+    if win is not None:
+        if win.isVisible() and not getattr(win, "_shut", False):
+            win.close()  # the layout is saved and the listeners stopped by its closeEvent
+        win.hide()
+        win.deleteLater()
+    qt_tr = current.pop("qt_tr", None)
+    if qt_tr is not None:
+        app.removeTranslator(qt_tr)
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # the window and everything parented to it go now
+    widgets.drop_tasks()  # background work still running keeps no Qt object alive
+    globeraster.shutdown()
+    del win
+    gc.collect()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+
+def _self_test(win, mode: str) -> None:
+    """``NWOLOGGER_SELF_TEST=close`` (the packaged smoke test and a test): open Preferences, close it, then close the
+    window a few seconds after the start. The process must then exit with code 0 and leave no crash file."""
+    if mode != "close":
+        return
+    from PySide6.QtCore import QTimer  # noqa: PLC0415
+
+    from .ui.prefs_dialog import PrefsDialog  # noqa: PLC0415
+
+    state: dict = {}
+
+    def open_prefs() -> None:
+        state["dlg"] = dlg = PrefsDialog(win.db, win.prefs, win)
+        dlg.show()
+        log.info("Self-test: Preferences opened")
+
+    def close_prefs() -> None:
+        state["dlg"].reject()
+        log.info("Self-test: Preferences closed")
+
+    def close_window() -> None:
+        log.info("Self-test: closing the window")
+        win.close()
+
+    QTimer.singleShot(2000, win, open_prefs)
+    QTimer.singleShot(3500, win, close_prefs)
+    QTimer.singleShot(5000, win, close_window)
 
 
 def main_gui() -> int:

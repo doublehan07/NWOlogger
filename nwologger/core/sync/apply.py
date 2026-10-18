@@ -25,10 +25,12 @@ CONFIRMED = ("Y", "V")  # V: LoTW verified
 
 
 def summary(t, res: ApplyResult, *, new_one: str, new_many: str, none: str,
-            uploaded: ApplyResult | None = None) -> str:
+            uploaded: ApplyResult | None = None, added: int | None = None, held: int = 0) -> str:
     """What a download found, new things first: "2 new confirmations · 1 already in your log". Records a service
     sends again (LoTW's newest confirmation, eQSL's last day, QRZ.com's whole logbook) are only "already in your
-    log". ``t`` translates (tr for the window, as is for the log file)."""
+    log". Records not in the log are "added to your log" (``added``, after the automatic adding) or "possible
+    duplicates waiting" (``held``, in the window); without ``added`` they are "not in your log". ``t`` translates
+    (tr for the window, as is for the log file)."""
     def count(n: int, one: str, many: str) -> str:
         return f"{n:,} " + t(one if n == 1 else many)
 
@@ -38,8 +40,14 @@ def summary(t, res: ApplyResult, *, new_one: str, new_many: str, none: str,
         parts.append(count(res.changed - n, "QSO updated", "QSOs updated"))
     if res.matched - res.changed:
         parts.append(count(res.matched - res.changed, "already in your log", "already in your log"))
-    if res.unmatched:
-        parts.append(count(len(res.unmatched), "not in your log", "not in your log"))
+    if added is None:
+        if res.unmatched:
+            parts.append(count(len(res.unmatched), "not in your log", "not in your log"))
+    else:
+        if added:
+            parts.append(count(added, "QSO added to your log", "QSOs added to your log"))
+        if held:
+            parts.append(count(held, "possible duplicate waiting", "possible duplicates waiting"))
     if uploaded is not None and uploaded.changed:
         parts.append(count(uploaded.changed, "QSO marked as uploaded", "QSOs marked as uploaded"))
     return " · ".join(parts)

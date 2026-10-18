@@ -25,8 +25,10 @@ from PySide6.QtWidgets import (
 )
 
 from .. import i18n
-from ..core import importer, mldx, sats
-from ..core.sync import apply
+from ..core import adif, importer, mldx, sats
+from ..core import db as dbm
+from ..core import qso as qsomod
+from ..core.sync import apply, positions, services
 from .widgets import Section
 
 tr = i18n.tr
@@ -38,13 +40,24 @@ class ImportDialog(QDialog):
         self.db, self.prefs, self.path = db, prefs, path
         self.result: importer.ImportResult | None = None
         self.lotw_result: apply.ApplyResult | None = None  # a LoTW report applied as a download
-        self.is_mldx = Path(path).suffix.lower() in (".sql", ".sqlite", ".db") and mldx.is_mldx_db(path)
+        self.positions_set: dict = {}  # the resume positions the import set, for the status bar
+        # A SQLite file is recognised by its header, whatever its extension: a MacLoggerDX database is imported,
+        # one of our own logs is opened with File → Open log file, another program's database can't be imported.
+        sqlite = dbm.sqlite_kind(path)
+        if sqlite == "nwologger":
+            raise ValueError(tr("This is an NWOlogger log file. Open it with File → Open log file instead of "
+                                "importing it."))
+        if sqlite == "foreign":
+            raise ValueError(tr("This is a database of another program, not an ADIF file or a MacLoggerDX "
+                                "database, so NWOlogger cannot import it."))
+        self.is_mldx = sqlite == "mldx"
         self.setWindowTitle(tr("Import") + f" — {Path(path).name}")
         self.resize(760, 600)
         lay = QVBoxLayout(self)
         self.dropped: list[str] = []
         self.inferred: Counter = Counter()
         self.records: list[dict[str, str]] = []
+        self.report_info: dict[str, str] = {}
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             if self.is_mldx:
@@ -53,13 +66,20 @@ class ImportDialog(QDialog):
                 self.header = {}
             else:
                 with open(path, "rb") as fh:
-                    self.header, self.qsos = importer.read_adif(fh.read(), dropped=self.dropped,
-                                                                inferred=self.inferred, raw=self.records)
+                    data = fh.read()
+                self.header, self.qsos = importer.read_adif(data, dropped=self.dropped, inferred=self.inferred,
+                                                            raw=self.records)
                 self.report = None
+                if not self.records:
+                    raise ValueError(tr("No ADIF records were found in this file."))
+                self.report_info = services.report_header(adif.decode(data[:20000]))
         finally:
             QApplication.restoreOverrideCursor()
         self.is_lotw = not self.is_mldx and importer.is_lotw_report(self.header, self.records)
         kind = tr("MacLoggerDX database") if self.is_mldx else tr("LoTW report") if self.is_lotw else tr("ADIF file")
+        if self.is_lotw and self.report_info.get("generated"):
+            kind += "  ·  " + tr("generated") + f" {self.report_info['generated']}" + \
+                (f" ({tr('for')} {self.report_info['call']})" if self.report_info.get("call") else "")
         lay.addWidget(QLabel(f"<b>{Path(path).name}</b>  ·  {kind}"))
 
         counts = Section(tr("Preview"))
@@ -82,6 +102,7 @@ class ImportDialog(QDialog):
             self.as_qsos = QRadioButton(tr("Import every record as a QSO"))
             for w in (self.as_download, self.as_qsos):
                 box.add(w)
+            box.add(self._positions_box())
             lay.addWidget(box)
 
         opts = Section(tr("Options"))
@@ -103,6 +124,8 @@ class ImportDialog(QDialog):
             form.addRow(self.merge)
         form.addRow(self.fill)
         form.addRow(tr("Station profile for records without a station call"), self.profile)
+        if not self.is_lotw:
+            form.addRow(self._positions_box())
         opts.add(form)
         lay.addWidget(opts)
 
@@ -159,6 +182,57 @@ class ImportDialog(QDialog):
         else:
             self._preview()
 
+    def _positions_box(self) -> QCheckBox:
+        """The tick box that lets the import set where downloads continue. A complete LoTW report carries LoTW's
+        own resume values (the header's, else its Generated at time) and sets them whatever is there now; any
+        other log proposes its newest confirmation and upload dates minus a day, and only where no position exists
+        yet (an import never moves one). A filtered report, or a file without such dates, offers nothing."""
+        self.positions_box = QCheckBox()
+        self.positions_box.setObjectName("positions")
+        self.proposed: dict = {}
+        if self.is_lotw:
+            if services.report_is_complete(self.report_info):
+                self.proposed = positions.from_report(self.header, self.records, self.report_info)
+            if self.proposed:
+                self.positions_box.setText(tr("Continue LoTW downloads from this report:") + " " +
+                                           positions.describe(self.proposed, tr) + " (" +
+                                           tr("LoTW's own values in the report") + ")")
+                self.positions_box.setChecked(True)
+            else:
+                self.positions_box.setText(tr("This report was made with a filter, so the positions stay as they "
+                                              "are."))
+                self.positions_box.setEnabled(False)
+            return self.positions_box
+        dates = positions.service_dates(self.qsos)
+        wanted = positions.from_import(dates)
+        kept = {k: v for k, v in wanted.items() if self.db.sync_get(*k)}
+        self.proposed = {k: v for k, v in wanted.items() if k not in kept}
+        notes = []
+        if "qrz_sent" in dates or "qrz_down" in dates:
+            notes.append("QRZ.com: " + tr("no position to set, every download is the whole logbook"))
+        if "hrdlog_sent" in dates:
+            notes.append("HRDLog: " + tr("no download"))
+        if kept:
+            notes.append(tr("already set, left as they are:") + " " + positions.describe(kept, tr))
+        if not self.proposed:
+            self.positions_box.hide()
+            return self.positions_box
+        self.positions_box.setText(tr("Continue downloads from this file's confirmations, a day earlier for overlap:")
+                                   + " " + positions.describe(self.proposed, tr) +
+                                   ("." + " ".join(f" {n}." for n in notes) if notes else ""))
+        self.positions_box.setChecked(True)
+        return self.positions_box
+
+    def _set_positions(self) -> None:
+        if not (self.positions_box.isEnabled() and self.positions_box.isChecked() and self.proposed):
+            return
+        name = Path(self.path).name
+        if self.is_lotw:
+            positions.write(self.db, self.proposed, origin=f"report {name}", backup=False)
+            self.positions_set = dict(self.proposed)
+        else:
+            self.positions_set = positions.set_if_unset(self.db, self.proposed, origin=f"import {name}")
+
     def applies_lotw(self) -> bool:
         """A LoTW report, to be applied as a LoTW download (not imported as QSOs)."""
         return self.as_download is not None and self.as_download.isChecked()
@@ -211,8 +285,27 @@ class ImportDialog(QDialog):
             "profile": self.db.profile(self.profile.currentData()),
             "key_tag": mldx.KEY_TAG if self.is_mldx else None,
             "block_s": self.prefs.get("block_seconds"),
-            "warn_s": self.prefs.get("warn_hours") * 3600,
+            "warn_s": self.prefs.warn_seconds(),
         }
+
+    def _profile_note(self) -> str:
+        """Which records the chosen station profile fills: only the ones without a station callsign of their own,
+        and how many there are (none in a normal export), so a wrong pick is seen to be harmless."""
+        blank = sum(1 for q in self.qsos if not q.get("station_callsign"))
+        prof = self.db.profile(self.profile.currentData())
+        if not blank:
+            return tr("Every record carries its own station callsign; the station profile above fills none of them.")
+        if prof is None:
+            return f"{blank:,} " + (tr("record has no station callsign and no profile is chosen: it is imported "
+                                       "without one.") if blank == 1 else
+                                    tr("records have no station callsign and no profile is chosen: they are imported "
+                                       "without one."))
+        who = prof.get("station_callsign") or prof.get("name") or ""
+        if prof.get("my_gridsquare"):
+            who += f" @ {qsomod.grids_text(prof, 'my_gridsquare')}"
+        return (f"{blank:,} " + (tr("record has no station callsign; it gets") if blank == 1 else
+                                 tr("records have no station callsign; they get")) + f" {who}. " +
+                tr("Every other record keeps the station callsign and grid it came with, whatever profile is chosen."))
 
     def _preview(self) -> None:
         if self.applies_lotw():
@@ -240,6 +333,7 @@ class ImportDialog(QDialog):
         if self.dropped:
             text += " " + tr("Fields that look like passwords are left out:") + f" {len(self.dropped)} (" + \
                 ", ".join(sorted(set(self.dropped))) + ")."
+        text += "\n\n" + self._profile_note()
         if self.inferred:
             parts = [f"{n} " + tr(label) for svc, label in (("lotw", "confirmed by LoTW"),
                                                              ("qrz", "confirmed by QRZ.com"))
@@ -256,6 +350,7 @@ class ImportDialog(QDialog):
             try:
                 self.db.backup("import")
                 self.lotw_result = apply.apply_lotw_report(self.db, self.records, self._catalog())
+                self._set_positions()
             except Exception as e:  # noqa: BLE001
                 QApplication.restoreOverrideCursor()
                 QMessageBox.critical(self, tr("Import failed"), str(e))
@@ -274,6 +369,7 @@ class ImportDialog(QDialog):
         try:
             label = tr("Import") + f" {Path(self.path).name}"
             self.result = importer.run(self.db, self.qsos, label=label, **self._opts())
+            self._set_positions()
         except Exception as e:  # noqa: BLE001
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, tr("Import failed"), str(e))

@@ -25,12 +25,16 @@ RECORD = {"CALL": "BA1AA", "QSO_DATE": "20261010", "TIME_ON": "151900", "BAND": 
           "MODE": "FM", "QSL_RCVD": "Y", "APP_QRZLOG_STATUS": "C"}
 
 
-def response(service, records=None):
+def response(service, records=None, kwargs=None):
+    """What the mocked service function answers; QRZ.com's pages reach the controller through ``on_page``."""
     records = records or []
     if service == "lotw":
         return {"APP_LOTW_LASTQSL": CURSOR, "APP_LOTW_LASTQSORX": CURSOR}, records
     if service == "eqsl":
         return {}, records
+    on_page = (kwargs or {}).get("on_page")
+    if on_page is not None:
+        on_page(1, records, "")
     return records
 
 
@@ -53,23 +57,27 @@ def download(qtbot, tmp_path, monkeypatch):
     ctrl = sync_controller.SyncController(db, prefs, parent)
     tasks, outcomes = [], []
     monkeypatch.setattr(sync_controller, "run_async",
-                        lambda work, *, on_done, on_error: tasks.append((work, on_done, on_error)))
-    monkeypatch.setattr(ctrl, "_progress", lambda *_a: SimpleNamespace(close=lambda: None))
+                        lambda work, *, on_done, on_error, on_event=None: tasks.append((work, on_done, on_error,
+                                                                                        on_event)))
+    monkeypatch.setattr(ctrl, "_progress", lambda *_a, **_k: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(ctrl, "report", lambda svc, kind, *_a, **_k: outcomes.append((svc, kind)))
-    monkeypatch.setattr(ctrl, "_show_unmatched", lambda *_a: None)
+    monkeypatch.setattr(ctrl, "_settle_unmatched", lambda *_a, **_k: ([], 0))
     monkeypatch.setattr(timeutil, "now_utc", lambda: datetime(2026, 10, 18, 12, tzinfo=UTC))
     for service in SERVICES:
         monkeypatch.setattr(services, DOWNLOAD_FN[service],
-                            lambda *_a, _service=service, **_k: response(_service))
+                            lambda *_a, _service=service, **k: response(_service, kwargs=k))
 
     def finish():
-        work, done, error = tasks.pop(0)
-        try:
-            result = work()
-        except Exception as exc:
-            error(str(exc))
-        else:
-            done(result)
+        """Run every queued task; events reach the controller at once, as they do in order on the GUI thread (a
+        LoTW download in parts queues its closing request from its own done handler)."""
+        while tasks:
+            work, done, error, on_event = tasks.pop(0)
+            try:
+                result = work(event=on_event) if on_event is not None else work()
+            except Exception as exc:
+                error(str(exc))
+            else:
+                done(result)
 
     yield SimpleNamespace(ctrl=ctrl, tasks=tasks, outcomes=outcomes, finish=finish)
     db.close()
@@ -149,7 +157,10 @@ def test_failed_download_preserves_expired_success_timestamp(download, monkeypat
 
 
 @pytest.mark.parametrize("service", SERVICES)
-def test_partial_network_failure_does_not_apply_records_or_advance_cursors(download, monkeypatch, service):
+def test_a_transfer_that_breaks_keeps_what_arrived_and_leaves_the_positions(download, monkeypatch, service):
+    """An incremental LoTW download is two small requests and fails as a whole. eQSL (per QTH nickname) and
+    QRZ.com (per page) apply what arrived, stop with a Stopped row and leave the positions, so the next download
+    is allowed at once and fetches the rest."""
     ctrl = download.ctrl
     qid = ctrl.db.insert(qsomod.normalize({"call": "BA1AA", "time_on": "2026-10-10T15:19:00Z",
                                            "mode": "FM", "band": "2m", "station_callsign": "BI1ZZZ"}))
@@ -167,18 +178,28 @@ def test_partial_network_failure_does_not_apply_records_or_advance_cursors(downl
         calls.append((args, kwargs))
         if len(calls) == 2:
             fail()
-        return response(service, [RECORD])
+        return response(service, [RECORD], kwargs)
 
     monkeypatch.setattr(services, DOWNLOAD_FN[service], partial)
     ctrl.download(service)
     download.finish()
     assert len(calls) == 2
-    assert ctrl.db.get(qid) == before
     assert {key: ctrl.db.sync_get(service, key) for key in cursors} == cursors
     assert ctrl.db.sync_get(service, "last_download") is None
     assert ctrl.wait_left(service, "download") == 0
     assert not ctrl.busy
-    assert download.outcomes == [(service, "failed")]
+    assert ctrl.db.sync_history()[0]["errors"] == 1
+    if service == "lotw":
+        assert ctrl.db.get(qid) == before
+        assert download.outcomes == [(service, "failed")]
+    else:
+        after = ctrl.db.get(qid)
+        assert after[{"eqsl": "eqsl_qsl_rcvd", "qrz": "qrz_qsl_rcvd"}[service]] == "Y"  # the first part arrived
+        assert download.outcomes == [(service, "cancelled")]
+    if service == "qrz":
+        # the logbooks go in call order: BI1YYY's page was applied and is not asked for again, BI1ZZZ starts over
+        assert ctrl.db.sync_get("qrz", ctrl.QRZ_RESUME + "BI1YYY") == "1"
+        assert ctrl.db.sync_get("qrz", ctrl.QRZ_RESUME + "BI1ZZZ") is None
 
 
 @pytest.mark.parametrize("service", SERVICES)

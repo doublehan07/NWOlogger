@@ -49,13 +49,15 @@ def keyring_store(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
-    """Service requests fail the test unless it installs its own handler with ``mock_net``."""
+    """Service requests fail the test unless it installs its own handler with ``mock_net``; a download's retries
+    never wait for real (a test that checks the waits passes its own ``sleep``)."""
     from nwologger.core import net
 
     def refuse(req):
         raise AssertionError(f"a test tried to reach the network: {req.url.host}")
 
     monkeypatch.setattr(net, "transport", httpx.MockTransport(refuse))
+    monkeypatch.setattr(net, "retry_sleep", lambda _s: None)
 
 
 @pytest.fixture

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -81,6 +82,12 @@ def mark_paper(parent, db, ids: list[int], kind: str) -> int:
     if kind == "clear":
         return db.update_many(ids, {"qsl_sent": None, "qslsdate": None, "qsl_sent_via": None, "qsl_rcvd": None,
                                     "qslrdate": None, "qsl_rcvd_via": None}, label=tr("Clear paper QSL"))
+    if kind == "not_sent":  # one direction emptied, the way Clear empties both; a queued card leaves the queue
+        return db.update_many(ids, {"qsl_sent": None, "qslsdate": None, "qsl_sent_via": None},
+                              label=tr("Paper QSL not sent"))
+    if kind == "not_rcvd":
+        return db.update_many(ids, {"qsl_rcvd": None, "qslrdate": None, "qsl_rcvd_via": None},
+                              label=tr("Paper QSL not received"))
     dlg = PaperDialog(kind, len(ids), parent)
     if dlg.exec() != QDialog.DialogCode.Accepted:
         return 0
@@ -108,6 +115,11 @@ class PaperQslTab(QWidget):
             b.setIcon(theme.icon(icon))
             b.clicked.connect(lambda _=False, k=kind: self._mark(k))
             bar.addWidget(b)
+        self.replies_btn = QPushButton(tr("Queue replies to received cards…"))
+        self.replies_btn.setIcon(theme.icon("mail"))
+        self.replies_btn.setToolTip(tr("Put every QSO with a card received and none sent back into the queue to send"))
+        self.replies_btn.clicked.connect(self.queue_replies)
+        bar.addWidget(self.replies_btn)
         bar.addStretch(1)
         self.count = QLabel()
         self.count.setProperty("muted", True)
@@ -134,3 +146,22 @@ class PaperQslTab(QWidget):
 
     def _mark(self, kind: str) -> None:
         mark_paper(self, self.db, self.view.selected_ids(), kind)
+
+    UNANSWERED = "qsl_rcvd = 'Y' AND (qsl_sent IS NULL OR qsl_sent NOT IN ('Y', 'Q', 'I'))"
+
+    def unanswered_ids(self) -> list[int]:
+        """QSOs with a card received and no card sent back, queued or ignored."""
+        return [q["id"] for q in self.db.iter_all(self.UNANSWERED)]
+
+    def queue_replies(self) -> int:
+        """Ask, then put every unanswered card in the queue to send."""
+        ids = self.unanswered_ids()
+        if not ids:
+            QMessageBox.information(self, tr("Queue replies"), tr("No received card is waiting for a reply."))
+            return 0
+        if QMessageBox.question(
+                self, tr("Queue replies"), f"{len(ids)} " + tr("cards received without a card sent back.") + "\n\n" +
+                tr("Put these QSOs in the queue to send? A card you don't want to answer stays in this count until "
+                   "you answer it or mark it ignored (I).")) != QMessageBox.StandardButton.Yes:
+            return 0
+        return self.db.update_many(ids, {"qsl_sent": "Q"}, label=tr("Queue paper QSL"))

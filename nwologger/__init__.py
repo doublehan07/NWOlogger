@@ -5,6 +5,6 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("nwologger")
 except PackageNotFoundError:  # running from a source tree without install
-    __version__ = "0.1.8"
+    __version__ = "0.1.9"
 
 APP_NAME = "NWOlogger"

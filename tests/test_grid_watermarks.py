@@ -71,6 +71,13 @@ def test_watermark_render_has_8_percent_opacity_without_halo_and_hides_when_smal
     assert view._field_watermark_path("OM") is None
 
 
+def test_watermark_fills_overlapping_strokes_with_the_winding_rule(view):
+    """The bold system font on macOS draws M, N and P with strokes that overlap; odd-even filling left holes."""
+    view.zoom = 5
+    assert view._field_watermark_path("OM").fillRule() == Qt.FillRule.WindingFill
+    assert view._field_glyphs["OM"][0].fillRule() == Qt.FillRule.WindingFill
+
+
 def test_watermarks_hide_on_the_far_side_and_at_the_limb(view):
     view.zoom = 5
     view.center_lon, view.center_lat = -70, -35

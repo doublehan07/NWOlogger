@@ -256,6 +256,9 @@ def read(path: str | Path) -> tuple[list[dict], MldxReport]:
 
 def is_mldx_db(path: str | Path) -> bool:
     try:
+        with open(path, "rb") as fh:
+            if fh.read(16) != b"SQLite format 3\x00":
+                return False
         con = sqlite3.connect(f"file:{Path(path).resolve()}?mode=ro", uri=True)
         try:
             return bool(con.execute("SELECT 1 FROM sqlite_master WHERE name=?", (TABLE,)).fetchone())

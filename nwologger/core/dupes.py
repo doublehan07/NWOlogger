@@ -3,7 +3,8 @@
 Two QSOs are compared when they share call + band (+ satellite when via satellite).
 
 * same MODE+SUBMODE within the block window (30 s)   → ``DUPE``   (logging is blocked)
-* same mode later, or a related mode, within warning  → ``SUSPECT`` (warning only)
+* same mode later, or a related mode, within warning  → ``SUSPECT`` (warning only; the window is 1 minute, so a
+  second contact an hour later is a second contact, not a suspect)
 * unrelated modes or outside the warning window       → nothing
 
 ``dupe_flag`` values: ``DUPE``, ``SUSPECT``, ``OK`` (you said "not a dupe"; scans leave it alone).
@@ -18,7 +19,7 @@ from . import modes, timeutil
 from .modes import Relation
 
 BLOCK_SECONDS = 30
-WARN_SECONDS = 24 * 3600
+WARN_SECONDS = 60
 
 
 @dataclass

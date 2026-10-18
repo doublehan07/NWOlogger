@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from .. import i18n
 from ..core import dupes, propagation, timeutil
 from ..core import merge as mergemod
+from ..core import qso as qsomod
 from ..core.fields import BY_COL
 from ..core.modes import Relation
 from . import theme
@@ -52,6 +53,8 @@ def _val(q: dict, col: str) -> str:
         return mode_text(q)
     if col == "prop_mode" and q.get("prop_mode"):
         return f"{q['prop_mode']} · {tr(propagation.describe(q['prop_mode']))}"
+    if col in qsomod.GRID_PAIRS:
+        return qsomod.grids_text(q, col)
     return fmt(col, q.get(col))
 
 
@@ -168,7 +171,7 @@ class DupeCompareDialog(QDialog):
 
     # ------------------------------------------------------------------ loading
     def _windows(self) -> dict:
-        return {"block_s": self.prefs.get("block_seconds"), "warn_s": self.prefs.get("warn_hours") * 3600}
+        return {"block_s": self.prefs.get("block_seconds"), "warn_s": self.prefs.warn_seconds()}
 
     def _load(self) -> None:
         self.edits.clear()
@@ -428,7 +431,10 @@ class DupeCompareDialog(QDialog):
             return True
         by_q: dict[int, dict] = {}
         for (qid, col), v in self.edits.items():
-            by_q.setdefault(qid, {})[col] = v
+            if col in qsomod.GRID_PAIRS:  # "OM88, OM89" edits the grid and the VUCC grids together
+                by_q.setdefault(qid, {}).update(qsomod.grid_columns(v, col))
+            else:
+                by_q.setdefault(qid, {})[col] = v
         for q in self.qsos:
             ch = by_q.get(q["id"])
             if not ch:
@@ -608,7 +614,7 @@ def flagged_ids(db, ids: list[int] | None = None) -> list[int]:
 
 def show_review(parent, db, prefs, ids: list[int] | None = None, on_edit=None) -> None:
     """Review marked QSOs (all, or the given ones), one dupe group at a time."""
-    w = {"block_s": prefs.get("block_seconds"), "warn_s": prefs.get("warn_hours") * 3600}
+    w = {"block_s": prefs.get("block_seconds"), "warn_s": prefs.warn_seconds()}
     start = flagged_ids(db, ids) or (ids or [])
     groups = dupes.groups_for(db, start, **w)
     if not groups:

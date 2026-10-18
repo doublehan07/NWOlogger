@@ -30,6 +30,8 @@ from .core import net
 log = logging.getLogger("nwologger")
 
 FILE_NAME = "nwologger.log"
+CRASH_FILE = "nwologger-crash.txt"  # where faulthandler writes the native stack of a crash (segfault, abort)
+PREVIOUS_CRASH_FILE = "nwologger-crash-previous.txt"
 MAX_BYTES = 1_000_000
 BACKUPS = 5
 HANG_SECONDS = 15.0  # every thread's stack is written once the window has not responded this long
@@ -41,7 +43,9 @@ _EVENT_LOOP = ".exec("  # the source line where Qt's event loop runs (app.exec()
 _known: set[str] = set()
 _lock = threading.Lock()
 _handler: logging.Handler | None = None
+_crash_fh = None  # the open crash file faulthandler writes to
 _watchdog = None
+_retired: list = []  # watchdogs whose thread did not end in time: never destroyed from that thread
 
 
 def log_dir() -> Path:
@@ -58,6 +62,50 @@ def log_dir() -> Path:
 
 def log_file() -> Path:
     return log_dir() / FILE_NAME
+
+
+def crash_file() -> Path:
+    return log_dir() / CRASH_FILE
+
+
+def _watch_crashes(folder: Path) -> None:
+    """Let faulthandler write the native stack of a crash (a segmentation fault, an abort in Qt's teardown) to a
+    file beside the log, which the normal log cannot hold: Python is already dead when it happens. A file left with
+    content by the previous run is the evidence of a crash: it is noted here and kept as the previous crash file."""
+    global _crash_fh
+    import faulthandler  # noqa: PLC0415
+
+    path = folder / CRASH_FILE
+    try:
+        if path.exists() and path.stat().st_size:
+            previous = folder / PREVIOUS_CRASH_FILE
+            previous.unlink(missing_ok=True)
+            path.rename(previous)
+            log.warning("The last run ended in a crash; its native stack is in %s", tidy_path(previous))
+        if _crash_fh is not None:
+            faulthandler.disable()
+            _crash_fh.close()
+        _crash_fh = open(path, "a", encoding="utf-8")  # noqa: SIM115 - kept open for faulthandler
+        faulthandler.enable(file=_crash_fh, all_threads=True)
+    except OSError:
+        _crash_fh = None
+
+
+def _stop_watching_crashes() -> None:
+    global _crash_fh
+    if _crash_fh is None:
+        return
+    import faulthandler  # noqa: PLC0415
+
+    faulthandler.disable()
+    name = _crash_fh.name
+    _crash_fh.close()
+    _crash_fh = None
+    try:
+        if os.path.getsize(name) == 0:
+            os.unlink(name)  # a clean run leaves nothing behind
+    except OSError:
+        pass
 
 
 def remember_secrets(values: Iterable[str | None]) -> None:
@@ -147,6 +195,7 @@ def setup(*, debug: bool = False, directory: str | os.PathLike | None = None) ->
         root.setLevel(logging.WARNING)  # other libraries: warnings and errors only
     log.setLevel(logging.DEBUG if debug else logging.INFO)
     net.install_log_filter()  # HTTPX / httpcore stay at WARNING, also at DEBUG
+    _watch_crashes(path.parent)
     return path
 
 
@@ -158,6 +207,7 @@ def shutdown() -> None:
         logging.getLogger().removeHandler(_handler)
         _handler.close()
         _handler = None
+    _stop_watching_crashes()
     with _lock:
         _known.clear()
 
@@ -301,8 +351,20 @@ class Watchdog:
             self.check()
 
     def stop(self) -> None:
+        """Called on the GUI thread. The timer is disconnected and the thread joined before the last reference
+        goes, so the Watchdog, the receiver of the timer's signal, is never destroyed on its own thread: PySide
+        disconnects a dying receiver inside Qt's connection mutex while taking the GIL, and a GUI thread that holds
+        the GIL inside a Qt call wanting that mutex (QApplication.setStyle on a restart) then waits forever."""
         self._stop.set()
         self.timer.stop()
+        try:
+            self.timer.timeout.disconnect(self._beat)
+        except (RuntimeError, TypeError):
+            pass
+        if threading.current_thread() is not self.thread:
+            self.thread.join(timeout=4 * BEAT)
+        if self.thread.is_alive():
+            _retired.append(self)  # keep it referenced here rather than let the other thread drop it
 
 
 def start_watchdog(after: float = HANG_SECONDS) -> Watchdog:

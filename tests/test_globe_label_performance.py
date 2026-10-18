@@ -54,7 +54,7 @@ def test_grid_and_call_labels_return_after_interactive_rotation(view, monkeypatc
     _draw_labels(view)
     assert drawn == []
 
-    qtbot.mouseRelease(view, Qt.MouseButton.LeftButton, pos=view._drag.toPoint())
+    qtbot.mouseRelease(view, Qt.MouseButton.RightButton, pos=view._drag.toPoint())
     assert view._drag is None
     _draw_labels(view)
     assert drawn == ["JJ00", "N0CALL"]

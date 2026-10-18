@@ -63,7 +63,7 @@ def test_preferences_buttons_resolve_pending_station_changes(dialog, monkeypatch
     assert len(prompts) == 1
     assert "modified but not saved" in prompts[0][2]
     assert dialog.db.default_profile().get("my_gridsquare") == (
-        "OM89AA" if choice == QMessageBox.StandardButton.Save else None)
+        "OM89aa" if choice == QMessageBox.StandardButton.Save else None)  # saved as ADIF writes a grid
     proceeded = choice != QMessageBox.StandardButton.Cancel
     assert dialog.isVisible() == (not proceeded)
     assert dialog.prefs.get("block_seconds") == old_block + int(proceeded and action == "Save")
@@ -89,7 +89,7 @@ def test_explicitly_saved_profile_does_not_prompt_again(dialog, monkeypatch, act
     monkeypatch.setattr(QMessageBox, "question", _unexpected_prompt)
     _click(dialog, action)
     assert not dialog.isVisible()
-    assert dialog.db.default_profile()["my_gridsquare"] == "OM89AA"
+    assert dialog.db.default_profile()["my_gridsquare"] == "OM89aa"
 
 
 @pytest.mark.parametrize("action", ["Save", "Cancel"])

@@ -53,7 +53,8 @@ class AboutDialog(QDialog):
             f"<h3>{tr('Special thanks')}</h3>"
             f"<p><b>BY1QH</b> · {tr('club station, China')} · "
             "<a href='https://www.qrz.com/db/BY1QH'>qrz.com/db/BY1QH</a><br>"
-            f"<span style='color:{mut}'>{tr('The BY1QH logo is used as the NWOlogger icon.')}</span></p>")
+            f"<span style='color:{mut}'>{tr('The BY1QH logo is used as the NWOlogger icon.')}<br>"
+            f"{tr('The BY1QH logo was designed by 王亦童 (BI1TYE).')}</span></p>")
         tabs.addTab(about, tr("About"))
         credits = QTextBrowser()
         credits.setOpenExternalLinks(True)
@@ -74,8 +75,13 @@ class AboutDialog(QDialog):
             "</ul>")
         tabs.addTab(credits, tr("Credits"))
         info = QTextBrowser()
+        made = db.provenance()
         self.info_text = (f"{APP_NAME} {__version__}\nQt {qVersion()} · PySide6 {PYSIDE_VERSION}\n"
                           f"{tr('Database schema')} v{SCHEMA_VERSION}\n{tr('Log file')}: {db.path}\n"
+                          f"{tr('Log created by')} {made.get('app_name') or APP_NAME} {made.get('created_by_version')}"
+                          f" · {made.get('created_at')}\n"
+                          f"{tr('Log last written by')} {APP_NAME} {made.get('last_written_by_version')}"
+                          f" · {made.get('last_written_at')}\n"
                           f"{tr('Backups')}: {db.backup_dir}\n"
                           f"{tr('Diagnostic log')}: {applog.tidy_path(applog.log_file())}")
         info.setPlainText(self.info_text)

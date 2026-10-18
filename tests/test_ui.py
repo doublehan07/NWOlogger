@@ -267,7 +267,7 @@ def test_dupe_group_of_three(win, qtbot, monkeypatch):
 
     db = win.db
     rows = [("2026-10-10T10:00:00Z", "FT8", None), ("2026-10-10T10:00:20Z", "FT8", None),
-            ("2026-10-10T10:10:00Z", "FT4", None)]
+            ("2026-10-10T10:00:50Z", "FT4", None)]  # a sibling mode within the one-minute window
     ids = [db.insert(qso.normalize({"call": "BA1AA", "time_on": t, "mode": m, "band": "20m", "freq": 14.074}))
            for t, m, _ in rows]
     db.update(ids[2], {"lotw_qsl_rcvd": "Y", "lotw_qslrdate": "2026-10-12"}, track_service=False)
@@ -769,7 +769,7 @@ def test_statistics_grid_map(win, qtbot):
     st = win.stats
     st.home.setText("ON80")
     st._changed()
-    assert set(st.map.cells) == {"OM89", "PM95"} and "1</b> confirmed (LoTW)" in st.count.text()
+    assert set(st.map.cells) == {"OM89", "PM95"} and st.map.badge.startswith("1 confirmed (LoTW) · 1 worked only")
     assert "first confirmed by LoTW: BA1AA" in st.map.describe("OM89") and "worked only" in st.map.describe("PM95")
     st.source_btns["lotw"].setChecked(False)  # nothing ticked: every square is "worked"
     assert all(c.status == "worked" for c in st.map.cells.values())
@@ -783,6 +783,96 @@ def test_statistics_grid_map(win, qtbot):
     win.model.refresh()
     assert win.tabs.currentIndex() == 0 and win.model.ids and all(
         win.db.get(i)["gridsquare"].startswith("OM89") for i in win.model.ids)
+
+
+def test_paper_not_sent_and_not_received_clear_one_direction(win):
+    from nwologger.core import qso as qsomod
+
+    qid = win.db.insert(qsomod.normalize({
+        "call": "BA1AA", "time_on": "2026-10-10T10:00:00Z", "mode": "FM", "band": "2m", "qsl_sent": "Q",
+        "qsl_rcvd": "Y", "qslrdate": "2026-10-12", "qsl_rcvd_via": "D"}))
+    win.model.refresh()
+    win.view.select_ids([qid])
+    win._update_actions()
+    assert win.a_paper_not_sent.isEnabled() and win.a_paper_not_rcvd.isEnabled()
+    win.a_paper_not_sent.trigger()  # the queued card leaves the queue; the received side is untouched
+    q = win.db.get(qid)
+    assert q["qsl_sent"] is None and q["qsl_rcvd"] == "Y" and q["qslrdate"] == "2026-10-12"
+    win.a_paper_not_rcvd.trigger()
+    q = win.db.get(qid)
+    assert q["qsl_rcvd"] is None and q["qslrdate"] is None and q["qsl_rcvd_via"] is None
+    for a in (win.a_paper_not_sent, win.a_paper_not_rcvd):
+        assert a in win.menuBar().actions()[3].menu().actions()
+
+
+def test_queue_replies_to_received_cards(win, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from nwologger.core import qso as qsomod
+
+    ids = [win.db.insert(qsomod.normalize({"call": call, "time_on": f"2026-10-1{i}T10:00:00Z", "mode": "FM",
+                                           "band": "2m", **fields}))
+           for i, (call, fields) in enumerate([("BA1AA", {"qsl_rcvd": "Y"}), ("BA1BB", {"qsl_rcvd": "Y", "qsl_sent": "Y"}),
+                                               ("BA1CC", {"qsl_rcvd": "Y", "qsl_sent": "I"}), ("BA1DD", {})])]
+    assert win.paper.unanswered_ids() == [ids[0]]
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    assert win.paper.queue_replies() == 0 and win.db.get(ids[0])["qsl_sent"] is None
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    assert win.paper.queue_replies() == 1 and win.db.get(ids[0])["qsl_sent"] == "Q"
+    assert win.paper.unanswered_ids() == []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    assert win.paper.queue_replies() == 0
+
+
+def test_help_menu_opens_the_log_file_backups_and_diagnostic_folders(win, monkeypatch):
+    from pathlib import Path
+
+    from PySide6.QtGui import QDesktopServices
+
+    from nwologger import applog
+
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(Path(url.toLocalFile())) or True)
+    win.a_logfile_folder.trigger()
+    win.a_backups_folder.trigger()
+    win.a_log_folder.trigger()
+    assert opened == [win.db.path.parent, win.db.backup_dir, applog.log_dir()]
+    assert win.db.backup_dir.is_dir()
+    help_menu = win.menuBar().actions()[-1].menu().actions()
+    assert [a.text() for a in help_menu if a.text()][-3:] == [
+        "Show log file folder", "Show backups folder", "Show diagnostic log folder"]
+
+
+def test_about_names_the_logo_designer(win):
+    from PySide6.QtWidgets import QTextBrowser
+
+    from nwologger.ui.about_dialog import AboutDialog
+
+    dlg = AboutDialog(win.db, win)
+    text = "\n".join(b.toPlainText() for b in dlg.findChildren(QTextBrowser))
+    assert "BY1QH" in text and "王亦童 (BI1TYE)" in text
+    dlg.deleteLater()
+
+
+def test_open_log_file_refuses_a_foreign_file_and_leaves_it_unchanged(win, monkeypatch, tmp_path):
+    import sqlite3
+
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    foreign = tmp_path / "logbook.sqlite"
+    con = sqlite3.connect(foreign)
+    con.execute("CREATE TABLE TABLE_HRD_CONTACTS_V07 (COL_PRIMARY_KEY INTEGER PRIMARY KEY, COL_CALL TEXT)")
+    con.execute("INSERT INTO TABLE_HRD_CONTACTS_V07 (COL_CALL) VALUES ('BA1AA')")
+    con.commit()
+    con.close()
+    before = foreign.read_bytes()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(foreign), "SQLite (*.sqlite)"))
+    shown, exits = [], []
+    monkeypatch.setattr(QMessageBox, "critical", lambda _p, title, text: shown.append((title, text)))
+    monkeypatch.setattr(win.app, "exit", lambda code=0: exits.append(code))
+    win.open_log()
+    assert shown and "another program" in shown[0][1] and not exits
+    assert foreign.read_bytes() == before and win.prefs.get("db_path") != str(foreign)
 
 
 def test_map_preferences(win, qtbot, keyring_store):

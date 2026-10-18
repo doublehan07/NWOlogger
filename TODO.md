@@ -1,6 +1,6 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found; v0.1.6 adds merging field by field, Look up and fill with progress, and safer bulk edit times; v0.1.7 adds the grid map; v0.1.8 turns it into a globe drawn at the display's resolution and fixes what testing 0.1.7 and the first 0.1.8 build found. What is left is below.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found; v0.1.6 adds merging field by field, Look up and fill with progress, and safer bulk edit times; v0.1.7 adds the grid map; v0.1.8 turns it into a globe drawn at the display's resolution and fixes what testing 0.1.7 and the first 0.1.8 build found; v0.1.9 does what the 0.1.8 feedback asked: downloads to kept files that resume, downloaded QSOs added with a possible-duplicates window, resume positions from imports with a Preferences tab, a one-minute dupe window, the map's callsign, place and orbit filters in a window of its own, one Grid field for several grids, station profiles from the log, paper QSL replies, log-file provenance and a clean exit. What is left is below.
 
 ## Needs real accounts
 
@@ -41,6 +41,23 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
+
+## Done in v0.1.9 (2026-10-18)
+
+From the feedback on 0.1.8 (PLAN §16):
+
+- [x] **Quitting:** deterministic teardown, a crash file from `faulthandler`, the watchdog stopped and joined before Qt goes (it deadlocked when destroyed on its own thread), background tasks dropped only once their thread has ended, and `NWOLOGGER_SELF_TEST=close` in the packaging smoke test
+- [x] **Downloads to files that resume:** every service's download streams to `downloads/` next to the log with retries and Range continuation; LoTW in yearly parts applied as they land, eQSL by byte range, QRZ.com page by page; uploads mark each accepted QSO at once; *Download from a date…*
+- [x] **Downloaded QSOs are added** instead of asked for every time; a near-duplicate (same call within a minute) waits in the *Possible duplicates* window, which can open the QSO it may duplicate; the same for a LoTW report imported from a file
+- [x] **Sync positions:** set from an imported log's confirmations (a day earlier, never later than an existing position) and a LoTW report's headers; a Preferences tab shows them locked, with *Unlock* (danger zone), *Lock and save* and Cancel
+- [x] **Dupe warning window:** 1 minute (a stored 24 h becomes 1 min; other values are kept in minutes)
+- [x] **Grid map:** satellite categories (LEO, MEO, HEO, GEO, non-geostationary; orbits in `sats.json`), *Callsigns* and *Grids* lists from the log with counts and *Within 200 km*, the counts badge on screen and in the PNG, right or middle button rotation with a left click to select, *Open in a window* with a remembered geometry and full screen inside it, PNG named `<call> at <grid> - NWOlogger <version>.png` (*et al* for several), solid M/N/P field watermarks
+- [x] **Several grids on one QSO:** one Grid field reads `OM88, OM89` and writes `GRIDSQUARE` + `VUCC_GRIDS`; shown together in the form, the log, the compare window, Worked before and the station profile
+- [x] **Station profiles → Add from my log…**, and the import preview says how many records lack a station callsign (the only ones a profile fills)
+- [x] **Paper QSL:** *Mark paper QSL not sent / not received*; *Queue replies to received cards…*
+- [x] **Help menu:** Show log file folder, Show backups folder, Show diagnostic log folder; **About:** the BY1QH logo designer, the log's provenance
+- [x] **Log files:** application id, user version and creating / last-writing NWOlogger in the file; a newer version's log warns; *Open log file* refuses a foreign SQLite file; *Import* tells a non-MacLoggerDX SQLite file from an empty one
+- [x] Translations for everything above (简体中文)
 
 ## Done in v0.1.8 (2026-10-18)
 

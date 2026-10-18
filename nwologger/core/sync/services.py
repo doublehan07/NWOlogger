@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+from pathlib import Path
 from urllib.parse import parse_qsl, urljoin
 
 import httpx
@@ -51,9 +52,68 @@ def error_line(text: str) -> str | None:
 LOTW_REPORT = "https://lotw.arrl.org/lotwuser/lotwreport.adi"
 
 
+def report_header(text: str) -> dict[str, str]:
+    """The plain-text lines LoTW puts before the tags of a report: ``generated`` (its server time, ``2026-10-18
+    07:33:33``), ``call`` and the query it answers, upper-case keys (``QSL ONLY``, ``QSO RX SINCE``, and the date or
+    call filters when the report was made with one). Nothing after ``<eoh>`` is read."""
+    head = re.split(r"<eoh>", text[:20000], maxsplit=1, flags=re.I)[0]
+    out: dict[str, str] = {}
+    for line in head.splitlines():
+        line = line.strip()
+        m = re.match(r"Generated at\s+(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)", line, re.I)
+        if m:
+            out["generated"] = m.group(1)
+        elif re.match(r"for\s+\S+$", line, re.I):
+            out["call"] = line.split()[1].upper()
+        elif ":" in line and not line.startswith("<") and not line.lower().startswith("query"):
+            key, value = line.split(":", 1)
+            value = re.sub(r"\s*\(user supplied value\)\s*$", "", value.strip(), flags=re.I)
+            if key.strip() and value:
+                out[key.strip().upper()] = value
+    return out
+
+
+def report_is_complete(info: dict[str, str]) -> bool:
+    """Whether a report was made without a filter, so its resume values cover everything: no date, call, band,
+    mode or entity filter, and RX / QSL since the start."""
+    filtered = {k for k in info if k.startswith(("QSO START", "QSO END", "QSO CALL", "QSO BAND", "QSO MODE",
+                                                  "QSO DXCC", "QSO OWN", "OWN CALL", "WORKED", "START", "END"))}
+    since = [v for k, v in info.items() if k.endswith("SINCE")]
+    return not filtered and all(v.startswith("1900-01-01") for v in since)
+
+
+def report_info(path) -> dict[str, str]:
+    """The plain-text header of a report file (:func:`report_header`), from its first bytes; {} without a file."""
+    try:
+        with open(path, "rb") as fh:
+            return report_header(adif.decode(fh.read(20000)))
+    except (OSError, TypeError):
+        return {}
+
+
+def read_report(path, *, partial: bool = False) -> tuple[dict, list[dict], dict[str, str]]:
+    """A LoTW report file: its tag header, its records and the plain-text header. ``partial`` (a transfer that
+    broke) leaves out the record it was writing when it stopped."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    text = adif.decode(data)
+    if not re.search(r"<eoh>", text, re.I):
+        page = page_text(text)
+        log.warning("LoTW answered without ADIF; the page said: %s", page[:1500])
+        msg = error_line(page) or " ".join(page.split())[:200]
+        raise ServiceError("LoTW: query failed (check user and password). " + msg)
+    header, records = adif.parse(text, complete_only=partial)
+    return header, records, report_header(text)
+
+
 def lotw_download(user: str, password: str, *, qsl: bool = True, since: str | None = None,
-                  own_call: str | None = None) -> tuple[dict, list[dict]]:
-    """Download LoTW confirmations (qsl=True) or your accepted uploads (qsl=False). Raw ADIF records."""
+                  own_call: str | None = None, start: str | None = None, end: str | None = None,
+                  dest=None, progress=None) -> tuple[dict, list[dict]]:
+    """Download LoTW confirmations (qsl=True) or your accepted uploads (qsl=False). Raw ADIF records.
+
+    ``start`` / ``end`` (YYYY-MM-DD) limit the report to QSOs made in that range (LoTW's qso_startdate and
+    qso_enddate, both inclusive). With ``dest`` the report is streamed to that file (see :func:`net.download`), the
+    file is kept, and a transfer that breaks for good raises :class:`net.PartialDownload` with it."""
     params = {"login": user, "password": password, "qso_query": "1", "qso_qsl": "yes" if qsl else "no",
               "qso_qsldetail": "yes", "qso_mydetail": "yes", "qso_withown": "yes"}
     if qsl:
@@ -62,6 +122,14 @@ def lotw_download(user: str, password: str, *, qsl: bool = True, since: str | No
         params["qso_qsorxsince"] = since or "1900-01-01"
     if own_call:
         params["qso_owncall"] = own_call
+    if start:
+        params["qso_startdate"] = start
+    if end:
+        params["qso_enddate"] = end
+    if dest is not None:
+        net.download("lotw", "GET", LOTW_REPORT, dest=dest, params=params, secrets=[password], progress=progress)
+        header, records, _info = read_report(dest)
+        return header, records
     r = net.request("lotw", "GET", LOTW_REPORT, params=params, secrets=[password], timeout=300.0)
     text = r.text
     if not re.search(r"<eoh>", text, re.I):
@@ -73,7 +141,8 @@ def lotw_download(user: str, password: str, *, qsl: bool = True, since: str | No
 
 
 def lotw_sync_download(user: str, password: str, *, since_qsl: str | None = None,
-                       since_rx: str | None = None) -> tuple[dict, list[dict], dict, list[dict]]:
+                       since_rx: str | None = None, folder=None, run: str | None = None,
+                       progress=None) -> tuple[dict, list[dict], dict, list[dict]]:
     """Download confirmations and accepted uploads, sharing the full report on the first sync.
 
     LoTW's qso_qsl=no report contains all accepted QSOs, including QSL_RCVD, QSLRDATE and
@@ -81,13 +150,19 @@ def lotw_sync_download(user: str, password: str, *, since_qsl: str | None = None
     inclusive resume point without downloading the confirmed subset again. Once either cursor exists,
     keep the separate incremental queries: an old upload can gain a new confirmation at any time.
     See https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/.
+
+    With ``folder`` and ``run`` each report is streamed to a file there (``lotw-<run>-qsl.adi``,
+    ``lotw-<run>-qso.adi``), which is kept.
     """
+    def dest(part: str):
+        return Path(folder) / f"lotw-{run}-{part}.adi" if folder is not None and run else None
+
     if since_qsl or since_rx:
-        h1, r1 = lotw_download(user, password, qsl=True, since=since_qsl)
-        h2, r2 = lotw_download(user, password, qsl=False, since=since_rx)
+        h1, r1 = lotw_download(user, password, qsl=True, since=since_qsl, dest=dest("qsl"), progress=progress)
+        h2, r2 = lotw_download(user, password, qsl=False, since=since_rx, dest=dest("qso"), progress=progress)
         return h1, r1, h2, r2
 
-    h2, r2 = lotw_download(user, password, qsl=False)
+    h2, r2 = lotw_download(user, password, qsl=False, dest=dest("qso"), progress=progress)
     r1 = [r for r in r2 if r.get("QSL_RCVD", "").upper() == "Y"]
     if not r1:
         # No confirmation cursor yet: the next sync can safely ask for all confirmations.
@@ -95,7 +170,7 @@ def lotw_sync_download(user: str, password: str, *, since_qsl: str | None = None
     received = [timeutil.parse_iso(r.get("APP_LOTW_RXQSL")) for r in r1]
     if any(t is None for t in received):
         # Do not guess from the local clock or advance past a confirmation with no timestamp.
-        h1, r1 = lotw_download(user, password, qsl=True)
+        h1, r1 = lotw_download(user, password, qsl=True, dest=dest("qsl"), progress=progress)
     else:
         last = timeutil.parse_iso(h2.get("APP_LOTW_LASTQSL")) or max(t for t in received if t is not None)
         h1 = {"APP_LOTW_LASTQSL": last.strftime("%Y-%m-%d %H:%M:%S")}
@@ -126,8 +201,9 @@ def eqsl_upload(user: str, password: str, records: list[dict[str, str]]) -> tupl
 
 
 def eqsl_download(user: str, password: str, *, since: str | None = None,
-                  qth_nickname: str | None = None) -> tuple[dict, list[dict]]:
-    """Download your eQSL inbox (incoming cards). ``since`` is YYYYMMDD."""
+                  qth_nickname: str | None = None, dest=None, progress=None) -> tuple[dict, list[dict]]:
+    """Download your eQSL inbox (incoming cards). ``since`` is YYYYMMDD. With ``dest`` the generated ADIF file is
+    streamed to that file and kept; a transfer that breaks for good raises :class:`net.PartialDownload`."""
     params = {"UserName": user, "Password": password}
     if since:
         params["RcvdSince"] = since
@@ -149,6 +225,10 @@ def eqsl_download(user: str, password: str, *, since: str | None = None,
     url = httpx.URL(urljoin(str(r.url), m.group(1)))
     if url.scheme == "http" and url.host in net.HOSTS["eqsl"]:
         url = url.copy_with(scheme="https")  # same host; other hosts are refused by net.request
+    if dest is not None:
+        net.download("eqsl", "GET", str(url), dest=dest, secrets=[password], redirects=True, progress=progress)
+        with open(dest, "rb") as fh:
+            return adif.parse(fh.read())
     f = net.request("eqsl", "GET", str(url), secrets=[password], timeout=TIMEOUT, redirects=True)
     return adif.parse(f.content)
 
@@ -193,14 +273,16 @@ def qrz_insert(key: str, record: dict[str, str], *, replace: bool = False, call:
     return ok, res.get("LOGID"), reason
 
 
-def qrz_fetch(key: str, *, call: str | None = None, page: int = 250) -> list[dict[str, str]]:
+def qrz_fetch(key: str, *, call: str | None = None, page: int = 250, after: int = 0,
+              on_page=None) -> list[dict[str, str]]:
     """Fetch the whole logbook, paging by log id.
 
     Always the whole logbook: QRZ.com answers every FETCH with MODSINCE with RESULT=FAIL COUNT=0 (checked with a
     real logbook on 2026-10-16), which would look like "nothing new". Matching the same record again changes
-    nothing, so a full fetch is safe; it is about one request per 250 QSOs."""
+    nothing, so a full fetch is safe; it is about one request per 250 QSOs. ``after`` continues an earlier run
+    from a log id; ``on_page(next_after, records, adif_text)`` is called for every page as it arrives, so a
+    caller can keep and apply each page before the next one is asked for."""
     out: list[dict[str, str]] = []
-    after = 0
     while True:
         res = qrz_call(key, "FETCH", call, OPTION=",".join([f"MAX:{page}", f"AFTERLOGID:{after}", "TYPE:ADIF"]))
         if res.get("RESULT") != "OK":
@@ -208,13 +290,14 @@ def qrz_fetch(key: str, *, call: str | None = None, page: int = 250) -> list[dic
             if "no log entries" in reason.lower() or res.get("COUNT") == "0":
                 break  # past the last record (or an empty logbook)
             raise ServiceError("QRZ.com: " + (reason or "fetch failed"))
-        _, recs = adif.parse(res.get("ADIF", ""))
+        text = res.get("ADIF", "")
+        _, recs = adif.parse(text)
         out.extend(recs)
-        if len(recs) < page:
-            break
         ids = [int(r.get("APP_QRZLOG_LOGID", "0") or 0) for r in recs]
         nxt = max(ids) + 1 if ids else 0
-        if nxt <= after:
+        if on_page is not None:
+            on_page(max(nxt, after), recs, text)
+        if len(recs) < page or nxt <= after:
             break
         after = nxt
     return out

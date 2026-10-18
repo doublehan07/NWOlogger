@@ -56,8 +56,9 @@ def _take(text: str, pos: int, n: int) -> tuple[str, int]:
     return by_chars, pos + n
 
 
-def parse(data: bytes | str) -> tuple[dict[str, str], list[dict[str, str]]]:
-    """Parse ADI text. Returns ``(header, records)``; tag names are upper-case."""
+def parse(data: bytes | str, *, complete_only: bool = False) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """Parse ADI text. Returns ``(header, records)``; tag names are upper-case. ``complete_only`` leaves out a
+    last record that has no ``<EOR>``: what a transfer that broke was writing when it stopped."""
     text = decode(data) if isinstance(data, bytes) else data
     header: dict[str, str] = {}
     records: list[dict[str, str]] = []
@@ -92,7 +93,7 @@ def parse(data: bytes | str) -> tuple[dict[str, str], list[dict[str, str]]]:
         n = int(length)
         value, pos = _take(text, pos, n)
         current[name] = value
-    if current and not in_header and any(k in current for k in ("CALL", "QSO_DATE")):
+    if current and not in_header and not complete_only and any(k in current for k in ("CALL", "QSO_DATE")):
         records.append(current)
     return header, records
 

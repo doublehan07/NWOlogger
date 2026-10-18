@@ -93,8 +93,9 @@ def test_missing_or_invalid_legacy_view_fits_selected_region(make_tab, state):
     assert fits == [(tab.map, grids.region_box("europe", "ON80"))]
 
 
-@pytest.mark.parametrize("lang,gesture", [("en", "Drag to rotate · Scroll to zoom"),
-                                        ("zh_CN", "拖动旋转 · 滚轮缩放")])
+@pytest.mark.parametrize("lang,gesture", [
+    ("en", "Drag with the right mouse button to rotate (Ctrl + drag on a trackpad) · Scroll to zoom"),
+    ("zh_CN", "右键拖动旋转（触控板上 Ctrl + 拖动）· 滚轮缩放")])
 def test_globe_interaction_hint_is_translated_and_wraps(make_tab, lang, gesture):
     make, _fits = make_tab
     previous = i18n.lang()

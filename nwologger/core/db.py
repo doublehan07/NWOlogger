@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 import uuid as uuidlib
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .. import APP_NAME, __version__
 from . import fields, timeutil
 from . import qso as qsomod
 from .fields import BY_COL, FIELDS, SERVICE_KEY_FIELDS
@@ -86,12 +88,67 @@ def _qso_table_sql() -> str:
     return "CREATE TABLE IF NOT EXISTS qso (\n    " + ",\n    ".join(cols) + "\n)"
 
 
+SQLITE_HEADER = b"SQLite format 3\x00"
+APPLICATION_ID = 0x4E574F4C  # "NWOL" in SQLite's own header: an NWOlogger log, whatever its tables are called
+
+
+class NotALogFile(Exception):
+    """A file that is not an NWOlogger log and must not be turned into one."""
+
+
+def sqlite_kind(path: str | os.PathLike) -> str | None:
+    """What a file is: ``"nwologger"`` (a log of ours), ``"mldx"`` (a MacLoggerDX database), ``"foreign"``
+    (another program's database), ``"empty"`` (a SQLite file without tables), ``"missing"`` (no file, or an empty
+    one) or None (not a SQLite file). Read-only: nothing is created or changed."""
+    p = Path(path)
+    if not p.exists() or p.stat().st_size == 0:
+        return "missing"
+    with open(p, "rb") as fh:
+        if fh.read(16) != SQLITE_HEADER:
+            return None
+    try:
+        con = sqlite3.connect(f"file:{p.resolve()}?mode=ro", uri=True)
+        try:
+            app_id = con.execute("PRAGMA application_id").fetchone()[0]
+            tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return "foreign"
+    if app_id == APPLICATION_ID:
+        return "nwologger"
+    if not tables:
+        return "empty"
+    if {"qso", "meta"} <= tables:  # a log from 0.1.8 or earlier, before the application id
+        return "nwologger"
+    if "qso_table_v008" in tables:
+        return "mldx"
+    return "foreign"
+
+
+def check_log_file(path: str | os.PathLike) -> str:
+    """Refuse to open, as a log, a file that is something else: its tables would be left in place and ours added,
+    and a user could believe their data had gone. Returns the kind for a file that may be opened."""
+    kind = sqlite_kind(path)
+    name = Path(path).name
+    if kind == "mldx":
+        raise NotALogFile(f"{name} is a MacLoggerDX database, not an NWOlogger log file. Import it with File → "
+                          "Import instead.")
+    if kind == "foreign":
+        raise NotALogFile(f"{name} is a database of another program, not an NWOlogger log file. It was left "
+                          "unchanged.")
+    if kind is None:
+        raise NotALogFile(f"{name} is not a SQLite file, so it cannot be an NWOlogger log.")
+    return kind
+
+
 class LogDB:
     """One open log file. Not thread-safe: use it from one thread (the GUI thread)."""
 
     def __init__(self, path: str | os.PathLike, *, backup_on_open: bool = True, backup_keep: int = 20):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        check_log_file(self.path)
         existed = self.path.exists() and self.path.stat().st_size > 0
         self.backup_keep = backup_keep
         self.conn = sqlite3.connect(str(self.path), isolation_level=None)
@@ -101,6 +158,8 @@ class LogDB:
         self._listeners: list[ChangeListener] = []
         self._in_batch = False
         self._pending: list[tuple[str, list[int]]] = []
+        self._touched: float | None = None  # when last_written_* was last stamped in this run
+        self.newer_version: str | None = None  # set when a newer NWOlogger wrote the log
         if existed and backup_on_open:
             self.backup("open")
         self._migrate()
@@ -125,6 +184,53 @@ class LogDB:
         if self.meta("schema_version") is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
             self.set_meta("created_at", timeutil.now_iso())
+            self.set_meta("created_by_version", __version__)
+        self._stamp_provenance()
+
+    def _stamp_provenance(self) -> None:
+        """Which NWOlogger made this log and which last wrote it, in the file itself: meta's ``app_name``,
+        ``created_by_version`` and ``created_at``, ``last_written_by_version`` and ``last_written_at``, and SQLite's
+        own header (``application_id`` "NWOL", ``user_version`` = the schema). Backups copy the file, so every
+        backup says where it came from. A log from 0.1.8 or earlier gains the keys on its first open, its
+        ``created_at`` untouched. A log written by a newer NWOlogger is noted in ``newer_version`` so the app can
+        warn; opening it changes nothing else of it."""
+        c = self.conn
+        if c.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID:
+            c.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        if c.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+            c.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        if self.meta("app_name") is None:
+            self.set_meta("app_name", APP_NAME)
+        if self.meta("created_by_version") is None:
+            self.set_meta("created_by_version", "0.1.8 or earlier")
+        if self.meta("last_written_by_version") is None:
+            self._touch(force=True)
+        try:
+            stored = int(self.meta("schema_version") or SCHEMA_VERSION)
+        except ValueError:
+            stored = SCHEMA_VERSION
+        newest = max(stored, c.execute("PRAGMA user_version").fetchone()[0])
+        self.newer_version = None
+        if newest > SCHEMA_VERSION:
+            self.newer_version = self.meta("last_written_by_version") or "?"
+            log.warning("The log was last written by NWOlogger %s with schema %s; this is %s with schema %s, so "
+                        "some of its data may not show", self.newer_version, newest, __version__, SCHEMA_VERSION)
+
+    def _touch(self, *, force: bool = False) -> None:
+        """Record that this NWOlogger wrote the log now: once a minute at most, so a run of small changes costs one
+        extra write, and never on an open without a change."""
+        now = time.monotonic()
+        if not force and self._touched is not None and now - self._touched < 60:
+            return
+        for key, value in (("last_written_by_version", __version__), ("last_written_at", timeutil.now_iso())):
+            self.conn.execute("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET "
+                              "value=excluded.value", (key, value))
+        self._touched = now
+
+    def provenance(self) -> dict[str, str | None]:
+        """For About → System: who made the log and who last wrote it."""
+        return {k: self.meta(k) for k in ("app_name", "created_by_version", "created_at", "last_written_by_version",
+                                          "last_written_at")}
 
     def close(self) -> None:
         try:
@@ -191,6 +297,53 @@ class LogDB:
                 pass
         return dest
 
+    # ------------------------------------------------------------------ downloads (service reports kept as files)
+    @property
+    def downloads_dir(self) -> Path:
+        """Where downloaded reports are kept, beside ``backups/``: a transfer that breaks leaves what arrived here,
+        and the last complete file of each service stays for inspection."""
+        return self.path.parent / "downloads"
+
+    def download_path(self, service: str, run: str, part: str | None = None, suffix: str = ".adi") -> Path:
+        """``downloads/lotw-20261018-112513-2023.adi``: the service, the run and, when the run has several files, the
+        part (a year, a QTH nickname, a station call)."""
+        self.downloads_dir.mkdir(parents=True, exist_ok=True)
+        tail = "-" + "".join(c if c.isalnum() else "-" for c in part).strip("-") if part else ""
+        return self.downloads_dir / f"{service}-{run}{tail}{suffix}"
+
+    @staticmethod
+    def download_run(name: str) -> str | None:
+        """The run id in a download's file name (``lotw-20261018-112513-2023.adi`` → ``20261018-112513``)."""
+        parts = name.split("-")
+        return f"{parts[1]}-{parts[2]}" if len(parts) >= 3 and parts[1].isdigit() and parts[2][:6].isdigit() else None
+
+    def prune_downloads(self, service: str, *, keep_runs: Iterable[str | None] = (), max_age_days: int = 30
+                        ) -> list[Path]:
+        """Delete this service's download files except the runs in ``keep_runs`` (the last complete run and the
+        run still unfinished), and any file older than ``max_age_days`` that belongs to no kept run. Returns the
+        files removed."""
+        keep = {r for r in keep_runs if r}
+        removed = []
+        if not self.downloads_dir.is_dir():
+            return removed
+        cutoff = datetime.now(UTC).timestamp() - max_age_days * 86400
+        for p in sorted(self.downloads_dir.glob(f"{service}-*")):
+            run = self.download_run(p.name)
+            if run in keep:
+                continue
+            try:
+                if run not in keep or p.stat().st_mtime < cutoff:
+                    p.unlink()
+                    removed.append(p)
+            except OSError:
+                pass
+        return removed
+
+    def first_qso_time(self) -> str | None:
+        """Time On of the earliest QSO, or None for an empty log."""
+        row = self.conn.execute("SELECT MIN(time_on) FROM qso WHERE time_on IS NOT NULL").fetchone()
+        return row[0] if row and row[0] else None
+
     def file_size(self) -> int:
         """Bytes the log takes on disk: the file and its write-ahead log."""
         wal = self.path.with_name(self.path.name + "-wal")
@@ -223,6 +376,7 @@ class LogDB:
         if self._in_batch:
             self._pending.append((kind, ids))
             return
+        self._touch()  # a single change outside a batch: the log was written now
         for fn in list(self._listeners):
             fn(kind, ids)
 
@@ -238,6 +392,7 @@ class LogDB:
         self._in_batch = True
         try:
             yield
+            self._touch()  # part of the same transaction
             self.conn.execute("COMMIT")
         except BaseException:
             self.conn.execute("ROLLBACK")
@@ -510,6 +665,12 @@ class LogDB:
         self.conn.execute("INSERT OR REPLACE INTO sync_state(service, key, value) VALUES(?, ?, ?)",
                           (service, key, value))
 
+    def sync_keys(self, service: str, prefix: str = "") -> list[str]:
+        """This service's sync_state keys (with a value), optionally those starting with ``prefix``."""
+        return [r["key"] for r in self.conn.execute(
+            "SELECT key FROM sync_state WHERE service=? AND value IS NOT NULL ORDER BY key", (service,))
+                if r["key"].startswith(prefix)]
+
     def sync_log_add(self, service: str, direction: str, started_at: str, *, sent: int = 0, received: int = 0,
                      matched: int = 0, errors: int = 0, message: str = "") -> int:
         cur = self.conn.execute(
@@ -594,4 +755,7 @@ def _normalize_changes(before: dict, changes: dict) -> dict:
         touched |= {"mode", "submode", "mode_group"}
     if "sat_name" in keys:
         touched.add("prop_mode")
+    for col, vucc in qsomod.GRID_PAIRS.items():
+        if col in keys:  # several grids in the one field go to the VUCC field too
+            touched.add(vucc)
     return {k: norm.get(k) for k in touched if k in BY_COL}

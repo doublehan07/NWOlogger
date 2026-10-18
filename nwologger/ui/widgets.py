@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import threading
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
-from PySide6.QtCore import QDateTime, QObject, QSize, Qt, QTimeZone, Signal
+from PySide6.QtCore import QDateTime, QObject, QSize, Qt, QTimer, QTimeZone, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDateTimeEdit,
@@ -17,10 +17,19 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QStyle,
+    QStyleOptionToolButton,
+    QStylePainter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from .. import i18n
@@ -249,12 +258,121 @@ def hbox(*widgets: QWidget | None, spacing: int = 6, margins: tuple[int, int, in
     return lay
 
 
+# ------------------------------------------------------------------ a drop-down list with tick boxes
+
+class CheckListButton(QToolButton):
+    """A button that drops down a list with tick boxes (the grid map's Callsigns and Grids): the button names the
+    ticked entries, the list shows each with a count, and quick buttons above it tick a set at once."""
+
+    changed = Signal()
+
+    def __init__(self, title: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.title = title
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)  # may shrink, see paintEvent
+        self._menu = QMenu(self)
+        box = QWidget(self._menu)
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(8, 6, 8, 6)
+        self.quick_row = QHBoxLayout()
+        lay.addLayout(self.quick_row)
+        self.list = QListWidget(box)
+        self.list.setMinimumWidth(300)
+        self.list.setMinimumHeight(180)
+        self.list.itemChanged.connect(self._item_changed)
+        lay.addWidget(self.list)
+        action = QWidgetAction(self._menu)
+        action.setDefaultWidget(box)
+        self._menu.addAction(action)
+        self.setMenu(self._menu)
+        self._quiet = False
+        self._update_text()
+
+    def add_quick(self, text: str, fn: Callable[[], None]) -> QPushButton:
+        b = QPushButton(text)
+        b.setProperty("flat", True)
+        b.clicked.connect(fn)
+        self.quick_row.addWidget(b)
+        return b
+
+    def set_items(self, items: list[tuple[str, str, bool]]) -> None:
+        """``(key, text, checked)`` per entry; the ticks of entries that stay are kept by the caller."""
+        self._quiet = True
+        self.list.clear()
+        for key, text, checked in items:
+            it = QListWidgetItem(text)
+            it.setData(Qt.ItemDataRole.UserRole, key)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            self.list.addItem(it)
+        self._quiet = False
+        self._update_text()
+
+    def keys(self) -> list[str]:
+        return [self.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list.count())]
+
+    def checked(self) -> list[str]:
+        return [self.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list.count())
+                if self.list.item(i).checkState() == Qt.CheckState.Checked]
+
+    def set_checked(self, keys: Iterable[str]) -> None:
+        wanted = {k.upper() for k in keys}
+        self._quiet = True
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            it.setCheckState(Qt.CheckState.Checked if str(it.data(Qt.ItemDataRole.UserRole)).upper() in wanted
+                             else Qt.CheckState.Unchecked)
+        self._quiet = False
+        self._update_text()
+        self.changed.emit()
+
+    def _item_changed(self, _item) -> None:
+        if not self._quiet:
+            self._update_text()
+            self.changed.emit()
+
+    def _chrome(self) -> int:
+        """The button's width beyond its text: padding and the menu arrow."""
+        return self.sizeHint().width() - self.fontMetrics().horizontalAdvance(self.text())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        """On a narrow screen the button gives way down to its title and a few characters; the text is elided."""
+        sh = super().minimumSizeHint()
+        return QSize(min(sh.width(), self._chrome() + self.fontMetrics().horizontalAdvance(self.title + ": WWWWW")),
+                     sh.height())
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API
+        opt = QStyleOptionToolButton()
+        self.initStyleOption(opt)
+        room = self.width() - self._chrome()
+        if opt.fontMetrics.horizontalAdvance(opt.text) > room:
+            opt.text = opt.fontMetrics.elidedText(opt.text, Qt.TextElideMode.ElideRight, room)
+        painter = QStylePainter(self)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, opt)
+
+    def _update_text(self) -> None:
+        on, total = self.checked(), self.list.count()
+        if not total:
+            text = tr("none in the log")
+        elif len(on) == total:
+            text = tr("all") + f" ({total})"
+        elif not on:
+            text = tr("none")
+        else:
+            shown = ", ".join(on[:2]) + (f" +{len(on) - 2}" if len(on) > 2 else "")
+            text = shown
+        self.setText(f"{self.title}: {text}")
+
+
 # ------------------------------------------------------------------ background work
 
 class _Signals(QObject):
     done = Signal(object)
     failed = Signal(str)
     progress = Signal(int, int, str)
+    event = Signal(object)  # anything the work reports on the way (a page, a part, bytes received)
 
 
 class Task:
@@ -291,19 +409,43 @@ class Task:
 _alive: set[Task] = set()
 
 
+def drop_tasks() -> None:
+    """Forget the tasks still running (quitting): their threads are daemons and their signal objects may go now,
+    while the application object exists; a late result is swallowed by :meth:`Task._emit`."""
+    _alive.clear()
+
+
+def _retire(t: Task) -> None:
+    """Drop the GUI thread's reference to a finished task only once its thread has ended, so the task and its
+    signals object are destroyed on the GUI thread. Destroyed on its own thread (the thread's last reference goes
+    when it leaves ``run``), the signals would be disconnected from there inside Qt's connection mutex while
+    taking the GIL, which deadlocks with a GUI thread holding the GIL inside a Qt call (see applog.Watchdog.stop)."""
+    t.thread.join(timeout=0.2)
+    if t.thread.is_alive():
+        QTimer.singleShot(100, lambda: _retire(t))
+        return
+    _alive.discard(t)
+
+
 def run_async(fn: Callable[..., Any], *args: Any, on_done: Callable[[Any], None] | None = None,
-              on_error: Callable[[str], None] | None = None, **kw: Any) -> Task:
-    """Run ``fn`` on a worker thread; callbacks run on the GUI thread. ``fn`` must not touch the DB."""
+              on_error: Callable[[str], None] | None = None, on_event: Callable[[Any], None] | None = None,
+              **kw: Any) -> Task:
+    """Run ``fn`` on a worker thread; callbacks run on the GUI thread. ``fn`` must not touch the DB. With
+    ``on_event``, ``fn`` is called with an ``event`` keyword: a function it may call with any object, which reaches
+    ``on_event`` on the GUI thread, in order, before ``on_done``."""
     t = Task(fn, *args, **kw)
+    if on_event is not None:
+        t.kw["event"] = lambda payload: t._emit(t.signals.event, payload)  # noqa: SLF001 - its own task
+        t.signals.event.connect(on_event, Qt.ConnectionType.QueuedConnection)
     _alive.add(t)
 
     def _done(res: Any) -> None:
-        _alive.discard(t)
+        _retire(t)
         if on_done:
             on_done(res)
 
     def _fail(msg: str) -> None:
-        _alive.discard(t)
+        _retire(t)
         if on_error:
             on_error(msg)
 

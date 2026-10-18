@@ -1,5 +1,17 @@
 {
  "_source": "LoTW satellite list (lotw.arrl.org FAQ) merged with TQSL configuration v11.34, 2026-10-16",
+ "_orbits": "LEO: low Earth orbit (nearly every amateur satellite) · MEO: medium Earth orbit (IO-117) · HEO: highly elliptical orbit (AO-10, AO-13, AO-40, AO-24) · GEO: geostationary (QO-100). A satellite without an orbit is LEO. The grid map's Non-geostationary category spans the orbits listed under non_geostationary. Edit freely.",
+ "orbits": {
+  "LEO": "Low Earth orbit",
+  "MEO": "Medium Earth orbit",
+  "HEO": "Highly elliptical orbit",
+  "GEO": "Geostationary orbit"
+ },
+ "non_geostationary": [
+  "LEO",
+  "MEO",
+  "HEO"
+ ],
  "service_names": {
   "eqsl": {
    "ARISS": "ISS"
@@ -48,7 +60,8 @@
    "uplink": 2400.25,
    "downlink": 10489.75,
    "mode": null,
-   "sat_mode": "SX"
+   "sat_mode": "SX",
+   "orbit": "GEO"
   },
   {
    "name": "AO-123",
@@ -68,7 +81,8 @@
   },
   {
    "name": "IO-117",
-   "description": "Italy-OSCAR 117 (Greencube)"
+   "description": "Italy-OSCAR 117 (Greencube)",
+   "orbit": "MEO"
   },
   {
    "name": "FO-29",
@@ -92,7 +106,8 @@
   },
   {
    "name": "AO-10",
-   "description": "AMSAT-OSCAR 10"
+   "description": "AMSAT-OSCAR 10",
+   "orbit": "HEO"
   },
   {
    "name": "AO-109",
@@ -100,7 +115,8 @@
   },
   {
    "name": "AO-13",
-   "description": "AMSAT-OSCAR 13"
+   "description": "AMSAT-OSCAR 13",
+   "orbit": "HEO"
   },
   {
    "name": "AO-16",
@@ -112,7 +128,8 @@
   },
   {
    "name": "AO-24",
-   "description": "Arsene-OSCAR 24"
+   "description": "Arsene-OSCAR 24",
+   "orbit": "HEO"
   },
   {
    "name": "AO-27",
@@ -132,7 +149,8 @@
   },
   {
    "name": "AO-40",
-   "description": "AMSAT-OSCAR 40"
+   "description": "AMSAT-OSCAR 40",
+   "orbit": "HEO"
   },
   {
    "name": "AO-51",
@@ -508,7 +526,8 @@
   },
   {
    "name": "Arsene",
-   "description": "Arsene-OSCAR 24"
+   "description": "Arsene-OSCAR 24",
+   "orbit": "HEO"
   },
   {
    "name": "CAS-2T",

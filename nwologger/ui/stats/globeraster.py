@@ -27,6 +27,12 @@ EMPTY = COLUMNS * ROWS  # the transparent table entry
 DAY_ALTITUDE, NIGHT_ALTITUDE = 1.0, -1.0
 _WORKERS = max(1, min(8, os.cpu_count() or 1))
 _POOL = ThreadPoolExecutor(_WORKERS, thread_name_prefix="globe") if _WORKERS > 1 else None
+
+
+def shutdown() -> None:
+    """Stop the render threads (quitting): nothing is waited for, frames in flight are dropped."""
+    if _POOL is not None:
+        _POOL.shutdown(wait=False, cancel_futures=True)
 _PARALLEL_PIXELS = 60_000
 _FORMAT = QImage.Format.Format_ARGB32_Premultiplied
 _PER_LON = 90 / math.pi  # square columns per radian of longitude (2° each)

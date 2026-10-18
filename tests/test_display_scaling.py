@@ -66,6 +66,7 @@ def test_preferences_all_pages_fit_and_scroll(preferences_data, qtbot, qapp):
         "Satellites": dialog.satmap,
         "Database": _button(dialog, "Show backups folder"),
         "Map": _button(dialog, "Clear map cache"),
+        "Sync positions": dialog.positions_page.lock_btn,
     }
     button_box = dialog.findChild(QDialogButtonBox)
     for index in range(dialog.tabs.count()):

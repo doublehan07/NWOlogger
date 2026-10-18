@@ -59,6 +59,47 @@ def clean(col: str, value: Any) -> Any:
     return str(value)
 
 
+GRID_SPLIT_RE = re.compile(r"[,;/\s]+")
+GRID_PAIRS = {"gridsquare": "vucc_grids", "my_gridsquare": "my_vucc_grids"}  # one Grid field, two ADIF fields
+
+
+def split_grids(text: str | None) -> list[str]:
+    """The grids in one Grid field: ``OM88, OM89``, ``OM88;OM89`` or ``OM88/OM89`` (a station on a grid line gives
+    two or four), each normalised, in order, without repeats."""
+    out: list[str] = []
+    for part in GRID_SPLIT_RE.split(str(text or "").strip()):
+        g = normalize_grid(part)
+        if g and g not in out:
+            out.append(g)
+    return out
+
+
+def squares_of(text: str | None) -> list[str]:
+    """The 4-character squares of the valid grids in a field, in order, without repeats."""
+    out: list[str] = []
+    for g in split_grids(text):
+        if GRID_RE.match(g) and g[:4].upper() not in out:
+            out.append(g[:4].upper())
+    return out
+
+
+def grid_columns(text: str | None, col: str = "gridsquare", vucc: str | None = None) -> dict:
+    """What one Grid field writes: the first grid to ``col`` (GRIDSQUARE) and, when there are several, all of
+    their 4-character squares to the VUCC field (ADIF's VUCC_GRIDS); one grid alone clears it."""
+    vucc = vucc or GRID_PAIRS[col]
+    found, squares = split_grids(text), squares_of(text)
+    return {col: found[0] if found else None, vucc: ",".join(squares) if len(squares) > 1 else None}
+
+
+def grids_text(q: dict, col: str = "gridsquare", vucc: str | None = None) -> str:
+    """One Grid field's text for a QSO or a station profile: its grid, then the other VUCC grids
+    (``OM88da, OM89``); what :func:`grid_columns` reads back."""
+    vucc = vucc or GRID_PAIRS[col]
+    first = (q.get(col) or "").strip()
+    others = [g for g in split_grids(q.get(vucc)) if g[:4].upper() != first[:4].upper()]
+    return ", ".join([first, *others] if first else others)
+
+
 def normalize_grid(grid: str | None) -> str | None:
     if not grid:
         return None
@@ -101,9 +142,14 @@ def normalize(qso: dict) -> dict:
     if "band_rx" in q or "freq_rx" in q:
         b = bands.normalize_band(q.get("band_rx")) or bands.band_for_freq(q.get("freq_rx"))
         q["band_rx"] = b or (q.get("band_rx").lower() if q.get("band_rx") else None)
-    for col in ("gridsquare", "my_gridsquare"):
+    for col, vucc in GRID_PAIRS.items():
         if q.get(col):
-            q[col] = normalize_grid(q[col])
+            if len(split_grids(q[col])) > 1:  # several grids typed or imported into the one field
+                q.update(grid_columns(q[col], col, vucc))
+            else:
+                q[col] = normalize_grid(q[col])
+        if q.get(vucc):  # ADIF: 4-character squares, comma separated, no spaces
+            q[vucc] = ",".join(squares_of(q[vucc])) or None
     if q.get("sat_name") and not q.get("prop_mode"):
         q["prop_mode"] = "SAT"
     for col in ("time_on", "time_off"):
