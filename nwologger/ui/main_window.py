@@ -831,8 +831,7 @@ class MainWindow(QMainWindow):
     def sync_all(self) -> None:
         """Downloads only. Uploads are always your choice (Upload pending / Upload selected): a QSO sent to LoTW
         or eQSL can't be taken back, and eQSL sends a card to the other station."""
-        for svc in ("lotw", "eqsl", "qrz"):
-            self.sync.download(svc)
+        self.sync.downloads(["lotw", "eqsl", "qrz"])
 
     def open_prefs(self, page: str | None = None) -> None:
         dlg = PrefsDialog(self.db, self.prefs, self, page=page)

@@ -805,7 +805,7 @@ def test_map_preferences(win, qtbot, keyring_store):
 def test_sync_everything_never_uploads(win, monkeypatch):
     downloads = []
     monkeypatch.setattr(win.sync, "upload", lambda *a, **k: pytest.fail("Sync everything uploaded"))
-    monkeypatch.setattr(win.sync, "download", lambda svc: downloads.append(svc))
+    monkeypatch.setattr(win.sync, "downloads", lambda services: downloads.extend(services))
     win.sync_all()
     assert downloads == ["lotw", "eqsl", "qrz"]
 

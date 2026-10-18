@@ -119,14 +119,17 @@ def test_successful_download_starts_guard_before_idle_and_survives_restart(downl
 
 
 @pytest.mark.parametrize("service", SERVICES)
-def test_active_download_blocks_duplicates_without_timestamp(download, service):
+def test_active_download_blocks_duplicates_without_timestamp(download, monkeypatch, service):
     ctrl = download.ctrl
+    warnings = []
+    monkeypatch.setattr(sync_controller.QMessageBox, "warning", lambda _parent, _title, text: warnings.append(text))
     ctrl.download(service)
     assert service + "down" in ctrl.busy
     assert ctrl.db.sync_get(service, "last_download") is None
     ctrl.download(service)
     assert len(download.tasks) == 1
     assert not download.outcomes
+    assert len(warnings) == 1 and "another download is still in progress" in warnings[0]
     download.finish()
 
 

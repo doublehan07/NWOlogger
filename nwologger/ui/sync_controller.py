@@ -272,6 +272,7 @@ class SyncController(QObject):
         super().__init__(parent)
         self.db, self.prefs, self.win = db, prefs, parent
         self.busy: set[str] = set()
+        self.progress: dict[str, QProgressDialog] = {}  # busy key → its progress window, shown or hidden
         self.jobs: dict[str, tqsl.Job] = {}
         self.results: SyncResults | None = None
         self.queued: dict[str, set[int]] = {}  # service → QSOs uploaded when logged, waiting for the gap
@@ -347,13 +348,31 @@ class SyncController(QObject):
             return False
         return True
 
-    def _progress(self, text: str, cancel: str | None = None) -> QProgressDialog:
+    def _progress(self, key: str, text: str, cancel: str | None = None) -> QProgressDialog:
+        """The progress window of the run ``key`` (e.g. "lotwdown"); Hide only hides it."""
         dlg = QProgressDialog(text, cancel or tr("Hide"), 0, 0, self.win)
         dlg.setWindowTitle("NWOlogger")
         dlg.setWindowModality(Qt.WindowModality.NonModal)
         dlg.setMinimumDuration(300)
         dlg.show()
+        self.progress[key] = dlg
         return dlg
+
+    def _still_running(self, names: list[str], direction: str) -> None:
+        """Asked again while a run is going: say so, skip the request, and show the running one's progress window
+        again (it may have been hidden)."""
+        key = "down" if direction == "download" else "up"
+        log.info("%s %s asked for again while one is still running: skipped",
+                 ", ".join(apply.SERVICES[s] for s in names), direction)
+        QMessageBox.warning(self.win, "NWOlogger", ", ".join(apply.SERVICES[s] for s in names) + ": " + tr(
+            "another download is still in progress." if key == "down" else "another upload is still in progress.") +
+            "\n\n" + tr("This request is skipped. The progress window of the one still running is shown again."))
+        for service in names:
+            dlg = self.progress.get(service + key)
+            if dlg is not None:
+                dlg.show()
+                dlg.raise_()
+                dlg.activateWindow()
 
     @staticmethod
     def _safe(msg: str, secrets=()) -> str:
@@ -431,6 +450,7 @@ class SyncController(QObject):
         key = service + ("down" if direction == "download" else "up")
         self.busy.discard(key)
         self.jobs.pop(key, None)
+        self.progress.pop(key, None)
         if not self.busy:
             self.idle.emit()
 
@@ -507,7 +527,7 @@ class SyncController(QObject):
             return
         if key in self.busy:
             if not quiet:
-                self.message.emit(f"{apply.SERVICES[service]}: " + tr("an upload is already running"))
+                self._still_running([service], "upload")
             return
         if self._too_soon(service, "upload"):
             return
@@ -564,7 +584,7 @@ class SyncController(QObject):
         started = timeutil.now_iso()
         ref = self._start("lotw", "upload", f"{sum(len(j[2]) for j in jobs)} QSOs, {len(jobs)} station location(s)")
         job = self.jobs["lotwup"] = tqsl.Job()
-        dlg = self._progress(tr("Signing and uploading to LoTW with TQSL…") + "\n\n" +
+        dlg = self._progress("lotwup", tr("Signing and uploading to LoTW with TQSL…") + "\n\n" +
                              tr("If TQSL asks for something, such as your certificate passphrase, answer it in "
                                 "the TQSL window. Cancel stops TQSL."))
         stop = QPushButton(tr("Cancel"))
@@ -626,7 +646,7 @@ class SyncController(QObject):
         chunks = [recs[i:i + 250] for i in range(0, len(recs), 250)]
         started = timeutil.now_iso()
         ref = self._start("eqsl", "upload", f"{len(recs)} QSOs")
-        dlg = self._progress(tr("Uploading to eQSL…"))
+        dlg = self._progress("eqslup", tr("Uploading to eQSL…"))
 
         def work():
             out = []
@@ -677,7 +697,7 @@ class SyncController(QObject):
                  q.get("qrzcom_qso_upload_status") == "M") for c, qs in by_call.items() if keys.get(c) for q in qs]
         started = timeutil.now_iso()
         ref = self._start("qrz", "upload", f"{len(jobs)} QSOs")
-        dlg = self._progress(tr("Uploading to QRZ.com Logbook…"))
+        dlg = self._progress("qrzup", tr("Uploading to QRZ.com Logbook…"))
 
         def work():
             out = []
@@ -721,7 +741,7 @@ class SyncController(QObject):
             jobs.append((q["id"], rec, key))
         started = timeutil.now_iso()
         ref = self._start("hrdlog", "upload", f"{len(jobs)} QSOs")
-        dlg = self._progress(tr("Uploading to HRDLog…"))
+        dlg = self._progress("hrdlogup", tr("Uploading to HRDLog…"))
 
         def work():
             out = []
@@ -752,16 +772,21 @@ class SyncController(QObject):
 
     # ------------------------------------------------------------------ download
     def download(self, service: str) -> None:
-        if service == "hrdlog":
-            self.report("hrdlog", "info", lambda t: t("HRDLog.net has no public download API, so NWOlogger can "
-                                                      "only upload to it. (It sends no confirmations back.)"))
-            return
-        if service + "down" in self.busy:
-            self.message.emit(f"{apply.SERVICES[service]}: " + tr("a download is already running"))
-            return
-        if self._too_soon(service, "download"):
-            return
-        getattr(self, f"_download_{service}")()
+        self.downloads([service])
+
+    def downloads(self, names: list[str]) -> None:
+        """Start these downloads (Sync everything asks for three); the ones still running get one warning."""
+        running = [s for s in names if s + "down" in self.busy]
+        for service in names:
+            if service in running:
+                continue
+            if service == "hrdlog":
+                self.report("hrdlog", "info", lambda t: t("HRDLog.net has no public download API, so NWOlogger "
+                                                          "can only upload to it. (It sends no confirmations back.)"))
+            elif not self._too_soon(service, "download"):
+                getattr(self, f"_download_{service}")()
+        if running:
+            self._still_running(running, "download")
 
     RESUME_KEYS = {"lotw": ("last_qsl", "last_qsorx"), "eqsl": ("rcvd_since",)}
 
@@ -790,7 +815,7 @@ class SyncController(QObject):
         started = timeutil.now_iso()
         ref = self._start("lotw", "download", f"confirmations since {since_qsl or 'the start'}, uploads since "
                                               f"{since_rx or 'the start'}")
-        dlg = self._progress(tr("Downloading from LoTW…"))
+        dlg = self._progress("lotwdown", tr("Downloading from LoTW…"))
         t0 = time.monotonic()
 
         def work():
@@ -847,7 +872,7 @@ class SyncController(QObject):
         since = self.db.sync_get("eqsl", "rcvd_since")
         started = timeutil.now_iso()
         ref = self._start("eqsl", "download", f"{len(nicks)} QTH nickname(s), since {since or 'the start'}")
-        dlg = self._progress(tr("Downloading from eQSL…"))
+        dlg = self._progress("eqsldown", tr("Downloading from eQSL…"))
         t0 = time.monotonic()
 
         def work():
@@ -895,7 +920,7 @@ class SyncController(QObject):
             return
         started = timeutil.now_iso()
         ref = self._start("qrz", "download", f"{len(keys)} logbook(s)")
-        dlg = self._progress(tr("Downloading from QRZ.com Logbook…"))
+        dlg = self._progress("qrzdown", tr("Downloading from QRZ.com Logbook…"))
         t0 = time.monotonic()
 
         def work():
