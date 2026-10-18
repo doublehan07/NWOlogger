@@ -117,7 +117,8 @@ QLineEdit:disabled, QComboBox:disabled {{ color: {t.muted}; background: {t.surfa
 QLineEdit[autofill="true"], QComboBox[autofill="true"] {{ background: {t.tint}; }}
 QDateTimeEdit[invalid="true"] {{ border: 1px solid {t.bad}; color: {t.bad}; }}
 QPushButton#SyncBtn {{ padding: 3px 8px; font-family: "{mono}"; }}
-QPushButton#SyncBtn:checked {{ background: {t.accent_soft}; color: {t.accent}; border: 1px solid {t.accent}; }}
+QPushButton#SyncBtn:checked, QPushButton#TerminatorBtn:checked {{ background: {t.accent_soft}; color: {t.accent};
+    border: 1px solid {t.accent}; }}
 QLineEdit[opstate="bad"] {{ border: 2px solid {t.bad}; }}
 QLineEdit[opstate="check"] {{ border: 2px solid {t.warn}; background: {t.warn_soft}; }}
 QLineEdit[guess="true"] {{ background: {t.tint}; font-style: italic; color: {t.muted}; }}

@@ -6,6 +6,7 @@ import math
 
 import numpy as np
 import pytest
+from PySide6.QtCore import QRectF
 from PySide6.QtGui import QFont, QImage, QPainter
 
 from nwologger.core import grids
@@ -90,3 +91,44 @@ def test_every_call_appears_at_the_same_zoom(view, monkeypatch):
         assert drawn in (set(), set(CALLS.values())), view.zoom
         seen.add(bool(drawn))
     assert seen == {False, True}
+
+
+def test_once_calls_appear_every_square_in_view_has_one_far_from_the_centre_too(view, monkeypatch):
+    # A view centred at 35° N, squares from 20° N to 52° N: the northern ones are narrower on the globe.
+    view.resize(900, 900)
+    view.center_lon, view.center_lat = 116, 35
+    squares = {"OL60": "BA1AB", "OM65": "BG5CZD", "ON70": "BH4TSC", "ON72": "BA8TSK/9", "OO72": "BD7TSD"}
+    view.set_cells(_cells(squares))
+    for step in range(80):
+        view.zoom = 4.0 + step * 0.05
+        view._geometry_key = None
+        fonts = _labels(view, monkeypatch)
+        drawn = set(fonts) & set(squares.values())
+        assert drawn in (set(), set(squares.values())), (view.zoom, drawn)
+        assert all(QRectF(view.rect()).contains(view.to_screen(*grids.center(sq)[::-1])) for sq in squares)
+        if drawn:
+            north, south = fonts["BD7TSD"].pointSizeF(), fonts["BA1AB"].pointSizeF()
+            assert north < south  # each at its own square's size
+            break
+    else:
+        pytest.fail("no calls at any zoom")
+    names = set(fonts) & set(squares)
+    assert names in (set(), set(squares))  # names, too, on every square or none
+
+
+def test_slivers_at_the_limb_stay_blank(view, monkeypatch):
+    view.resize(2400, 2400)  # the whole disk in view at a zoom where the centre has labels
+    view.center_lon, view.center_lat = 1, 0.5
+    view.zoom = 4.7
+    assert view._centre_call_px() >= gridmap.CALL_MIN_PX and view._radius() * 2 < 2400
+    # At 0°, 40° and 74° to the east: the last is still on the front of the globe, but its text would be tiny.
+    view.set_cells(_cells({"JJ00": "BA1AB", "LJ00": "BG6TSX", "MJ70": "BG5CZD"}))
+    lat, lon = grids.center("MJ70")
+    assert view._camera().project(lon, lat)[2] >= 0.15  # not left out for facing away
+    for sq in ("LJ00", "MJ70"):
+        lat, lon = grids.center(sq)
+        assert QRectF(view.rect()).contains(view.to_screen(lon, lat))  # on screen, not just beyond the view
+    fonts = _labels(view, monkeypatch)
+    assert "BA1AB" in fonts and "BG6TSX" in fonts  # well inside the disk: labelled, smaller
+    assert fonts["BG6TSX"].pointSizeF() < fonts["BA1AB"].pointSizeF()
+    assert "BG5CZD" not in fonts  # a sliver at the limb: blank

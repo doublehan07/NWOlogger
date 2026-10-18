@@ -134,3 +134,26 @@ def test_button_remains_visible_in_scaled_screen_viewport(make_tab, qtbot, qapp,
             page.takeWidget()  # the fixture owns shutdown and disposal of the tab
     finally:
         i18n.load(previous)
+
+
+def test_button_looks_selected_while_the_night_side_is_shown(make_tab, qapp):
+    from PySide6.QtGui import QColor
+
+    from nwologger.ui import theme
+
+    old = theme.mode()
+    tokens = theme.apply(qapp, "light")
+    try:
+        tab = make_tab()
+        button = tab.terminator_btn
+        button.resize(button.sizeHint())
+        assert button.isChecked()
+        point = QPoint(6, button.height() // 2)
+        on = button.grab().toImage().pixelColor(point)
+        button.setChecked(False)
+        off = button.grab().toImage().pixelColor(point)
+        soft = QColor(tokens.accent_soft)
+        assert on != off
+        assert all(abs(a - b) <= 12 for a, b in zip(on.getRgb()[:3], soft.getRgb()[:3], strict=True))
+    finally:
+        theme.apply(qapp, old)

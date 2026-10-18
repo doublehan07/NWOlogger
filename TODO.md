@@ -48,14 +48,15 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 From testing the first 0.1.8 build (the version stays 0.1.8):
 
 - [x] **macOS disk image:** the app next to an Applications link, with an arrow between, to drag it in (dmgbuild, `packaging/dmg_settings.py`); the installed app ejects the disk image when it starts from Applications
-- [x] **Grid map full screen:** *Full screen* (or the system's full-screen key) shows the map alone; Esc, its *Exit full screen* button or closing the window brings it back, and a click on a square comes back to show its QSOs
-- [x] **Calls the same size:** every call is sized as an eight-character one, so a five-letter call is no larger than a six-letter one and all calls appear at the same zoom; thin (normal weight), up to 12 pt (names 10 pt); a longer call is made smaller to fit
-- [x] **Save as PNG:** the whole globe, facing the way the map faces, on a 2000 × 2000 image named `<operator>-grid-map-NWOlogger.png`, with "NWOlogger" and the version at the top, after the tiles of the whole hemisphere have arrived
+- [x] **Grid map full screen:** *Full screen* (or the system's full-screen key) shows the map alone, with *Save as PNG* in its corner; Esc, its *Exit full screen* button or closing the window brings it back, and a click on a square comes back to show its QSOs
+- [x] **Calls the same size:** a square's calls all have one size (a seventh of its width, so an eight-character call fits), so a five-letter call is no larger than a six-letter one and all calls appear at the same zoom; thin (normal weight), up to 10 pt, with names a fifth smaller (8 pt); a longer call is made smaller to fit
+- [x] **Save as PNG:** the map as you see it, at twice its size in pixels, named `<operator>-grid-map-NWOlogger.png`, with "NWOlogger" and the version in a band above the map, after its imagery has arrived
 - [x] **Imagery after much zooming and dragging:** a view seen before could come back without imagery, because tiles dropped from memory were never asked for again; now they load again (from the disk cache), coarse tiles stay as stand-ins, and a failed tile is retried after 30 s
 - [x] **A clear grey line:** the night shade goes from none to full within ±1° of solar altitude, as on PSK Reporter's map, and covers the squares too
 - [x] **Space behind the globe:** stars, a faint Milky Way and an atmosphere glow at the limb
 - [x] **Asking again while a run goes on:** a second download or upload with the same service shows "another download (upload) is still in progress", starts nothing and brings back its hidden progress window; Sync everything warns once for all still running
 - [x] Preferences: the language hint names the *Save* button (it said OK)
+- [x] The *Day/night* button looks selected while the night side is shown
 
 Before that:
 

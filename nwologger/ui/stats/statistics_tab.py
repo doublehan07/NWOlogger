@@ -88,7 +88,7 @@ class StatisticsTab(QWidget):
         for key, name in grids.REGION_NAMES.items():
             self.region.addItem(tr(name), key)
         save = QPushButton(tr("Save as PNG"))
-        save.setToolTip(tr("Save the whole globe, facing the way it faces now, as a 2000 × 2000 pixel image"))
+        save.setToolTip(tr("Save the map as you see it, at twice its size in pixels"))
         save.clicked.connect(self.save_png)
         self.full_btn = QPushButton(tr("Full screen"))
         self.full_btn.setToolTip(tr("Show the map on the whole screen; Esc comes back"))
@@ -127,6 +127,7 @@ class StatisticsTab(QWidget):
         self.map = GridMapView(self)
         self.map.square_clicked.connect(self._square_clicked)
         self.map.full_screen_toggled.connect(self.toggle_full_screen)
+        self.map.save_requested.connect(self.save_png)
         lay.addWidget(self.map, 1)
         self.away = QLabel(tr("The map is on the whole screen. Press Esc there to bring it back."))
         self.away.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -143,6 +144,7 @@ class StatisticsTab(QWidget):
         self._dirty = True
         self._shut = False
         self._snapshot: GlobeSnapshot | None = None
+        self._progress: QProgressDialog | None = None  # the running export's
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(800)
@@ -289,6 +291,7 @@ class StatisticsTab(QWidget):
             m.show()
             self.window().activateWindow()
             m.setFocus()
+            self._show_progress()
             return
         screen = self.screen()
         m.setWindowFlags(Qt.WindowType.Window)
@@ -300,6 +303,7 @@ class StatisticsTab(QWidget):
         m.showFullScreen()
         m.activateWindow()
         m.setFocus()
+        self._show_progress()
 
     def _square_clicked(self, sq: str) -> None:
         if self.is_full_screen():
@@ -314,34 +318,60 @@ class StatisticsTab(QWidget):
         call = re.sub(r"[^A-Z0-9]+", "-", call).strip("-")
         return f"{call}-grid-map-NWOlogger.png" if call else "grid-map-NWOlogger.png"
 
-    def save_png(self) -> None:
-        """The whole globe, facing the way the map faces, once its imagery is in (a moment for tiles not yet seen)."""
-        if self._snapshot is not None:
+    def _dialog_owner(self) -> QWidget:
+        """Where dialogs about the map open: on the map's own window while it fills the screen."""
+        return self.map if self.is_full_screen() else self
+
+    def _show_progress(self) -> None:
+        """Bring the running export's progress window to the front, on the window that shows the map."""
+        progress = self._progress
+        if progress is None:
             return
+        owner = self._dialog_owner()
+        if progress.parentWidget() is not owner:
+            progress.setParent(owner, progress.windowFlags())
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+        progress.raise_()
+        progress.activateWindow()
+
+    def save_png(self) -> None:
+        """The map as you see it, at twice its size, once its imagery is in (a moment for finer tiles). In full
+        screen the dialogs open on the map's own window. Asked again while one runs: its progress comes forward."""
+        if self._snapshot is not None:
+            self._show_progress()
+            return
+        owner = self._dialog_owner()
         folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.PicturesLocation) or str(Path.home())
-        path, _ = QFileDialog.getSaveFileName(self, tr("Save as PNG"), str(Path(folder) / self.png_name()),
+        path, _ = QFileDialog.getSaveFileName(owner, tr("Save as PNG"), str(Path(folder) / self.png_name()),
                                               "PNG (*.png)")
         if not path:
             return
         if not path.lower().endswith(".png"):
             path += ".png"
-        progress = QProgressDialog(tr("Drawing the whole globe…"), tr("Cancel"), 0, 0, self)
+        progress = self._progress = QProgressDialog(tr("Drawing the map…"), tr("Cancel"), 0, 0, owner)
         progress.setWindowTitle(tr("Save as PNG"))
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(500)
+        progress.setValue(0)  # without a value Qt waits four seconds before showing it
         snapshot = self._snapshot = GlobeSnapshot(self.map.export_view(), parent=self)
 
-        def finished(image: QImage) -> None:
-            self._snapshot = None
+        def done() -> None:
+            self._snapshot = self._progress = None
             progress.close()
+            progress.deleteLater()
+
+        def finished(image: QImage) -> None:
+            done()
             if image.convertToFormat(QImage.Format.Format_RGB32).save(path, "PNG"):
                 log.info("Grid map saved as a %d × %d PNG", image.width(), image.height())
             else:
-                QMessageBox.warning(self, tr("Save as PNG"), tr("Could not save the image:") + f"\n{path}")
+                QMessageBox.warning(self._dialog_owner(), tr("Save as PNG"),
+                                    tr("Could not save the image:") + f"\n{path}")
 
         def cancelled() -> None:
             if self._snapshot is snapshot:
-                self._snapshot = None
+                done()
                 snapshot.cancel()
 
         snapshot.finished.connect(finished)
@@ -356,6 +386,9 @@ class StatisticsTab(QWidget):
         if self._snapshot is not None:
             self._snapshot.cancel()
             self._snapshot = None
+        if self._progress is not None:
+            self._progress.close()
+            self._progress = None
         if self.is_full_screen():
             self.toggle_full_screen()
         self.save_settings()

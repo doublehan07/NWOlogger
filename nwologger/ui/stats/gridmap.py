@@ -50,9 +50,13 @@ MIN_ZOOM, MAX_ZOOM = 1.0, 11.0
 FINE_GRID_PX = 28.0
 BORDER = QColor(255, 255, 255, 70)  # the light edge of each worked square, from BORDER_PX[0] wide squares,
 BORDER_PX = 10.0, 24.0  # full at BORDER_PX[1]
-CALL_MAX_PT, GRID_MAX_PT = 12.0, 10.0  # full label sizes, reached as you zoom in
-CALL_MIN_PX = 6.0  # smaller calls are left out: they start about half a zoom step inside a whole-country view
-NAME_MIN_PX = 5.0  # the square's name above its call
+CALL_MAX_PT, GRID_MAX_PT = 10.0, 8.0  # full label sizes, reached as you zoom in
+CALL_SHARE = 1 / 7  # a call's size (in pixels) as a share of its square's width
+NAME_SHARE = .8  # the square's name is this much smaller than its call
+# Labels appear on every square in view, each at its own size, once a square at the view's centre has its call this
+# large (about half a zoom step inside a whole-country view) and its name this large.
+CALL_MIN_PX, NAME_MIN_PX = 5.0, 4.0
+LABEL_FLOOR_PX = 2.5  # slivers at the limb, whose text would be smaller, stay blank
 SIZE_CALL = "BA8TSK/9"  # every call is sized as this eight-character one, so letters match from square to square
 CALL_WIDTH = .88  # SIZE_CALL fills at most this share of a square's width; a longer call is made smaller to fit
 CAP = 0.7  # cap height of a label font, as a share of its size
@@ -64,9 +68,10 @@ MAX_DPR = 2.0
 RASTER_PIXELS = 4_000_000  # per-pixel layers above this many device pixels are computed smaller and scaled up
 NIGHT_SHADE = QColor(3, 9, 22, 165)
 HALO = QColor(120, 175, 255)  # the atmosphere's glow around the globe
-EXPORT_PX = 2000  # Save as PNG: the whole globe on a square image this wide
-EXPORT_RADIUS = .43  # the globe's radius as a share of the image, leaving room above it for the caption
-EXPORT_TILES = 256  # the whole hemisphere at tile level 4
+EXPORT_SCALE = 2.0  # Save as PNG: the view as it is, at twice its size in pixels
+EXPORT_PIXELS = 8_000_000  # its per-pixel layers stay within this many pixels
+EXPORT_TILES = 256  # tiles in its atlas
+CAPTION_PX = 32.0  # the band above it naming NWOlogger and its version, so the caption covers nothing
 
 
 def _utc_now() -> datetime:
@@ -90,6 +95,7 @@ def _samples(start: float, end: float, step: float) -> list[float]:
 class GridMapView(QWidget):
     square_clicked = Signal(str)
     full_screen_toggled = Signal()  # the full-screen key, or Esc / closing the window while full screen
+    save_requested = Signal()  # Save as PNG, from the full-screen map's corner
     _tile_arrived = Signal(str, int, int, int, bytes)
 
     def __init__(self, parent=None):
@@ -98,18 +104,26 @@ class GridMapView(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMinimumHeight(360)
         self.render_dpr: float | None = None  # a fixed scale instead of the display's (an export)
-        self.caption: str | None = None  # drawn at the top in the middle, above the globe (an export)
+        self.raster_pixels = RASTER_PIXELS
+        self.caption: str | None = None  # an export's band above the map (see snapshot)
         self.max_tiles = MAX_TILES
         self._sky_key = None
         self._sky = QPixmap()
-        self._leave = QPushButton(tr("Exit full screen (Esc)"), self)
-        self._leave.setObjectName("MapOverlayButton")
-        self._leave.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._leave.setStyleSheet("QPushButton#MapOverlayButton { background: rgba(0, 0, 0, 150); color: white; "
-                                  "border: 1px solid rgba(255, 255, 255, 70); border-radius: 6px; "
-                                  "padding: 5px 12px; }")
-        self._leave.clicked.connect(self.full_screen_toggled)
-        self._leave.hide()
+        self._full_screen = False
+        self._overlay = []  # the full-screen map's buttons, in its top right corner
+        for text, signal in ((tr("Save as PNG"), self.save_requested),
+                             (tr("Exit full screen (Esc)"), self.full_screen_toggled)):
+            button = QPushButton(text, self)
+            button.setObjectName("MapOverlayButton")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # the keys stay with the map
+            button.setStyleSheet("QPushButton#MapOverlayButton { background: rgba(0, 0, 0, 150); color: white; "
+                                 "border: 1px solid rgba(255, 255, 255, 70); border-radius: 6px; "
+                                 "padding: 5px 12px; }")
+            button.clicked.connect(signal)
+            button.hide()
+            self._overlay.append(button)
+        self._save, self._leave = self._overlay
         self.zoom = 3.0
         self.center_lon, self.center_lat = 110.0, 35.0
         self.cells: dict[str, grids.Square] = {}
@@ -269,39 +283,42 @@ class GridMapView(QWidget):
 
     # ------------------------------------------------------------------ full screen and export
     def set_full_screen(self, on: bool) -> None:
-        """Show or hide the way back (a button in the top right corner) while the map fills the screen."""
-        self._leave.setVisible(on)
-        if on:
-            self._place_leave()
-            self._leave.raise_()
+        """Show or hide Save as PNG and the way back (in the top right corner) while the map fills the screen."""
+        self._full_screen = on
+        for button in self._overlay:
+            button.setVisible(on)
+            button.raise_()
+        self._place_overlay()
 
-    def _place_leave(self) -> None:
-        self._leave.adjustSize()
-        self._leave.move(self.width() - self._leave.width() - 14, 14)
+    def _place_overlay(self) -> None:
+        right = self.width() - 14
+        for button in reversed(self._overlay):
+            button.adjustSize()
+            button.move(right - button.width(), 14)
+            right -= button.width() + 8
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
-        if self._leave.isVisible():
-            self._place_leave()
+        if self._full_screen:
+            self._place_overlay()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if self.isWindow() and self._leave.isVisible():
+        if self.isWindow() and self._full_screen:
             event.ignore()  # closing the full-screen window brings the map back to its tab
             self.full_screen_toggled.emit()
             return
         super().closeEvent(event)
 
-    def export_view(self, size: int = EXPORT_PX) -> GridMapView:
-        """The whole globe on its own off-screen view of ``size`` × ``size`` pixels, facing the same place, with
-        the same squares, imagery and night side, for Save as PNG (see :class:`GlobeSnapshot`)."""
+    def export_view(self) -> GridMapView:
+        """This view as it is (size, zoom, centre, squares, imagery and night side) on its own off screen, drawn at
+        EXPORT_SCALE, for Save as PNG (see :class:`GlobeSnapshot`)."""
         view = GridMapView()
         view.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         view.setFont(self.font())
-        view.resize(size, size)
-        view.render_dpr, view.max_tiles = 1.0, EXPORT_TILES
+        view.resize(self.size())
+        view.render_dpr, view.raster_pixels, view.max_tiles = EXPORT_SCALE, EXPORT_PIXELS, EXPORT_TILES
         view.caption = f"{APP_NAME} {__version__}"
-        view.center_lon, view.center_lat = self.center_lon, self.center_lat
-        view.zoom = max(MIN_ZOOM, min(MAX_ZOOM, math.log2(size * EXPORT_RADIUS * math.tau / 256)))
+        view.zoom, view.center_lon, view.center_lat = self.view_state()
         view.home, view.radius_km, view.highlight = self.home, self.radius_km, self.highlight
         view.set_cells(self.cells)
         view.provider, view.api_key = self.provider, self.api_key
@@ -323,15 +340,27 @@ class GridMapView(QWidget):
         return sum(1 for tx, ty in self._tile_indices(z) if self._tile(z, tx, ty) is None)
 
     def snapshot(self) -> QImage:
-        """The scene as an image of the view's size at ``render_dpr`` (default 1)."""
+        """The scene as an image at ``render_dpr`` (default 1), with the caption, if any, in a band of its own
+        above it, so it covers nothing of the map."""
         dpr = self.render_dpr or 1.0
-        image = QImage(math.ceil(self.width() * dpr), math.ceil(self.height() * dpr),
+        band = CAPTION_PX if self.caption else 0.0
+        image = QImage(math.ceil(self.width() * dpr), math.ceil((self.height() + band) * dpr),
                        QImage.Format.Format_ARGB32_Premultiplied)
         image.setDevicePixelRatio(dpr)
         painter = QPainter(image)
         try:
             self._update_sun()
             self._prepare_geometry()
+            if band:
+                painter.fillRect(QRectF(0, 0, self.width(), band), BG)
+                font = QFont(self.font())
+                font.setPixelSize(round(band * .5))
+                font.setWeight(QFont.Weight.DemiBold)
+                painter.setFont(font)
+                painter.setPen(QColor(255, 255, 255, 215))
+                painter.drawText(QRectF(0, 0, self.width(), band), Qt.AlignmentFlag.AlignCenter, self.caption)
+                painter.translate(0, band)
+                painter.setClipRect(QRectF(self.rect()))  # a globe larger than the view stays out of the band
             self._paint_scene(painter)
         finally:
             painter.end()
@@ -596,9 +625,9 @@ class GridMapView(QWidget):
         return max(1.0, min(MAX_DPR, self.devicePixelRatioF()))
 
     def _raster_scale(self, dpr: float, moving: bool = False) -> float:
-        """Pixels of the per-pixel layers per logical pixel: the frame's, within RASTER_PIXELS, and at most one
+        """Pixels of the per-pixel layers per logical pixel: the frame's, within ``raster_pixels``, and at most one
         while the globe is dragged (restored on release)."""
-        budget = math.sqrt(RASTER_PIXELS / max(1, self.width() * self.height()))
+        budget = math.sqrt(self.raster_pixels / max(1, self.width() * self.height()))
         scale = min(dpr, budget)
         if moving:
             scale = min(scale, 1.0)
@@ -801,7 +830,7 @@ class GridMapView(QWidget):
         painter.fillPath(sphere, base)
         painter.save()
         try:
-            painter.setClipPath(sphere)
+            painter.setClipPath(sphere, Qt.ClipOperation.IntersectClip)  # within any clip already set (an export)
             imagery, cells = self._layers(painter)
             self._draw_layer(painter, imagery)
             self._draw_layer(painter, cells)
@@ -833,22 +862,6 @@ class GridMapView(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(sphere)
         self._draw_credit(painter)
-        if self.caption:
-            self._draw_caption(painter)
-
-    def caption_rect(self) -> QRectF:
-        """Where the caption goes: at the top in the middle, in the band above the globe and its glow."""
-        side = min(self.width(), self.height())
-        return QRectF(0, round(side * .015), self.width(), round(side * .02) * 1.4)
-
-    def _draw_caption(self, painter: QPainter) -> None:
-        font = QFont(self.font())
-        font.setPixelSize(round(min(self.width(), self.height()) * .02))
-        font.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(font)
-        painter.setPen(QColor(255, 255, 255, 215))
-        painter.drawText(self.caption_rect(), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-                         self.caption)
 
     def _night_image(self) -> QImage:
         """The night side, with a narrow, clear edge at the terminator (see :func:`GlobeRaster.night`)."""
@@ -1020,37 +1033,54 @@ class GridMapView(QWidget):
             self._advances[key] = QFontMetricsF(self._label_font("call", 100.0, italic)).horizontalAdvance(call) / 100
         return self._advances[key]
 
+    def _call_points(self, width: np.ndarray, height: np.ndarray) -> np.ndarray:
+        """The call size (points) of squares this wide and high on screen: a seventh of the width, never so large
+        that an eight-character call (:data:`SIZE_CALL`) fills more than CALL_WIDTH of it, nor beyond CALL_MAX_PT."""
+        px_per_pt = self.logicalDpiY() / 72
+        return np.minimum.reduce([width * CALL_SHARE / px_per_pt,
+                                  CALL_WIDTH * (width - 2) / self._call_advance(SIZE_CALL, False),
+                                  height * .8 / px_per_pt, np.full(np.shape(width), CALL_MAX_PT)])
+
+    def _centre_call_px(self) -> float:
+        """The call size (pixels) of a square at the view's centre, which decides whether the view shows labels."""
+        lon, lat = np.radians([self.center_lon]), np.radians([self.center_lat])
+        *_rest, width, height = self._projected_extents(lon, lat, math.radians(1), math.radians(.5))
+        return float(self._call_points(width, height)[0]) * self.logicalDpiY() / 72
+
     def _draw_labels(self, painter: QPainter, _cell_px: float = 0.0) -> None:
-        """The square's name and its first call, in two lines, once a square is big enough to read them (about
-        half a zoom step inside a whole-country view); a square too low for two lines shows only the call. Every
-        call is sized as :data:`SIZE_CALL`, so a short call is no larger than a long one and they all appear
-        together; only a longer call is made smaller to fit. Text grows with the square up to its full size
-        (name 10 pt, call 12 pt)."""
+        """The square's name and its first call, in two lines, once they are big enough to read at the view's centre
+        (about half a zoom step inside a whole-country view), and then on every square in view, each at its own
+        size (squares farther from the equator are narrower on the globe); a square too low for two lines shows only
+        the call. A square's calls have one size, so a short call is no larger than a long one; only a longer call
+        than :data:`SIZE_CALL` is made smaller to fit. The name is a fifth smaller. Text grows with the square up to
+        its full size (call 10 pt, name 8 pt)."""
         if not self.cells or (self._drag is not None and self._moved):
             return
+        centre = self._centre_call_px()
+        if centre < CALL_MIN_PX:
+            return
+        names = centre * NAME_SHARE >= NAME_MIN_PX
         squares, lon, lat, calls, confirmed, advance = self._labels()
         x, y, depth, width, height = self._projected_extents(lon, lat, math.radians(1), math.radians(.5))
         px_per_pt = self.logicalDpiY() / 72
         # Sizes for every square at once; only squares that get some text reach the drawing loop.
-        size = np.minimum(np.minimum(CALL_WIDTH * (width - 2) / self._call_advance(SIZE_CALL, False),
-                                     height * .8 / px_per_pt), CALL_MAX_PT)
-        size = np.where(size * px_per_pt >= CALL_MIN_PX, size, 0)
+        size = self._call_points(width, height)
+        shown = size * px_per_pt >= LABEL_FLOOR_PX
         with np.errstate(divide="ignore", invalid="ignore"):
             fit = np.where(advance > 0, CALL_WIDTH * (width - 2) / advance, 0)
-        call_pt = np.floor(np.minimum(size, fit) * 4) / 4  # quarter points: neighbours match
-        # The name comes with the call, never larger (a square without a call shows its name at call size).
-        name_pt = np.floor(np.minimum(width / 7, GRID_MAX_PT) * 4) / 4
-        name_pt = np.where(advance > 0, np.minimum(name_pt, np.floor(size * 4) / 4), name_pt)
+        call_pt = np.where(shown, np.floor(np.minimum(size, fit) * 4) / 4, 0)  # quarter points: neighbours match
+        # The name comes with the call, a fifth smaller (a square without a call shows its name at call size).
+        name_pt = np.floor(np.minimum(np.where(advance > 0, size * NAME_SHARE, size), GRID_MAX_PT) * 4) / 4
+        name_pt = np.where(shown & names, name_pt, 0)
         call_px, name_px = call_pt * px_per_pt, name_pt * px_per_pt
         gap = np.where(call_pt > 0, np.maximum(2, call_px * .25), 0)
-        two_lines = (((call_pt > 0) & (name_px >= NAME_MIN_PX)) | ((advance == 0) & (name_px >= CALL_MIN_PX))) & \
-            (height >= CAP * (name_px + call_px) + gap + 4)
+        two_lines = (name_pt > 0) & (height >= CAP * (name_px + call_px) + gap + 4)
         drawn = ((depth >= 0.15) & (x >= 0) & (x <= self.width()) & (y >= 0) & (y <= self.height()) &
                  (two_lines | (call_pt > 0)))
         grid_color, call_color, worked_color = QColor(255, 255, 255, 235), QColor("white"), QColor(255, 243, 214)
         center = Qt.AlignmentFlag.AlignHCenter
         for index in np.flatnonzero(drawn):
-            cx, cy, size, below = float(x[index]), float(y[index]), float(call_pt[index]), float(call_px[index])
+            cx, cy, pt, below = float(x[index]), float(y[index]), float(call_pt[index]), float(call_px[index])
             if two_lines[index]:
                 name, above = float(name_pt[index]), float(name_px[index])
                 base = cy - (CAP * above + float(gap[index]) + CAP * below) / 2 + CAP * above
@@ -1060,10 +1090,10 @@ class GridMapView(QWidget):
                 base += float(gap[index]) + CAP * below
             else:
                 base = cy + CAP * below / 2
-            if size:
+            if pt:
                 call, sure = calls[index], confirmed[index]
-                self._label_text(painter, QPointF(cx, base), call, self._label_font("call", size, not sure),
-                                 call_color if sure else worked_color, center, ("call", size, sure, call))
+                self._label_text(painter, QPointF(cx, base), call, self._label_font("call", pt, not sure),
+                                 call_color if sure else worked_color, center, ("call", pt, sure, call))
 
     def _draw_credit(self, painter: QPainter) -> None:
         if self.provider is None:
@@ -1190,7 +1220,7 @@ class GridMapView(QWidget):
         mid = QPointF(self.width() / 2, self.height() / 2)
         key = event.key()
         if event.matches(QKeySequence.StandardKey.FullScreen) or key == Qt.Key.Key_F11 or \
-                (key == Qt.Key.Key_Escape and self.isWindow() and self._leave.isVisible()):
+                (key == Qt.Key.Key_Escape and self.isWindow() and self._full_screen):
             self.full_screen_toggled.emit()
         elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.zoom_at(mid, 0.5)
