@@ -13,7 +13,7 @@
 "a backup was saved first": "已先保存备份",
 "A copy is made each time NWOlogger opens the log (skipped when nothing changed since the last copy) and when you choose Back up now. The last 10 copies made before an import, bulk edit, delete, merge or other change to many QSOs are kept as well: there is no undo, so a backup is the way back.": "每次 NWOlogger 打开日志时备份一次（自上次备份后没有改动则跳过），选择“立即备份”时也会备份。导入、批量编辑、删除、合并等涉及多条 QSO 的修改之前的最近 10 份备份另外保留：没有撤销功能，备份就是恢复的方法。",
 "A minimal, cross-platform amateur radio logger.": "一款简洁的跨平台业余无线电日志软件。",
-"A new language applies when you press OK.": "按“确定”后即切换语言。",
+"A new language applies when you press Save.": "按“保存”后即切换语言。",
 "A setup fills rig, antenna and power in one pick; you can still change each one. Put setups together in Preferences → Devices.": "选一个组合即可同时填好电台、天线和功率；之后每一项仍可修改。在 偏好设置 → 设备 中搭配组合。",
 "A template: RST + CQ zone; 1 point per QSO; zones and DXCC per band.": "模板：RST + CQ 分区；每个 QSO 1 分；按波段计分区和 DXCC 倍增。",
 "A template: RST + serial; 1 point per QSO; DXCC per band.": "模板：RST + 序号；每个 QSO 1 分；按波段计 DXCC 倍增。",

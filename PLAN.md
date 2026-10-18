@@ -233,7 +233,7 @@ The layout follows the MacLoggerDX workflow, minus the rig panel: entry panel on
 
 - **Qt Widgets, not QML.** `QTableView` and dense forms handle 100k-row logs better. The modern look comes from the Fusion style plus an app stylesheet built on design tokens (colours, spacing, radii).
 - **Themes:** light and dark, following the OS by default. A theme picked in Preferences shows at once (Cancel puts the old one back); icons are drawn in the current theme's colours whenever they are painted, so they follow every switch.
-- **Language:** English or 简体中文, switched when you press OK in Preferences: the main window is built again in the new language with the same log file (no new backup), operator, view, tab, filter, sort, selection, scroll position, entry form and Sync results rows (about 0.1–0.3 s). While an upload or download runs, the switch waits for it.
+- **Language:** English or 简体中文, switched when you press Save in Preferences: the main window is built again in the new language with the same log file (no new backup), operator, view, tab, filter, sort, selection, scroll position, entry form and Sync results rows (about 0.1–0.3 s). While an upload or download runs, the switch waits for it.
 - **Colour:** one accent colour. Status colours appear only where they carry meaning: confirmed green, suspect amber, dupe red.
 - **Type:** tabular (monospaced) figures for callsigns, frequencies and times, so columns line up.
 - **Icons:** SVG line icons from a permissively licensed set (e.g. Lucide, ISC).

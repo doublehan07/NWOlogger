@@ -530,7 +530,7 @@ class PrefsDialog(QDialog):
         self._theme_at_open = prefs.get("theme")
         self.theme.currentIndexChanged.connect(self._preview_theme)
         f.addRow(tr("Language"), self.lang)
-        lang_hint = QLabel(tr("A new language applies when you press OK."))
+        lang_hint = QLabel(tr("A new language applies when you press Save."))
         lang_hint.setObjectName("Hint")
         f.addRow("", lang_hint)
         f.addRow(tr("Theme"), self.theme)
