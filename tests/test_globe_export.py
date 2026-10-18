@@ -335,8 +335,15 @@ def test_a_slow_export_shows_its_progress_soon_and_keeps_it_with_the_map(tab, qt
     assert progress.parentWidget() is tab.pane and progress.isVisible()  # on the full-screen window
     tab.toggle_full_screen()
     assert tab.in_window() and progress.parentWidget() is tab.pane and progress.isVisible()  # still its window
-    tab.bring_back()
-    assert progress.parentWidget() is tab and progress.isVisible()
+    tab.pane.close()  # the window's red button during the export: the map comes back, the progress with it
+    assert not tab.in_window() and progress.parentWidget() is tab and progress.isVisible()
+    # Never modal: a sheet moved between windows could stay invisible on macOS while blocking every click.
+    from PySide6.QtWidgets import QApplication
+
+    assert progress.windowModality() == Qt.WindowModality.NonModal and QApplication.activeModalWidget() is None
+    qtbot.mouseClick(tab.calls, Qt.MouseButton.LeftButton)  # the controls still answer while the export waits
+    assert tab.calls._menu.isVisible()
+    tab.calls._menu.hide()
     snapshot = tab._snapshot
     from PySide6.QtWidgets import QPushButton
 

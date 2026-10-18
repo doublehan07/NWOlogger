@@ -599,14 +599,17 @@ class StatisticsTab(QWidget):
         return self.pane if self.in_window() else self
 
     def _show_progress(self) -> None:
-        """Bring the running export's progress window to the front, on the window that shows the map."""
+        """Bring the running export's progress window to the front, on the window that shows the map. It is never
+        modal: a modal sheet moved from the map's own window to the main window (the window closed during an
+        export) could stay invisible on macOS while still blocking every click until the export's 60 s deadline."""
         progress = self._progress
         if progress is None:
             return
         owner = self._dialog_owner()
         if progress.parentWidget() is not owner:
+            progress.hide()
             progress.setParent(owner, progress.windowFlags())
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.NonModal)
         progress.show()
         progress.raise_()
         progress.activateWindow()
@@ -627,7 +630,7 @@ class StatisticsTab(QWidget):
             path += ".png"
         progress = self._progress = QProgressDialog(tr("Drawing the map…"), tr("Cancel"), 0, 0, owner)
         progress.setWindowTitle(tr("Save as PNG"))
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.NonModal)  # the export draws a copy: nothing needs blocking
         progress.setMinimumDuration(500)
         progress.setValue(0)  # without a value Qt waits four seconds before showing it
         view = self.map.export_view()

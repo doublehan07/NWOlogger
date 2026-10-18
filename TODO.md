@@ -63,6 +63,7 @@ From the feedback on 0.1.8 (PLAN §16):
 - [x] **Stale dupe marks:** the review, Find duplicates and a change of the windows rescan the marks first and say how many an earlier rule had left (0.1.8's 24-hour window marked pairs 20 minutes apart)
 - [x] **The day/night line over the sea:** satellite imagery's near-black ocean is lifted toward a sea blue on the day side while the tiles are sampled, so the night shade shows the same gradient over water as over land; the bare globe got a lighter sea too
 - [x] **CI:** the Windows tests no longer depend on text widths (its off-screen Qt draws every glyph one em wide), the session ends by taking down tasks, the globe's thread pool and top-level widgets while the application exists (Linux had crashed on the way out after every test passed), and `PYTHONFAULTHANDLER` is set so an exit crash prints its stack
+- [x] **A minute of blocked clicks** after closing the map window during a PNG export: the export's progress window was window-modal and, moved to the main window, could stay invisible on macOS while blocking it until the 60 s tile deadline; it is non-modal now
 - [x] Translations for everything above (简体中文)
 
 ## Done in v0.1.8 (2026-10-18)
