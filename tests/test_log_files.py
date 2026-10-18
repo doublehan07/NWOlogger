@@ -3,12 +3,14 @@ records apart, instead of showing 0 QSOs or writing our tables into a foreign fi
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
 import pytest
 from PySide6.QtCore import QSettings
 
 from nwologger.core import db as dbm
+from nwologger.core import mldx
 from nwologger.ui.import_dialog import ImportDialog
 from nwologger.ui.prefs import Prefs
 
@@ -81,4 +83,30 @@ def test_an_older_log_of_ours_still_opens_and_migrates(tmp_path):
         assert db.meta("created_at") == "2025-06-01T00:00:00Z" and db.meta("app_name") == "NWOlogger"
     finally:
         db.close()
+
+
+def test_probing_a_wal_database_creates_no_sidecar_files(tmp_path):
+    """The probes open the file as immutable: a plain read-only open of a WAL database leaves an empty ``-wal`` and
+    a 32 KB ``-shm`` next to someone else's file, and cannot open it at all in a read-only folder."""
+    folder = tmp_path / "friend"
+    folder.mkdir()
+    path = folder / "logbook.hrdsql"
+    con = sqlite3.connect(path)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE TABLE_HRD_CONTACTS_V07 (COL_PRIMARY_KEY INTEGER PRIMARY KEY, COL_CALL TEXT)")
+    con.execute("INSERT INTO TABLE_HRD_CONTACTS_V07 (COL_CALL) VALUES ('BA1AA')")
+    con.commit()
+    con.close()
+    assert path.read_bytes()[18:20] == b"\x02\x02"  # a WAL-mode file
+    before = sorted(p.name for p in folder.iterdir())
+    assert dbm.sqlite_kind(path) == "foreign" and not mldx.is_mldx_db(path)
+    with pytest.raises(dbm.NotALogFile):
+        dbm.check_log_file(path)
+    assert sorted(p.name for p in folder.iterdir()) == before  # no -wal or -shm left behind
+    if os.name != "nt" and os.geteuid() != 0:  # a read-only folder (a zip extract, a mounted image) is told apart too
+        folder.chmod(0o555)
+        try:
+            assert dbm.sqlite_kind(path) == "foreign" and not mldx.is_mldx_db(path)
+        finally:
+            folder.chmod(0o755)
 

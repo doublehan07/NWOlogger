@@ -99,7 +99,9 @@ class NotALogFile(Exception):
 def sqlite_kind(path: str | os.PathLike) -> str | None:
     """What a file is: ``"nwologger"`` (a log of ours), ``"mldx"`` (a MacLoggerDX database), ``"foreign"``
     (another program's database), ``"empty"`` (a SQLite file without tables), ``"missing"`` (no file, or an empty
-    one) or None (not a SQLite file). Read-only: nothing is created or changed."""
+    one) or None (not a SQLite file). Read-only and ``immutable``: no lock is taken and no ``-wal`` / ``-shm`` file
+    appears next to the probed file (a plain read-only open of a WAL database leaves both behind, and fails in a
+    read-only folder). A log whose tables are still only in an unflushed WAL probes as "empty", and opens normally."""
     p = Path(path)
     if not p.exists() or p.stat().st_size == 0:
         return "missing"
@@ -107,7 +109,7 @@ def sqlite_kind(path: str | os.PathLike) -> str | None:
         if fh.read(16) != SQLITE_HEADER:
             return None
     try:
-        con = sqlite3.connect(f"file:{p.resolve()}?mode=ro", uri=True)
+        con = sqlite3.connect(f"file:{p.resolve()}?mode=ro&immutable=1", uri=True)
         try:
             app_id = con.execute("PRAGMA application_id").fetchone()[0]
             tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}

@@ -1107,6 +1107,10 @@ class MainWindow(QMainWindow):
         run_async(calllists.download, folder, on_done=done, on_error=fail)
 
     def _first_run(self) -> None:
+        """Scheduled from __init__; the log may have been closed meanwhile (Open log file restarts the app within
+        the same second), so every step checks the window is still up."""
+        if getattr(self, "_shut", False):
+            return
         age = dxcc.user_copy_age_days()
         if (age is None or age > 7) and not os.environ.get("NWOLOGGER_OFFLINE"):
             QTimer.singleShot(3000, lambda: self.update_cty(quiet=True))
@@ -1116,6 +1120,8 @@ class MainWindow(QMainWindow):
         if not self.db.profiles():
             QMessageBox.information(self, APP_NAME, tr("Welcome! Create a station profile first: your callsign "
                                                        "and grid are added to every QSO you log."))
+            if getattr(self, "_shut", False):  # the log was switched while the message was up
+                return
             self.open_prefs("Station profiles")
 
     def closeEvent(self, e) -> None:  # noqa: N802

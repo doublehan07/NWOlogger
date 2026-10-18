@@ -255,11 +255,13 @@ def read(path: str | Path) -> tuple[list[dict], MldxReport]:
 
 
 def is_mldx_db(path: str | Path) -> bool:
+    """Whether a file is a MacLoggerDX database. A probe only: immutable, so no lock and no ``-wal`` / ``-shm`` file
+    next to someone else's database (see ``db.sqlite_kind``)."""
     try:
         with open(path, "rb") as fh:
             if fh.read(16) != b"SQLite format 3\x00":
                 return False
-        con = sqlite3.connect(f"file:{Path(path).resolve()}?mode=ro", uri=True)
+        con = sqlite3.connect(f"file:{Path(path).resolve()}?mode=ro&immutable=1", uri=True)
         try:
             return bool(con.execute("SELECT 1 FROM sqlite_master WHERE name=?", (TABLE,)).fetchone())
         finally:

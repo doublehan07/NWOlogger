@@ -1138,3 +1138,34 @@ def test_file_menu_compacts_the_log_after_asking(win, monkeypatch):
     monkeypatch.setattr(main_window.QMessageBox, "question", lambda *_a: QMessageBox.StandardButton.Yes)
     win.compact_log()
     assert calls and flashed[-1] == "Log file compacted: 3.4 MB → 106 KB"
+
+
+def test_the_first_run_step_stops_when_the_log_is_switched_under_it(qtbot, tmp_path, monkeypatch):
+    """Open log file within seconds of the start restarts the app: the welcome step scheduled on the old window
+    must not reach for the closed log afterwards (it opened Preferences on it: "Cannot operate on a closed
+    database")."""
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    from nwologger.ui.main_window import MainWindow
+    from nwologger.ui.prefs import Prefs
+
+    monkeypatch.setenv("NWOLOGGER_OFFLINE", "1")
+    prefs = Prefs(QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
+    prefs.set("auto_lookup", False)
+    db = dbm.LogDB(tmp_path / "empty.sqlite", backup_on_open=False)  # no station profile: the welcome shows
+    opened = []
+    monkeypatch.setattr(MainWindow, "open_prefs", lambda self, page=None: opened.append(page))
+
+    def welcome(*_args, **_kw):  # while the welcome message is up, the user opens another log: restart
+        w.shutdown()
+        db.close()
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "information", welcome)
+    w = MainWindow(db, prefs, QApplication.instance())
+    qtbot.addWidget(w)
+    w._first_run()
+    assert opened == [] and w._shut
+    w._first_run()  # a copy scheduled before the switch: nothing, not even the message
+    assert opened == []
+
