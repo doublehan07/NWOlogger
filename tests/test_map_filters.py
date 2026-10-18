@@ -149,7 +149,7 @@ def test_filters_change_the_squares_and_are_remembered(tab, tmp_path, log):
 
 
 def test_the_png_is_named_after_the_ticked_calls_and_places(tab):
-    assert tab.png_name() == f"BI1NWO et al at ON80 etc - NWOlogger {__version__}.png"
+    assert tab.png_name() == f"BI1NWO (et al) at ON80 - NWOlogger {__version__}.png"  # the centre grid alone
     tab.calls.set_checked(["AI6OT"])
     tab.places.set_checked(["CM87"])
     assert tab.png_name() == f"AI6OT at CM87 - NWOlogger {__version__}.png"
@@ -168,3 +168,61 @@ def test_within_200_km_and_the_own_grid(tab):
     tab.tick_near()
     assert tab.places.checked() == ["CM87"]
     assert "0 km" in tab.places.list.item(0).text()
+
+
+def test_qsos_logged_while_the_tab_is_hidden_reach_its_lists_when_it_is_shown(qtbot, log, tmp_path):
+    """A new station profile's call, used for a QSO from the Log tab: on show, Callsigns and Grids hold it. A list
+    that had everything ticked ticks the new call too; Grids on its 200 km default applies that rule."""
+    from PySide6.QtWidgets import QStackedWidget, QWidget
+
+    log.save_profile({"name": "Home", "station_callsign": "BI1NWO", "operator": "BI1NWO", "my_gridsquare": "ON80DA",
+                      "is_default": True})
+    prefs = Prefs(QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat))
+    prefs.set("map_provider", "none")
+    stack = QStackedWidget()
+    stack.addWidget(QWidget())  # the Log tab, in front
+    tab = StatisticsTab(log, prefs)
+    stack.addWidget(tab)
+    stack.resize(1000, 650)
+    qtbot.addWidget(stack)
+    stack.show()
+    try:
+        assert tab.calls.keys() == ["BI1NWO", "AI6OT"] and not tab.isVisible()
+        log.insert(qsomod.normalize({"call": "BA1ZZ", "time_on": "2026-02-01T10:00:00Z", "mode": "FM", "band": "2m",
+                                     "prop_mode": "SAT", "sat_name": "SO-50", "gridsquare": "PM95",
+                                     "station_callsign": "BD1AJF", "my_gridsquare": "ON80EB"}))  # near the own grid
+        log.insert(qsomod.normalize({"call": "BA1YY", "time_on": "2026-02-02T10:00:00Z", "mode": "FM", "band": "2m",
+                                     "prop_mode": "SAT", "sat_name": "SO-50", "gridsquare": "FN31",
+                                     "station_callsign": "BD1AJF", "my_gridsquare": "FN42"}))  # far away
+        qtbot.wait(1000)
+        assert "BD1AJF" not in tab.calls.keys()  # hidden: nothing rebuilt yet, nothing to see
+        stack.setCurrentWidget(tab)
+        qtbot.waitUntil(tab.isVisible)
+        assert tab.calls.keys() == ["BI1NWO", "BD1AJF", "AI6OT"] and tab.calls.checked() == tab.calls.keys()
+        assert "ON80EB" in tab.places.keys() and "FN42" in tab.places.keys()
+        assert "ON80EB" in tab.places.checked() and "FN42" not in tab.places.checked()  # the 200 km default
+        assert "PM95" in tab.map.cells and "FN31" not in tab.map.cells
+        # An explicit choice stays as it was: a further new call is listed but not ticked.
+        stack.setCurrentIndex(0)
+        tab.calls.set_checked(["BI1NWO"])
+        log.insert(qsomod.normalize({"call": "BA1XX", "time_on": "2026-02-03T10:00:00Z", "mode": "FM", "band": "2m",
+                                     "prop_mode": "SAT", "sat_name": "SO-50", "gridsquare": "OM77",
+                                     "station_callsign": "VR2XMT", "my_gridsquare": "OL72"}))
+        stack.setCurrentWidget(tab)
+        qtbot.waitUntil(tab.isVisible)
+        assert "VR2XMT" in tab.calls.keys() and tab.calls.checked() == ["BI1NWO"] and "OM77" not in tab.map.cells
+    finally:
+        tab.shutdown()
+
+
+def test_picking_the_current_region_again_fits_it_again(tab, monkeypatch):
+    """Around my grid, a drag away, then Around my grid picked again: the globe comes back (a combo box emits no
+    change for the item that is already current, so the fit listens to every pick)."""
+    fits = []
+    monkeypatch.setattr(tab.map, "fit", lambda box: fits.append(box))
+    tab.region.setCurrentIndex(tab.region.findData("home"))
+    fits.clear()
+    tab.map.set_view_state((4.0, 10.0, 50.0))  # dragged far away
+    tab.region.activated.emit(tab.region.currentIndex())  # the user picks Around my grid once more
+    assert fits == [grids.region_box("home", "ON80DA")]
+

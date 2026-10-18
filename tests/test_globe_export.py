@@ -53,7 +53,7 @@ def test_png_is_named_after_the_operator_and_the_home_grid(tab, operator, statio
 def test_png_file_name_says_et_al_for_more_calls_or_grids():
     assert png_file_name(["BI1NWO"], ["ON80"], "0.1.9") == "BI1NWO at ON80 - NWOlogger 0.1.9.png"
     assert png_file_name(["BI1NWO", "AI6OT"], ["ON80", "CM87", "ON70"], "0.1.9") == \
-        "BI1NWO et al at ON80 etc - NWOlogger 0.1.9.png"
+        "BI1NWO (et al) at ON80 - NWOlogger 0.1.9.png"
     assert png_file_name(["VR2/BD1AJF"], [], "0.1.9") == "VR2-BD1AJF - NWOlogger 0.1.9.png"
     assert png_file_name([], ["ON80"], "0.1.9") == "ON80 - NWOlogger 0.1.9.png"
     assert png_file_name(["", None], [""], "0.1.9") == "NWOlogger 0.1.9.png"

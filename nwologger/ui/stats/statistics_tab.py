@@ -44,15 +44,14 @@ AUTO = "*near"  # the saved value for "the locations within 200 km of my grid"
 
 
 def png_file_name(calls: list[str], squares: list[str], version: str = __version__) -> str:
-    """``BI1NWO at ON80 - NWOlogger 0.1.9.png``: the first call and the first grid; several calls read "et al"
-    (people), several grids "etc" (places), most QSOs first as the caller orders them; a slash in a portable call
-    becomes a hyphen."""
+    """``BI1NWO at ON80 - NWOlogger 0.1.9.png``: the first call, "(et al)" after it when there are several, and
+    the first grid alone (the centre grid, as the caller orders them); a slash in a portable call becomes a hyphen."""
     def part(items: list[str], more: str) -> str:
         clean = [re.sub(r"[^A-Z0-9]+", "-", (x or "").upper()).strip("-") for x in items]
         clean = [x for x in clean if x]
         return clean[0] + (more if len(clean) > 1 else "") if clean else ""
 
-    who, where = part(calls, " et al"), part(squares, " etc")
+    who, where = part(calls, " (et al)"), part(squares, "")
     head = who + (f" at {where}" if who and where else where)
     return (f"{head} - " if head else "") + f"{APP_NAME} {version}.png"
 
@@ -237,6 +236,7 @@ class StatisticsTab(QWidget):
             w.currentIndexChanged.connect(self._changed)
         self.band.currentIndexChanged.connect(self._band_changed)
         self.region.currentIndexChanged.connect(self._region_changed)
+        self.region.activated.connect(self._region_changed)  # picking the current region again refits it too
         self.calls.changed.connect(self._calls_changed)
         self.places.changed.connect(self._changed)
         self.home.editingFinished.connect(self._home_changed)
@@ -373,9 +373,23 @@ class StatisticsTab(QWidget):
                 self._timer.start()
 
     def _db_changed_later(self) -> None:
-        """New QSOs may bring new callsigns, places or satellites: the lists are rebuilt, ticks kept."""
-        self._fill_calls(self.calls.checked())
-        self._fill_places(self.places.checked())
+        """New QSOs may bring new callsigns, places or satellites: the lists are rebuilt. The selection keeps its
+        meaning: a Callsigns list that had everything ticked ticks a new call too, so the QSOs under it show at
+        once; a Grids list on its 200 km default applies that rule to a new place; an explicit choice stays as it
+        was, the new entries unticked."""
+        self._timer.stop()
+        all_calls = len(self.calls.checked()) == len(self.calls.keys())
+        self._fill_calls(None if all_calls else self.calls.checked())
+        keys, checked = self.places.keys(), set(self.places.checked())
+        home = self.home.text().strip().upper()
+        near = set(grids.within(keys, home)) if grids.square(home) else set(keys)
+        if checked == set(keys):
+            keep = [k for k, _n in grids.my_locations(self.db, self.calls.checked() or None)]  # all, new ones too
+        elif checked == near:
+            keep = None  # the 200 km default, applied to the new places as well
+        else:
+            keep = sorted(checked)
+        self._fill_places(keep)
         self._fill_sats(self.sat.currentData())
         self.refresh()
 
@@ -414,7 +428,7 @@ class StatisticsTab(QWidget):
     def showEvent(self, e) -> None:  # noqa: N802 - Qt API
         super().showEvent(e)
         if self._dirty:
-            self.refresh()
+            self._db_changed_later()  # QSOs logged while the tab was hidden: the lists as well as the squares
 
     def hideEvent(self, e) -> None:  # noqa: N802 - Qt API
         super().hideEvent(e)
@@ -561,13 +575,15 @@ class StatisticsTab(QWidget):
 
     # ------------------------------------------------------------------ PNG
     def png_name(self) -> str:
-        """The file name of a saved map: the ticked callsigns and places (most QSOs first), as
-        :func:`png_file_name` writes them; the default profile's call and the own grid when the lists are empty."""
+        """The file name of a saved map: the ticked callsigns (most QSOs first) and the centre grid, the own grid
+        when it is among the ticked places, else the place with most QSOs, as :func:`png_file_name` writes them;
+        the default profile's call and the own grid when the lists are empty."""
         calls = sorted(self.calls.checked(), key=lambda c: -self._call_counts.get(c, 0))
         own = grids.square(self.home.text()) or ""
         squares: list[str] = []
-        # most QSOs first; on a tie the own grid's place, then the name
-        for key in sorted(self.places.checked(), key=lambda k: (-self._counts.get(k, 0), not k.startswith(own), k)):
+        # the own grid's place first, then most QSOs first, then the name
+        for key in sorted(self.places.checked(), key=lambda k: (not (own and k.startswith(own)),
+                                                                -self._counts.get(k, 0), k)):
             sq = grids.square(key.split(",")[0])
             if sq and sq not in squares:
                 squares.append(sq)
