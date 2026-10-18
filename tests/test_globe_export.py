@@ -71,10 +71,29 @@ def test_the_counts_badge_is_drawn_in_the_corner_and_exported(tab):
         corner = [image.pixelColor(image.width() - 30 - x, image.height() - 10 - y).lightness()
                   for x in range(0, 300, 10) for y in range(0, 100, 5)]  # the export's badge is drawn larger
         assert max(corner) > 150, "no light text in the corner"
-        greens = [image.pixelColor(image.width() - 30 - x, image.height() - 10 - y)
-                  for x in range(0, 1600, 2) for y in range(0, 100, 2)]  # the whole badge; the "1" is a thin glyph
-        # Antialiased, and a box glyph on Windows off screen: the greenest pixel is clearly green, whatever its size.
-        assert max(c.green() - c.red() for c in greens) >= 30, "the confirmed count is not green"
+        # The colours, recorded where they are decided rather than read back from pixels: Windows' off-screen Qt
+        # draws every glyph as a thin box, too thin for a reliable pixel sample.
+        from PySide6.QtGui import QPainter
+
+        class Spy(QPainter):
+            def __init__(self, target):
+                super().__init__(target)
+                self.texts: list[tuple[str, str]] = []
+
+            def drawText(self, *args):  # noqa: N802 - Qt API
+                self.texts.append((args[-1], self.pen().color().name()))
+                super().drawText(*args)
+
+        canvas = QImage(view.size(), QImage.Format.Format_ARGB32_Premultiplied)  # outlives the painter
+        spy = Spy(canvas)
+        try:
+            view._draw_badge(spy, view._draw_credit(spy))
+        finally:
+            spy.end()
+        colours = dict(reversed(spy.texts))  # text → the pen it was drawn with (the last wins)
+        assert colours["1"] == gridmap.BADGE_OK.name() and colours["0"] == gridmap.BADGE_WARN.name()
+        assert colours[" confirmed (LoTW)"] not in (gridmap.BADGE_OK.name(), gridmap.BADGE_WARN.name())
+        assert "1 / 100" in colours  # the VUCC tally is drawn too
     finally:
         view.shutdown()
         view.deleteLater()
