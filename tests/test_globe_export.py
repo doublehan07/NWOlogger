@@ -84,6 +84,7 @@ def test_the_counts_badge_is_drawn_in_the_corner_and_exported(tab):
                 self.texts.append((args[-1], self.pen().color().name()))
                 super().drawText(*args)
 
+        view.resize(2400, 400)  # room for one line whatever the glyph width, so every run is drawn on its own
         canvas = QImage(view.size(), QImage.Format.Format_ARGB32_Premultiplied)  # outlives the painter
         spy = Spy(canvas)
         try:
