@@ -60,6 +60,34 @@ def no_network(monkeypatch):
     monkeypatch.setattr(net, "retry_sleep", lambda _s: None)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def qt_teardown(qapp):
+    """At the end of the session, take down what tests leave behind while the application object still exists:
+    background tasks and their signal objects, the globe's thread pool and any top-level widget. Left to the
+    interpreter's exit they go after the QApplication, in the garbage collector's order, which on Linux ended the
+    run with a segmentation fault after the last test had passed (the app itself does this in app._tear_down)."""
+    yield
+    import gc
+
+    from PySide6.QtCore import QEvent
+
+    from nwologger.ui import widgets
+    from nwologger.ui.stats import globeraster
+
+    for task in list(widgets._alive):  # noqa: SLF001 - the session's leftovers
+        task.signals.deleteLater()
+    widgets.drop_tasks()
+    globeraster.shutdown()
+    for widget in qapp.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+    gc.collect()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+
+
 @pytest.fixture
 def mock_net(monkeypatch):
     """``mock_net(handler)`` answers service requests with ``handler(request) -> httpx.Response``; the list it

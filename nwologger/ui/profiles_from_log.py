@@ -81,7 +81,7 @@ class ProfilesFromLogDialog(QDialog):
             it.setData(Qt.ItemDataRole.UserRole, (call, place))
             self.table.setItem(i, 0, it)
             count = QTableWidgetItem(f"{n:,}")
-            count.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            count.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(i, 1, count)
             self.table.setItem(i, 2, QTableWidgetItem(tr("has a profile") if has else ""))
         self.table.itemChanged.connect(lambda *_: self._update_button())
