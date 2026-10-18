@@ -1063,7 +1063,7 @@ class GridMapView(QWidget):
         its full size (call 10 pt, name 8 pt)."""
         if not self.cells or (self._drag is not None and self._moved):
             return
-        centre = self._centre_call_px()
+        centre = self._centre_call_px() + 1e-3  # a hair of tolerance: the projection can land a hair under 5.0
         if centre < CALL_MIN_PX:
             return
         names = centre * NAME_SHARE >= NAME_MIN_PX

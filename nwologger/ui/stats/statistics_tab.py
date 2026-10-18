@@ -199,10 +199,11 @@ class StatisticsTab(QWidget):
         self.map.full_screen_toggled.connect(self.toggle_full_screen)
         self.map.save_requested.connect(self.save_png)
         lay.addWidget(self.map, 1)
-        hint = QLabel(tr("Drag with the right mouse button to rotate (Ctrl + drag on a trackpad) · Scroll to zoom") + ". " +
-                      tr("Double-click or +/− to zoom, arrow keys to rotate, click a square to show its QSOs. "
-                         "Green: confirmed, with the first call that confirmed it; amber: worked only, with "
-                         "the first call worked (italics)."))
+        # One line at the usual window width: a second line takes 15 px from the map, which at a whole-country
+        # view can be the difference between names and calls shown or not.
+        hint = QLabel(tr("Rotate: right-drag (Ctrl + drag on a trackpad) or arrow keys · Zoom: scroll, double-click, "
+                         "+/− · Click a square for its QSOs · Green: confirmed, amber: worked only, each with its "
+                         "first call (italics: worked only)."))
         hint.setObjectName("Hint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -451,7 +452,9 @@ class StatisticsTab(QWidget):
                               sat_names=self.sat_filter(),
                               station_calls=calls if len(calls) < len(self.calls.keys()) else None,
                               my_grids=places if len(places) < len(self.places.keys()) else None)
-        self.map.home, self.map.radius_km = home, None
+        # The dashed ring shows the 200 km of VUCC and GridMaster around the own grid (what Within 200 km ticks);
+        # the places ticked in Grids decide what counts, not the ring.
+        self.map.home, self.map.radius_km = home, grids.RADIUS_KM if grids.square(home) else None
         self.map.highlight = grids.conus() if self.region.currentData() == "conus" else frozenset()
         self.map.set_cells(cells)
         self.map.badge = self.summary(cells, sources)

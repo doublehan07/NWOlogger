@@ -35,7 +35,7 @@ All screenshots use made-up QSOs. To regenerate them, run `uv run python tools/s
 The grid map (Statistics tab, Ctrl+4) shows every 4-character Maidenhead square you have worked on a globe you can spin, over satellite imagery, in the style of GridMaster and GridTracker.
 
 ![Grid map, China & around: satellite squares worked from ON80, each with its name and first call; the evening night side darkens the east.](docs/screenshots/gridmap.jpg)
-*China & around, half a zoom step in: every square shows its name and the first call that confirmed it. Green squares are confirmed (here by LoTW), amber ones only worked. The count line keeps the VUCC tally.*
+*China & around, half a zoom step in: every square shows its name and the first call that confirmed it. Green squares are confirmed (here by LoTW), amber ones only worked. The counts in the corner keep the VUCC tally; the dashed ring is 200 km around the own grid.*
 
 | | |
 |---|---|

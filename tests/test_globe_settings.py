@@ -94,8 +94,8 @@ def test_missing_or_invalid_legacy_view_fits_selected_region(make_tab, state):
 
 
 @pytest.mark.parametrize("lang,gesture", [
-    ("en", "Drag with the right mouse button to rotate (Ctrl + drag on a trackpad) · Scroll to zoom"),
-    ("zh_CN", "右键拖动旋转（触控板上 Ctrl + 拖动）· 滚轮缩放")])
+    ("en", "Rotate: right-drag (Ctrl + drag on a trackpad) or arrow keys · Zoom: scroll, double-click, +/−"),
+    ("zh_CN", "旋转：右键拖动（触控板上 Ctrl + 拖动）或方向键 · 缩放：滚轮、双击或 +/−")])
 def test_globe_interaction_hint_is_translated_and_wraps(make_tab, lang, gesture):
     make, _fits = make_tab
     previous = i18n.lang()
@@ -107,6 +107,6 @@ def test_globe_interaction_hint_is_translated_and_wraps(make_tab, lang, gesture)
         assert hint.text().startswith(gesture)
         assert "drag to move" not in hint.text()
         if lang == "zh_CN":
-            assert "方向键旋转" in hint.text()
+            assert "方向键" in hint.text()
     finally:
         i18n.load(previous)
