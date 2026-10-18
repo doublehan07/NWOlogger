@@ -69,8 +69,8 @@ def test_calls_are_thin_and_fit_their_square(view, monkeypatch):
         assert font.pointSizeF() <= gridmap.CALL_MAX_PT
     *_rest, width, _height = view._projected_extents(np.radians([3.0]), np.radians([0.5]), math.radians(1),
                                                      math.radians(.5))
-    px = fonts["BA8TSK/9"].pointSizeF() * view.logicalDpiY() / 72
-    assert view._call_advance("BA8TSK/9", False) * px <= gridmap.CALL_WIDTH * float(width[0])
+    text_px = view._call_advance("BA8TSK/9", False) * fonts["BA8TSK/9"].pointSizeF()  # pixels per point × points
+    assert text_px <= gridmap.CALL_WIDTH * float(width[0])
 
 
 def test_a_call_longer_than_eight_characters_is_made_smaller_to_fit(view, monkeypatch):
@@ -95,7 +95,7 @@ def test_every_call_appears_at_the_same_zoom(view, monkeypatch):
 
 def test_once_calls_appear_every_square_in_view_has_one_far_from_the_centre_too(view, monkeypatch):
     # A view centred at 35° N, squares from 20° N to 52° N: the northern ones are narrower on the globe.
-    view.resize(900, 900)
+    view.resize(1000, 1400)
     view.center_lon, view.center_lat = 116, 35
     squares = {"OL60": "BA1AB", "OM65": "BG5CZD", "ON70": "BH4TSC", "ON72": "BA8TSK/9", "OO72": "BD7TSD"}
     view.set_cells(_cells(squares))
@@ -104,9 +104,11 @@ def test_once_calls_appear_every_square_in_view_has_one_far_from_the_centre_too(
         view._geometry_key = None
         fonts = _labels(view, monkeypatch)
         drawn = set(fonts) & set(squares.values())
-        assert drawn in (set(), set(squares.values())), (view.zoom, drawn)
-        assert all(QRectF(view.rect()).contains(view.to_screen(*grids.center(sq)[::-1])) for sq in squares)
+        in_view = {call for sq, call in squares.items()
+                   if QRectF(view.rect()).contains(view.to_screen(*grids.center(sq)[::-1]))}
+        assert drawn in (set(), in_view), (view.zoom, drawn, in_view)
         if drawn:
+            assert in_view == set(squares.values())  # the view is tall enough for all of them
             north, south = fonts["BD7TSD"].pointSizeF(), fonts["BA1AB"].pointSizeF()
             assert north < south  # each at its own square's size
             break
@@ -117,10 +119,12 @@ def test_once_calls_appear_every_square_in_view_has_one_far_from_the_centre_too(
 
 
 def test_slivers_at_the_limb_stay_blank(view, monkeypatch):
-    view.resize(2400, 2400)  # the whole disk in view at a zoom where the centre has labels
+    view.resize(3200, 3200)  # the whole disk in view at the first zoom where the centre has labels
     view.center_lon, view.center_lat = 1, 0.5
-    view.zoom = 4.7
-    assert view._centre_call_px() >= gridmap.CALL_MIN_PX and view._radius() * 2 < 2400
+    view.zoom = 4.0
+    while view._centre_call_px() < gridmap.CALL_MIN_PX:  # that zoom depends on the font's width
+        view.zoom += 0.05
+    assert view._radius() * 2 < 3200
     # At 0°, 40° and 74° to the east: the last is still on the front of the globe, but its text would be tiny.
     view.set_cells(_cells({"JJ00": "BA1AB", "LJ00": "BG6TSX", "MJ70": "BG5CZD"}))
     lat, lon = grids.center("MJ70")
