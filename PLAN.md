@@ -428,6 +428,7 @@ With *Exact* ticked, a search finds only that mode and submode.
   - Files from MacLoggerDX (`PROGRAMID=MacLoggerDX`) never set the paper QSL from `QSL_SENT` (§8.1.1).
 - **Writer:** UTF-8 with header `ADIF_VER`, `PROGRAMID=NWOlogger`, `PROGRAMVERSION`, `CREATED_TIMESTAMP`.
   - Exports all / selected / filtered.
+  - **A LoTW report** (`lotwreport.adi` from the LoTW website: `PROGRAMID=LoTW`; a file naming another program never is, since an export can carry LoTW's tags from a download, and one without a PROGRAMID is when every record has LoTW's `APP_LoTW_RXQSO` and none of a logger's own `LOTW_QSL_*` or QSL-via fields) has LoTW's confirmation in the generic `QSL_RCVD` and the date LoTW matched it in `QSLRDATE` (not the QSO's date), and every record is a QSO uploaded there. By default the dialog applies it as a LoTW download does (`apply.apply_lotw_report`): matched QSOs get `LOTW_QSL_RCVD` and `LOTW_QSLRDATE`, are marked uploaded with the date LoTW received them, and get the same details filled in; the first-time confirmations are selected and the run is a Sync results row; records not in the log, confirmed or not, go to the Unmatched list. The preview runs it in a rolled-back transaction; a backup is made first; where downloads resume is left alone (a report can hold any selection). *Import every record as a QSO* is still offered, with *merge* on, and maps those fields to the LoTW ones too. Paper QSL fields are never read or changed. (Before 0.1.8 such a file went into the paper QSL fields; NWOlogger does not try to undo that: delete those QSOs and import again.)
   - `NAME` is written as First + space + Last.
   - Optional profiles strip private fields (`notes`, `email`) for service uploads.
 
@@ -488,7 +489,7 @@ Both MacLoggerDX files contain other operators' personal data, so they are git-i
   - **Upload state from downloads:** LoTW's report of accepted QSOs (`qso_qsl=no`) sets `lotw_qsl_sent`, and every QSO found in the QRZ.com logbook gets `qrzcom_qso_upload_status=Y` (unless edited since, `M`). eQSL offers only the inbox and HRDLog no download, so what was uploaded there before can't be learned.
 - **Matching downloaded confirmations:**
   - Key: same call + band, with `sat_name` when the QSO was via satellite. An exact mode match is preferred; the same mode group is accepted.
-  - Time within ±30 min (LoTW's own window). Among candidates, an exact mode match wins, then the nearest time.
+  - Time within ±30 min (LoTW's own window). Among candidates, an exact mode match wins, then the nearest time, then the same propagation and satellite (LoTW can hold a QSO twice, once with its satellite and once without; each copy then finds its own QSO).
   - Records that don't match go to an **Unmatched** list, where they can be added as new QSOs. Import candidates carry the service's downloaded confirmation and upload states, so importing into an empty log preserves LoTW, eQSL and QRZ.com confirmations. An empty log skips per-record matching. Before adding a selection, contacts already added by another service's open import dialog are merged; distinct missing contacts are classified before insertion so nearby QSOs remain separate.
 - **Satellite names per service.** NWOlogger stores one name per satellite and translates it on upload and when matching downloads.
   - The table is editable in Prefs.

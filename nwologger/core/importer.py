@@ -71,7 +71,8 @@ def apply_profile(q: dict, profile: dict | None) -> dict:
 
 
 def find_match(db, q: dict, window: float = MATCH_WINDOW) -> int | None:
-    """Find the local QSO a downloaded / imported record refers to (exact mode preferred, then nearest)."""
+    """Find the local QSO a downloaded / imported record refers to (exact mode preferred, then nearest, then the same
+    propagation and satellite: a QSO uploaded twice, with and without its satellite, matches each copy in turn)."""
     call = (q.get("call") or "").upper()
     band = (q.get("band") or "").lower()
     t = timeutil.parse_iso(q.get("time_on"))
@@ -94,7 +95,8 @@ def find_match(db, q: dict, window: float = MATCH_WINDOW) -> int | None:
         rel = modes.relation((q.get("mode"), q.get("submode")), (o.get("mode"), o.get("submode")))
         if q.get("mode") and o.get("mode") and rel == Relation.UNRELATED:
             continue
-        key = (-int(rel), timeutil.seconds_between(q["time_on"], o["time_on"]))
+        differs = sum((o.get(c) or "").upper() != (q.get(c) or "").upper() for c in ("prop_mode", "sat_name"))
+        key = (-int(rel), timeutil.seconds_between(q["time_on"], o["time_on"]), differs)
         if best_key is None or key < best_key:
             best, best_key = o["id"], key
     return best
@@ -192,14 +194,31 @@ def run(db, qsos: Iterable[dict], *, merge: bool = False, dry_run: bool = False,
     return res
 
 
-def read_adif(data: bytes | str, dropped: list[str] | None = None, inferred: Counter | None = None
-              ) -> tuple[dict, list[dict]]:
+_NOT_IN_LOTW_REPORTS = {"LOTW_QSL_RCVD", "LOTW_QSL_SENT", "QSL_RCVD_VIA", "QSL_SENT_VIA"}  # a logger's own fields
+
+
+def is_lotw_report(header: dict[str, str], records: list[dict[str, str]]) -> bool:
+    """A LoTW report (``lotwreport.adi`` from the LoTW website, or what a download returns): its QSL_RCVD and
+    QSLRDATE are LoTW's confirmation and the date LoTW matched it, not a paper card. The header's PROGRAMID decides;
+    only a file without one is recognised by LoTW's received time on every record (another program's export can
+    carry that tag from an earlier download, with its own QSL fields)."""
+    program = (header.get("PROGRAMID") or "").strip().lower()
+    if program:
+        return program == "lotw"
+    return bool(records) and all("APP_LOTW_RXQSO" in r and not r.keys() & _NOT_IN_LOTW_REPORTS for r in records)
+
+
+def read_adif(data: bytes | str, dropped: list[str] | None = None, inferred: Counter | None = None,
+              raw: list[dict[str, str]] | None = None) -> tuple[dict, list[dict]]:
     """Parse an ADIF file. Credential-looking record tags are left out; their names go to ``dropped``. QSOs
-    confirmed by LoTW or QRZ.com are marked uploaded there (:func:`qso.infer_sent`), counted in ``inferred``."""
+    confirmed by LoTW or QRZ.com are marked uploaded there (:func:`qso.infer_sent`), counted in ``inferred``. A
+    LoTW report's QSL fields go to the LoTW ones (:func:`is_lotw_report`). ``raw`` receives the parsed records."""
     header, records = adif.parse(data)
+    if raw is not None:
+        raw.extend(records)
     if dropped is not None:
         dropped.extend(t for r in records for t in r if qsomod.is_credential_tag(t))
-    pid = header.get("PROGRAMID")
+    pid = "LoTW" if is_lotw_report(header, records) else header.get("PROGRAMID")
     qsos = [qsomod.from_adif(r, program_id=pid) for r in records]
     for q in qsos:
         for svc in qsomod.infer_sent(q):

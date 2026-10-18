@@ -131,37 +131,78 @@ def _apply(db, recs: list[tuple[dict, dict]], service: str, catalog, label: str,
     return res
 
 
+LOTW_STRIP = ("QSL_RCVD", "QSLRDATE", "QSL_SENT", "QSLSDATE", "APP_LOTW_RXQSL", "APP_LOTW_RXQSO")
+
+
+def _lotw_confirmed(rec: dict) -> bool:
+    return (rec.get("QSL_RCVD") or "").upper() == "Y"
+
+
+def _lotw_qsl_changes(rec: dict, q: dict, ex: dict) -> dict:
+    """A LoTW confirmation: received, on the date LoTW matched it (QSLRDATE, not the QSO's date)."""
+    ch: dict = {}
+    if _lotw_confirmed(rec):
+        ch["lotw_qsl_rcvd"] = "Y"
+        d = timeutil.adif_date_to_iso(rec.get("QSLRDATE")) or (rec.get("APP_LOTW_RXQSL") or "")[:10] or None
+        if d:
+            ch["lotw_qslrdate"] = d
+    if ex.get("lotw_qsl_sent") != "Y":
+        ch["lotw_qsl_sent"] = "Y"
+    ch.update(_fill(ex, q, DETAIL_FILL))
+    return ch
+
+
+def _lotw_upload_changes(rec: dict, ex: dict) -> dict:
+    """A QSO LoTW holds: uploaded, dated when LoTW received it (unless already dated)."""
+    ch = {"lotw_qsl_sent": "Y"}
+    d = (rec.get("APP_LOTW_RXQSO") or "")[:10]
+    if d and not ex.get("lotw_qslsdate"):
+        ch["lotw_qslsdate"] = d
+    return ch
+
+
 def apply_lotw_qsls(db, records: list[dict[str, str]], catalog) -> ApplyResult:
-    strip = ("QSL_RCVD", "QSLRDATE", "QSL_SENT", "QSLSDATE", "APP_LOTW_RXQSL", "APP_LOTW_RXQSO")
-    pairs = [(r, _to_qso(r, strip, catalog, "lotw")) for r in records]
-
-    def changes(rec: dict, q: dict, ex: dict) -> dict:
-        ch: dict = {}
-        if rec.get("QSL_RCVD", "").upper() == "Y":
-            ch["lotw_qsl_rcvd"] = "Y"
-            d = timeutil.adif_date_to_iso(rec.get("QSLRDATE")) or (rec.get("APP_LOTW_RXQSL") or "")[:10] or None
-            if d:
-                ch["lotw_qslrdate"] = d
-        if ex.get("lotw_qsl_sent") != "Y":
-            ch["lotw_qsl_sent"] = "Y"
-        ch.update(_fill(ex, q, DETAIL_FILL))
-        return ch
-
-    return _apply(db, pairs, "lotw", catalog, "LoTW download", changes, "lotw_qsl_rcvd")
+    pairs = [(r, _to_qso(r, LOTW_STRIP, catalog, "lotw")) for r in records]
+    return _apply(db, pairs, "lotw", catalog, "LoTW download", _lotw_qsl_changes, "lotw_qsl_rcvd")
 
 
 def apply_lotw_uploads(db, records: list[dict[str, str]], catalog) -> ApplyResult:
     strip = ("QSL_RCVD", "QSLRDATE", "QSL_SENT", "QSLSDATE")
     pairs = [(r, _to_qso(r, strip, catalog, "lotw")) for r in records]
+    return _apply(db, pairs, "lotw", catalog, "LoTW upload status", lambda rec, _q, ex: _lotw_upload_changes(rec, ex))
+
+
+class _Preview(Exception):
+    pass
+
+
+def apply_lotw_report(db, records: list[dict[str, str]], catalog, *, dry_run: bool = False) -> ApplyResult:
+    """A LoTW report saved as a file (``lotwreport.adi``), applied as a LoTW download is: every record is a QSO
+    uploaded there, and one with QSL_RCVD Y is confirmed, QSLRDATE being the date LoTW matched it. Records not in
+    the log, confirmed or not, are listed in ``unmatched`` to add. Download positions are left as they are: a
+    report can hold any selection of QSOs. Paper QSL fields are never read or changed. ``dry_run`` rolls everything
+    back (the import preview)."""
+    pairs = [(r, _to_qso(r, LOTW_STRIP, catalog, "lotw")) for r in records]
 
     def changes(rec: dict, q: dict, ex: dict) -> dict:
-        ch = {"lotw_qsl_sent": "Y"}
-        d = (rec.get("APP_LOTW_RXQSO") or "")[:10]
-        if d and not ex.get("lotw_qslsdate"):
-            ch["lotw_qslsdate"] = d
+        ch = _lotw_upload_changes(rec, ex)
+        if _lotw_confirmed(rec):
+            ch.update(_lotw_qsl_changes(rec, q, ex))
         return ch
 
-    return _apply(db, pairs, "lotw", catalog, "LoTW upload status", changes)
+    def run() -> ApplyResult:
+        return _apply(db, pairs, "lotw", catalog, "LoTW report", changes, "lotw_qsl_rcvd")
+
+    if dry_run:
+        try:
+            with db.batch("LoTW report preview"):
+                res = run()
+                raise _Preview
+        except _Preview:
+            pass
+    else:
+        res = run()
+    return res
 
 
 def apply_eqsl(db, records: list[dict[str, str]], catalog) -> ApplyResult:

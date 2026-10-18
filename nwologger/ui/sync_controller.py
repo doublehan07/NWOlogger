@@ -488,6 +488,17 @@ class SyncController(QObject):
                 return p
         return self.db.default_profile()
 
+    def lotw_report_applied(self, name: str, res: apply.ApplyResult) -> None:
+        """A LoTW report imported from a file and applied as a download: its summary in Sync results, its new
+        confirmations selected, and the records not in the log offered to add."""
+        def text(t) -> str:
+            return f"{name}: " + apply.summary(t, res, new_one="new confirmation", new_many="new confirmations",
+                                               none="No new confirmations")
+
+        self.report("lotw", "ok", text, ids=res.confirmed, log_detail=f"LoTW report imported; {apply.counts(res)}")
+        self.confirmed.emit("lotw", res.confirmed)
+        self._show_unmatched("lotw", res)
+
     def _show_unmatched(self, service: str, res: apply.ApplyResult) -> None:
         """Opened without blocking: other results keep arriving while you choose."""
         if not res.unmatched:

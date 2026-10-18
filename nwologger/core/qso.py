@@ -162,11 +162,18 @@ def dump_extra(extra: dict[str, str]) -> str | None:
 
 # ---------------------------------------------------------------- ADIF conversion
 
+# A LoTW report's QSL fields are LoTW's, not a paper card's.
+LOTW_REPORT_QSL = {"QSL_RCVD": "lotw_qsl_rcvd", "QSLRDATE": "lotw_qslrdate", "QSL_SENT": "lotw_qsl_sent",
+                   "QSLSDATE": "lotw_qslsdate"}
+
+
 def from_adif(rec: dict[str, str], *, program_id: str | None = None) -> dict:
-    """Convert one ADIF record (tags upper-case) to a normalised QSO dict."""
+    """Convert one ADIF record (tags upper-case) to a normalised QSO dict. ``program_id`` ``LoTW`` (a LoTW report):
+    its QSL fields are LoTW's, and every record is a QSO uploaded there (on the date LoTW received it)."""
     q: dict[str, Any] = {}
     extra: dict[str, str] = {}
-    mldx = (program_id or "").strip().lower() == "macloggerdx"
+    program = (program_id or "").strip().lower()
+    mldx, lotw = program == "macloggerdx", program == "lotw"
     for tag, value in rec.items():
         tag = tag.upper()
         if value is None or value == "":
@@ -181,6 +188,9 @@ def from_adif(rec: dict[str, str], *, program_id: str | None = None) -> dict:
             continue
         if mldx and tag == "QSL_SENT":
             continue  # MacLoggerDX writes Y here for every uploaded QSO; it is not a paper card
+        if lotw and tag in LOTW_REPORT_QSL:
+            q[LOTW_REPORT_QSL[tag]] = clean(LOTW_REPORT_QSL[tag], value)
+            continue
         f = BY_ADIF.get(tag)
         if f is None:
             extra[tag] = value
@@ -200,6 +210,11 @@ def from_adif(rec: dict[str, str], *, program_id: str | None = None) -> dict:
     q["first_name"], q["last_name"] = first, last
     if not q.get("station_callsign") and q.get("operator"):
         q["station_callsign"] = q["operator"]
+    if lotw:
+        q["lotw_qsl_sent"] = "Y"
+        received = timeutil.adif_date_to_iso((rec.get("APP_LOTW_RXQSO") or "")[:10].replace("-", ""))
+        if received and not q.get("lotw_qslsdate"):
+            q["lotw_qslsdate"] = received
     q["extra"] = dump_extra(extra)
     return normalize(q)
 

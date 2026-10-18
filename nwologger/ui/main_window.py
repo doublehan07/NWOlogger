@@ -752,7 +752,12 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, tr("Import"), f"{tr('Could not read the file')}:\n{e}")
             return
-        if dlg.exec() and dlg.result:
+        if not dlg.exec():
+            return
+        if dlg.lotw_result is not None:
+            self.sync.lotw_report_applied(Path(path).name, dlg.lotw_result)
+            return
+        if dlg.result:
             r = dlg.result
             self.filter.set_sats(self.db.distinct("sat_name"))
             msg = f"{tr('Imported')} {r.added}"

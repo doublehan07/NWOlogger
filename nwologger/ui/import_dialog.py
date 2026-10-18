@@ -1,4 +1,5 @@
-"""Import an ADIF file or a MacLoggerDX database, with a dry-run preview first."""
+"""Import an ADIF file or a MacLoggerDX database, with a dry-run preview first. A LoTW report is applied as a LoTW
+download by default (its QSL fields are LoTW's), or imported as QSOs."""
 
 from __future__ import annotations
 
@@ -19,11 +20,13 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
+    QRadioButton,
     QVBoxLayout,
 )
 
 from .. import i18n
-from ..core import importer, mldx
+from ..core import importer, mldx, sats
+from ..core.sync import apply
 from .widgets import Section
 
 tr = i18n.tr
@@ -34,15 +37,14 @@ class ImportDialog(QDialog):
         super().__init__(parent)
         self.db, self.prefs, self.path = db, prefs, path
         self.result: importer.ImportResult | None = None
+        self.lotw_result: apply.ApplyResult | None = None  # a LoTW report applied as a download
         self.is_mldx = Path(path).suffix.lower() in (".sql", ".sqlite", ".db") and mldx.is_mldx_db(path)
         self.setWindowTitle(tr("Import") + f" — {Path(path).name}")
         self.resize(760, 600)
         lay = QVBoxLayout(self)
-        kind = tr("MacLoggerDX database") if self.is_mldx else tr("ADIF file")
-        title = QLabel(f"<b>{Path(path).name}</b>  ·  {kind}")
-        lay.addWidget(title)
         self.dropped: list[str] = []
         self.inferred: Counter = Counter()
+        self.records: list[dict[str, str]] = []
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             if self.is_mldx:
@@ -52,17 +54,38 @@ class ImportDialog(QDialog):
             else:
                 with open(path, "rb") as fh:
                     self.header, self.qsos = importer.read_adif(fh.read(), dropped=self.dropped,
-                                                                inferred=self.inferred)
+                                                                inferred=self.inferred, raw=self.records)
                 self.report = None
         finally:
             QApplication.restoreOverrideCursor()
+        self.is_lotw = not self.is_mldx and importer.is_lotw_report(self.header, self.records)
+        kind = tr("MacLoggerDX database") if self.is_mldx else tr("LoTW report") if self.is_lotw else tr("ADIF file")
+        lay.addWidget(QLabel(f"<b>{Path(path).name}</b>  ·  {kind}"))
 
         counts = Section(tr("Preview"))
         self.counts = QGridLayout()
         counts.add(self.counts)
         lay.addWidget(counts)
 
+        self.as_download = self.as_qsos = None
+        if self.is_lotw:
+            box = Section(tr("LoTW report"))
+            note = QLabel(tr("Its QSL received fields are LoTW's: the confirmation and the date LoTW confirmed it, "
+                             "not a paper card."))
+            note.setWordWrap(True)
+            box.add(note)
+            self.as_download = QRadioButton(tr("Apply it to your log as a LoTW download (recommended)"))
+            self.as_download.setToolTip(tr("Confirms the QSOs in your log and marks them uploaded to LoTW; the "
+                                           "records not in your log are listed afterwards, to add the ones you "
+                                           "choose."))
+            self.as_download.setChecked(True)
+            self.as_qsos = QRadioButton(tr("Import every record as a QSO"))
+            for w in (self.as_download, self.as_qsos):
+                box.add(w)
+            lay.addWidget(box)
+
         opts = Section(tr("Options"))
+        self.opts = opts
         form = QFormLayout()
         self.merge = QCheckBox(tr("Merge records that match an existing QSO instead of adding them"))
         self.merge.setToolTip(tr("For confirmation files: fills empty fields and updates QSL status."))
@@ -74,6 +97,8 @@ class ImportDialog(QDialog):
             self.profile.addItem(p["name"], p["id"])
         if self.profile.count() > 1:
             self.profile.setCurrentIndex(1)
+        if self.is_lotw:
+            self.merge.setChecked(True)  # importing a confirmation file as QSOs: update the QSOs it matches
         if not self.is_mldx:
             form.addRow(self.merge)
         form.addRow(self.fill)
@@ -128,7 +153,56 @@ class ImportDialog(QDialog):
         lay.addWidget(bb)
         self.merge.toggled.connect(self._preview)
         self.fill.toggled.connect(self._preview)
+        if self.as_download is not None:
+            self.as_download.toggled.connect(self._mode_changed)
+            self._mode_changed()
+        else:
+            self._preview()
+
+    def applies_lotw(self) -> bool:
+        """A LoTW report, to be applied as a LoTW download (not imported as QSOs)."""
+        return self.as_download is not None and self.as_download.isChecked()
+
+    def _mode_changed(self, *_a) -> None:
+        apply_it = self.applies_lotw()
+        self.opts.setEnabled(not apply_it)
+        self.ok.setText(tr("Apply") if apply_it else tr("Import"))
         self._preview()
+
+    def _catalog(self) -> sats.SatCatalog:
+        return sats.load(overrides=self.prefs.get("sat_names"), extra=self.prefs.get("user_sats"))
+
+    def _show_counts(self, items: list[tuple[str, int]], text: str) -> None:
+        while self.counts.count():
+            w = self.counts.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        for i, (label, n) in enumerate(items):
+            big = QLabel(f"{n:,}")
+            big.setObjectName("Big")
+            lab = QLabel(label)
+            lab.setProperty("muted", True)
+            self.counts.addWidget(big, 0, i)
+            self.counts.addWidget(lab, 1, i)
+        note = QLabel(text)
+        note.setObjectName("Hint")
+        note.setWordWrap(True)
+        self.counts.addWidget(note, 2, 0, 1, max(1, len(items)))
+
+    def _preview_lotw(self) -> None:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            res = apply.apply_lotw_report(self.db, self.records, self._catalog(), dry_run=True)
+        finally:
+            QApplication.restoreOverrideCursor()
+        confirmed = sum(1 for r in self.records if (r.get("QSL_RCVD") or "").upper() == "Y")
+        self._show_counts(
+            [(tr("Records"), res.total), (tr("Confirmed by LoTW"), confirmed), (tr("In your log"), res.matched),
+             (tr("New confirmations"), len(res.confirmed)), (tr("Not in your log"), len(res.unmatched))],
+            tr("As Download from LoTW does: the QSOs in your log get LoTW's confirmation with the date LoTW "
+               "confirmed them and are marked uploaded to LoTW, and empty details LoTW knows (grid, zones, DXCC, "
+               "country, state, county, IOTA) are filled in. The records not in your log are listed afterwards, to "
+               "add the ones you choose. Where downloads resume is left as it is."))
 
     def _opts(self) -> dict:
         return {
@@ -141,6 +215,9 @@ class ImportDialog(QDialog):
         }
 
     def _preview(self) -> None:
+        if self.applies_lotw():
+            self._preview_lotw()
+            return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             res = importer.run(self.db, self.qsos, dry_run=True, **self._opts())
@@ -158,13 +235,6 @@ class ImportDialog(QDialog):
             items.append((tr("Updated (imported before)"), res.updated))
         if res.errors:
             items.append((tr("Errors"), len(res.errors)))
-        for i, (label, n) in enumerate(items):
-            big = QLabel(str(n))
-            big.setObjectName("Big")
-            lab = QLabel(label)
-            lab.setProperty("muted", True)
-            self.counts.addWidget(big, 0, i)
-            self.counts.addWidget(lab, 1, i)
         text = tr("Nothing is skipped: every record is imported and suspicious dupes are marked so you "
                   "can review them (preset “Suspicious dupes”).")
         if self.dropped:
@@ -178,12 +248,21 @@ class ImportDialog(QDialog):
                                  "(a service only confirms what you uploaded):") + " " + ", ".join(parts) + ". " + \
                 tr("Download from LoTW and QRZ.com before your first upload: that marks every other QSO they "
                    "already hold.")
-        note = QLabel(text)
-        note.setObjectName("Hint")
-        note.setWordWrap(True)
-        self.counts.addWidget(note, 2, 0, 1, max(1, len(items)))
+        self._show_counts(items, text)
 
     def _run(self) -> None:
+        if self.applies_lotw():
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                self.db.backup("import")
+                self.lotw_result = apply.apply_lotw_report(self.db, self.records, self._catalog())
+            except Exception as e:  # noqa: BLE001
+                QApplication.restoreOverrideCursor()
+                QMessageBox.critical(self, tr("Import failed"), str(e))
+                return
+            QApplication.restoreOverrideCursor()
+            self.accept()
+            return
         if self.profiles_list is not None:
             for i in range(self.profiles_list.count()):
                 it = self.profiles_list.item(i)

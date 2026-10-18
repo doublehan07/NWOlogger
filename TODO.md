@@ -25,7 +25,6 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Next
 
-- [ ] **Importing a LoTW report** (`lotwreport.adi`, PROGRAMID `LoTW`): its `QSL_RCVD` / `QSLRDATE` are LoTW's confirmation and date, but File → Import writes them into the paper QSL fields and leaves the LoTW ones empty. Proposed: apply such a file as a LoTW download does
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
 - [ ] Measure the per-pixel globe renderer on the Windows test machine at 100% and 250% scaling (it took 106–242 ms per dense scene before; PLAN §15)
@@ -57,6 +56,7 @@ From testing the first 0.1.8 build (the version stays 0.1.8):
 - [x] **Asking again while a run goes on:** a second download or upload with the same service shows "another download (upload) is still in progress", starts nothing and brings back its hidden progress window; Sync everything warns once for all still running
 - [x] Preferences: the language hint names the *Save* button (it said OK)
 - [x] The *Day/night* button looks selected while the night side is shown
+- [x] **Importing a LoTW report** (`lotwreport.adi`): its `QSL_RCVD` / `QSLRDATE` are LoTW's confirmation and date, but File → Import wrote them into the paper QSL fields. Now it is applied like a LoTW download by default (confirmations with LoTW's date, uploads marked, new confirmations selected, the QSOs not in the log offered to add), or imported as QSOs into the LoTW fields; paper QSL fields are never touched. A QSO LoTW holds twice, with and without its satellite, now matches each copy
 
 Before that:
 
