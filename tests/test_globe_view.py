@@ -45,7 +45,7 @@ def test_world_fit_draws_a_disk_with_empty_space_outside(view):
     image = _image(view)
     view.render(image)
     for pos in (QPoint(5, 5), QPoint(view.width() - 5, 5), QPoint(5, view.height() - 5)):
-        assert image.pixelColor(pos) == BG
+        assert max(image.pixelColor(pos).getRgb()[:3]) < 40  # dark space (stars are sparse)
         assert view.to_lonlat(QPointF(pos)) is None
         assert view.square_at(QPointF(pos)) is None
     assert image.pixelColor(view.width() // 2, view.height() // 2) != BG
@@ -447,3 +447,4 @@ def test_squares_are_filled_per_pixel(view):
     inside = image.pixelColor(view.to_screen(0.5, 0.75).toPoint())
     outside = image.pixelColor(view.to_screen(-0.5, 0.75).toPoint())
     assert inside.green() > inside.red() + 60 and outside.green() < outside.red() + 60
+

@@ -74,24 +74,34 @@ def test_night_shade_follows_solar_altitude_on_visible_hemisphere(view, center, 
 
 
 @pytest.mark.parametrize(("center", "sun"), [((0, 0), (90, 0)), ((117, 40.5), (10, 23.44))])
-def test_twilight_fades_from_day_to_night_without_a_line(view, center, sun):
+def test_night_side_ends_at_a_clear_edge_along_the_grey_line(view, center, sun):
     view.center_lon, view.center_lat = center
     view._sun_position = sun
     image = view._night_image()
-    # Along the great circle from the subsolar point to its antipode, the shade only grows, through many steps.
+    full = gridmap.NIGHT_SHADE.alpha()
+    # Along the great circle from the subsolar point to its antipode, the shade only grows; it goes from none to
+    # full within a few degrees of the terminator (as on PSK Reporter's map), through a few antialiased steps.
     sun_lon, sun_lat = sun
-    between = set()
+    checked = 0
     for bearing in (90, 270):
-        alphas = []
-        for step in range(0, 181):
-            lon, lat = globe.destination(sun_lon, sun_lat, bearing, step * globe.EARTH_KM * math.pi / 180)
+        samples = []
+        for step in range(0, 721):
+            arc = step / 4
+            lon, lat = globe.destination(sun_lon, sun_lat, bearing, arc * globe.EARTH_KM * math.pi / 180)
             if view._camera().project(lon, lat)[2] > .2:
-                alphas.append(_night_alpha(view, image, lon, lat))
+                samples.append((arc, _night_alpha(view, image, lon, lat)))
+        alphas = [alpha for _arc, alpha in samples]
         assert alphas == sorted(alphas)
-        between |= {a for a in alphas if 0 < a < gridmap.NIGHT_SHADE.alpha()}
-    assert len(between) >= 3
-    # No boundary line is drawn on top: the scene's pixels near the terminator are not brighter than the day.
-    assert not hasattr(gridmap, "TERMINATOR_LINE")
+        if not samples or samples[0][0] > 80 or samples[-1][0] < 100:
+            continue  # this way round, the terminator is on the far side
+        checked += 1
+        assert alphas[0] == 0 and alphas[-1] == full
+        last_day = max(arc for arc, alpha in samples if alpha == 0)
+        first_night = min(arc for arc, alpha in samples if alpha == full)
+        assert 90 - 4 <= last_day < first_night <= 90 + 4
+        assert any(0 < alpha < full for alpha in alphas)
+    assert checked
+    assert not hasattr(gridmap, "TERMINATOR_LINE")  # an edge of the shade, not a line drawn on top
 
 
 @pytest.mark.parametrize("center", [(0, 0), (117, 40.5), (179, -60), (30, 90)])
@@ -210,3 +220,21 @@ def test_hidden_clock_is_refreshed_before_show_or_png_export(view, clock, tmp_pa
         assert not QImage(str(path)).isNull()
         assert not view._solar_timer.isActive()
     assert view._solar_time == clock[0]
+
+
+def test_night_shades_the_squares_too_so_the_grey_line_runs_through_them(view):
+    view.center_lon, view.center_lat = 90, 0
+    view.zoom = 4
+    view._sun_position = (0, 0)  # the terminator at 90° E, through the view's centre
+    cells = {}
+    for sq in ("NJ09", "NJ19", "NJ29", "NJ39", "NJ49", "OJ09", "OJ19", "OJ29", "OJ39", "OJ49"):
+        cell = grids.Square(sq)
+        cell.confirmed, cell.source = {"call": "BA1AA"}, "lotw"
+        cells[sq] = cell
+    view.set_cells(cells)
+    day, night = view.to_screen(84.5, -.5).toPoint(), view.to_screen(97.5, -.5).toPoint()
+    on = view.grab().toImage()
+    view.set_terminator_enabled(False)
+    off = view.grab().toImage()
+    assert on.pixelColor(day) == off.pixelColor(day)
+    assert on.pixelColor(night).green() < off.pixelColor(night).green() * .6

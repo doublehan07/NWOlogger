@@ -34,19 +34,20 @@ All screenshots use made-up QSOs. To regenerate them, run `uv run python tools/s
 
 The grid map (Statistics tab, Ctrl+4) shows every 4-character Maidenhead square you have worked on a globe you can spin, over satellite imagery, in the style of GridMaster and GridTracker.
 
-![Grid map, China & around: satellite squares worked from ON80, each with its name and first call; the evening twilight darkens the east.](docs/screenshots/gridmap.jpg)
+![Grid map, China & around: satellite squares worked from ON80, each with its name and first call; the evening night side darkens the east.](docs/screenshots/gridmap.jpg)
 *China & around, half a zoom step in: every square shows its name and the first call that confirmed it. Green squares are confirmed (here by LoTW), amber ones only worked. The count line keeps the VUCC tally.*
 
 | | |
 |---|---|
 | ![Zoomed in on ON80 and around](docs/screenshots/gridmap-detail.jpg) | ![The whole globe, all bands](docs/screenshots/gridmap-world.jpg) |
-| *Zoomed in: names and calls at full size. A worked-only square's call is in italics. Your square is outlined, and the dashed circle marks 200 km around it.* | *All bands on the whole globe. The night side for the current UTC time fades in through twilight.* |
+| *Zoomed in: names and calls at full size. A worked-only square's call is in italics. Your square is outlined, and the dashed circle marks 200 km around it.* | *All bands on the whole globe. The night side for the current UTC time ends at a clear grey line.* |
 
-- **Squares:** green when confirmed by the sources you tick (LoTW by default; any mix of eQSL, QRZ.com and paper), amber when only worked, each with the first call. Names and calls appear about half a zoom step inside a whole-country view and grow as you zoom in. Worked squares get a light edge once they are big enough, so neighbours stay apart. Two-letter field names sit at 8% opacity over their 100 squares.
+- **Squares:** green when confirmed by the sources you tick (LoTW by default; any mix of eQSL, QRZ.com and paper), amber when only worked, each with the first call. Names and calls appear about half a zoom step inside a whole-country view and grow as you zoom in. Every call has the same size and thin type, so a short call is no larger than a long one and all of them appear together. Worked squares get a light edge once they are big enough, so neighbours stay apart. Two-letter field names sit at 8% opacity over their 100 squares.
 - **Filters:** satellite, one band or all bands, and mode group. By default only QSOs made within 200 km of your grid count (VUCC, GridMaster). The count line shows confirmed and worked squares and VUCC progress.
 - **Regions:** around my grid, China & around, CONUS 488 (GridMaster's squares outlined, with the count), Europe, Japan, World.
-- **Moving around:** drag or the arrow keys rotate the globe. The wheel, a double-click or +/− zoom. A click shows the square's QSOs in the log, and *Save as PNG* keeps the current view.
-- **Day/night:** shades the night side for the current UTC time, fading from day to night through twilight. It updates by itself and remembers whether it is on (on by default).
+- **Moving around:** drag or the arrow keys rotate the globe. The wheel, a double-click or +/− zoom. A click shows the square's QSOs in the log. *Full screen* shows the map alone (Esc comes back).
+- **Save as PNG:** the whole globe, facing the way the map faces, on a 2000 × 2000 image named after you (`<call>-grid-map-NWOlogger.png`), with NWOlogger and its version at the top.
+- **Day/night:** shades the night side for the current UTC time, squares included, with a clear edge along the grey line (as on PSK Reporter's map). It updates by itself and remembers whether it is on (on by default). Stars and a faint Milky Way sit behind the globe.
 - **Imagery** (Preferences → Map): NASA Blue Marble (no key) or Tianditu 天地图 (a free developer key). Imagery, squares and the night side are drawn at your display's own resolution, Retina included. Tiles load in the background and are kept in the system cache folder (up to 300 MB), so views seen before open offline.
 
 ## Installation

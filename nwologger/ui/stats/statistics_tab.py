@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import re
+from pathlib import Path
 
-from PySide6.QtCore import QLocale, QTimer, Signal
+from PySide6.QtCore import QLocale, QStandardPaths, Qt, QTimer, Signal
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -12,6 +16,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -21,9 +27,10 @@ from PySide6.QtWidgets import (
 from ... import i18n
 from ...core import bands, grids, maptiles
 from ...core.grids import SOURCE_NAMES
-from .gridmap import MAX_ZOOM, MIN_ZOOM, GridMapView
+from .gridmap import MAX_ZOOM, MIN_ZOOM, GlobeSnapshot, GridMapView
 
 tr = i18n.tr
+log = logging.getLogger("nwologger.stats")
 
 # VUCC: confirmed squares an award on that band needs.
 VUCC_NEEDS = {"SAT": 100, "6m": 100, "2m": 100, "1.25m": 50, "70cm": 50, "33cm": 25, "23cm": 25}
@@ -81,11 +88,16 @@ class StatisticsTab(QWidget):
         for key, name in grids.REGION_NAMES.items():
             self.region.addItem(tr(name), key)
         save = QPushButton(tr("Save as PNG"))
+        save.setToolTip(tr("Save the whole globe, facing the way it faces now, as a 2000 × 2000 pixel image"))
         save.clicked.connect(self.save_png)
+        self.full_btn = QPushButton(tr("Full screen"))
+        self.full_btn.setToolTip(tr("Show the map on the whole screen; Esc comes back"))
+        self.full_btn.clicked.connect(self.toggle_full_screen)
         for w in (QLabel(tr("Band")), self.band, QLabel(tr("Mode")), self.mode, self.near, self.radius,
                   QLabel(tr("of grid")), self.home, QLabel(tr("Region")), self.region):
             row.addWidget(w)
         row.addStretch(1)
+        row.addWidget(self.full_btn)
         row.addWidget(save)
         lay.addLayout(row)
         row2 = QHBoxLayout()
@@ -108,13 +120,19 @@ class StatisticsTab(QWidget):
         self.terminator_btn.setCheckable(True)
         self.terminator_btn.setObjectName("TerminatorBtn")
         self.terminator_btn.setToolTip(tr(
-            "Shade the night side for the current UTC time, fading from day to night through twilight; updates "
+            "Shade the night side for the current UTC time, with a clear edge along the grey line; updates "
             "automatically."))
         row2.insertWidget(row2.count() - 1, self.terminator_btn)
         lay.addLayout(row2)
         self.map = GridMapView(self)
-        self.map.square_clicked.connect(self.show_square)
+        self.map.square_clicked.connect(self._square_clicked)
+        self.map.full_screen_toggled.connect(self.toggle_full_screen)
         lay.addWidget(self.map, 1)
+        self.away = QLabel(tr("The map is on the whole screen. Press Esc there to bring it back."))
+        self.away.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.away.setProperty("muted", True)
+        self.away.hide()
+        lay.addWidget(self.away, 1)
         hint = QLabel(tr("Drag to rotate · Scroll to zoom") + ". " +
                       tr("Double-click or +/− to zoom, arrow keys to rotate, click a square to show its QSOs. "
                          "Green: confirmed, with the first call that confirmed it; amber: worked only, with "
@@ -124,6 +142,7 @@ class StatisticsTab(QWidget):
         lay.addWidget(hint)
         self._dirty = True
         self._shut = False
+        self._snapshot: GlobeSnapshot | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(800)
@@ -256,16 +275,89 @@ class StatisticsTab(QWidget):
                          tr("confirmed") + f", {sum(1 for s in cells if s in us)} " + tr("worked"))
         self.count.setText(" · ".join(parts))
 
+    # ------------------------------------------------------------------ full screen
+    def is_full_screen(self) -> bool:
+        return self.map.isWindow()
+
+    def toggle_full_screen(self) -> None:
+        """The map alone on the whole screen (of the window it is in), or back in its tab."""
+        m = self.map
+        if m.isWindow():
+            m.set_full_screen(False)
+            m.setWindowFlags(Qt.WindowType.Widget)  # back into its place in the tab's layout
+            self.away.hide()
+            m.show()
+            self.window().activateWindow()
+            m.setFocus()
+            return
+        screen = self.screen()
+        m.setWindowFlags(Qt.WindowType.Window)
+        m.setWindowTitle("NWOlogger · " + tr("Grid map"))
+        if screen is not None:
+            m.setGeometry(screen.geometry())
+        self.away.show()
+        m.set_full_screen(True)
+        m.showFullScreen()
+        m.activateWindow()
+        m.setFocus()
+
+    def _square_clicked(self, sq: str) -> None:
+        if self.is_full_screen():
+            self.toggle_full_screen()  # the QSOs are shown in the log, in the main window
+        self.show_square.emit(sq)
+
+    # ------------------------------------------------------------------ PNG
+    def png_name(self) -> str:
+        """``BI1NWO-grid-map-NWOlogger.png``: the operator of the default station profile (or its station call)."""
+        prof = self.db.default_profile() or {}
+        call = (prof.get("operator") or prof.get("station_callsign") or "").strip().upper()
+        call = re.sub(r"[^A-Z0-9]+", "-", call).strip("-")
+        return f"{call}-grid-map-NWOlogger.png" if call else "grid-map-NWOlogger.png"
+
     def save_png(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, tr("Save as PNG"), "grid-map.png", "PNG (*.png)")
-        if path:
-            self.map.grab().save(path, "PNG")
+        """The whole globe, facing the way the map faces, once its imagery is in (a moment for tiles not yet seen)."""
+        if self._snapshot is not None:
+            return
+        folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.PicturesLocation) or str(Path.home())
+        path, _ = QFileDialog.getSaveFileName(self, tr("Save as PNG"), str(Path(folder) / self.png_name()),
+                                              "PNG (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        progress = QProgressDialog(tr("Drawing the whole globe…"), tr("Cancel"), 0, 0, self)
+        progress.setWindowTitle(tr("Save as PNG"))
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(500)
+        snapshot = self._snapshot = GlobeSnapshot(self.map.export_view(), parent=self)
+
+        def finished(image: QImage) -> None:
+            self._snapshot = None
+            progress.close()
+            if image.convertToFormat(QImage.Format.Format_RGB32).save(path, "PNG"):
+                log.info("Grid map saved as a %d × %d PNG", image.width(), image.height())
+            else:
+                QMessageBox.warning(self, tr("Save as PNG"), tr("Could not save the image:") + f"\n{path}")
+
+        def cancelled() -> None:
+            if self._snapshot is snapshot:
+                self._snapshot = None
+                snapshot.cancel()
+
+        snapshot.finished.connect(finished)
+        progress.canceled.connect(cancelled)
+        snapshot.start()
 
     def shutdown(self) -> None:
         if self._shut:
             return
         self._shut = True
         self._timer.stop()
+        if self._snapshot is not None:
+            self._snapshot.cancel()
+            self._snapshot = None
+        if self.is_full_screen():
+            self.toggle_full_screen()
         self.save_settings()
         self.db.remove_listener(self._on_db_change)
         self.map.shutdown()

@@ -190,7 +190,7 @@ def test_deep_imagery_samples_the_right_tile_pixel():
         assert image.pixelColor(column, size.height() // 2) == expected, column
 
 
-def test_night_fades_with_solar_altitude_and_repeats_the_limb_outside():
+def test_night_follows_solar_altitude_and_repeats_the_limb_outside():
     size, radius, camera = QSize(900, 640), 290, globe.Orthographic(0, 0)
     sun = (60, 0)
     shade = QColor(0, 0, 0, 160)
@@ -207,9 +207,10 @@ def test_night_fades_with_solar_altitude_and_repeats_the_limb_outside():
             assert alpha == 160, lon
         else:
             assert 0 <= alpha <= 160
-    # A smooth fade: no jump of more than a fifth of the shade between neighbouring pixels along the equator.
+    # A clear edge, yet antialiased: no jump of more than a third of the shade between neighbouring pixels along
+    # the equator, and only a few pixels between day and night.
     row = [image.pixelColor(column, size.height() // 2).alpha() for column in range(image.width())]
-    assert max(abs(a - b) for a, b in zip(row, row[1:], strict=False)) <= 32
-    assert len(set(row)) > 20
+    assert max(abs(a - b) for a, b in zip(row, row[1:], strict=False)) <= 56
+    assert 4 <= len(set(row)) <= 20
     # Beyond the limb (night side) the shade continues, so scaling up leaves no light seam.
     assert image.pixelColor(2, size.height() // 2).alpha() == 160

@@ -2,8 +2,8 @@
 
 Each layer inverts the orthographic projection for every output pixel with array operations, split into row bands
 that run on a small thread pool (NumPy releases the GIL), so imagery and squares can be drawn at the display's own
-resolution. Square edges are antialiased from each edge pixel's exact screen-space footprint; the night side fades
-through twilight instead of ending at a line. Grid lines, outlines and text stay vector paths drawn on top.
+resolution. Square edges are antialiased from each edge pixel's exact screen-space footprint; the night side ends at
+a narrow, clear edge (the grey line). Grid lines, outlines and text stay vector paths drawn on top.
 """
 
 from __future__ import annotations
@@ -22,8 +22,9 @@ from ...core import globe
 
 COLUMNS = ROWS = 180  # 2° × 1° squares
 EMPTY = COLUMNS * ROWS  # the transparent table entry
-# The solar altitude where the night shade starts to show, and where it is complete (nautical twilight).
-DAY_ALTITUDE, NIGHT_ALTITUDE = 3.0, -12.0
+# The solar altitude where the night shade starts to show, and where it is complete: about 220 km either side of
+# the terminator, as on PSK Reporter's map, so the grey line stands out at any zoom.
+DAY_ALTITUDE, NIGHT_ALTITUDE = 1.0, -1.0
 _WORKERS = max(1, min(8, os.cpu_count() or 1))
 _POOL = ThreadPoolExecutor(_WORKERS, thread_name_prefix="globe") if _WORKERS > 1 else None
 _PARALLEL_PIXELS = 60_000
@@ -285,7 +286,7 @@ class GlobeRaster:
         return self.layers(size, radius, camera, scale=scale, table=table, border=border)[1]
 
     def night(self, size: QSize, radius: float, camera: globe.Orthographic, sun: tuple[float, float],
-              color: QColor, *, max_pixels: int = 320) -> QImage:
+              color: QColor, *, max_pixels: int = 560) -> QImage:
         """The night side as a small premultiplied overlay, to be drawn smoothly scaled over the whole viewport.
 
         Its opacity follows the geometric solar altitude: none above :data:`DAY_ALTITUDE`, ``color``'s alpha below
@@ -299,7 +300,8 @@ class GlobeRaster:
         high, low = math.sin(math.radians(DAY_ALTITUDE)), math.sin(math.radians(NIGHT_ALTITUDE))
         image, out = _new_image(raster)
         alpha_max = color.alpha()
-        for band in raster.bands:
+
+        def work(band: _Band) -> None:
             x = np.broadcast_to(raster.x[None, :], band.depth.shape)
             y = np.broadcast_to(band.y, band.depth.shape)
             length = np.maximum(1.0, np.hypot(x, y))
@@ -309,4 +311,11 @@ class GlobeRaster:
             channels = np.concatenate([alpha, *(alpha * (c / 255) for c in (color.red(), color.green(),
                                                                           color.blue()))], axis=1)
             out[band.top:band.top + band.rows] = _pack(channels).reshape(band.rows, raster.width)
+
+        if _POOL is not None and len(raster.bands) > 1:
+            for _ in _POOL.map(work, raster.bands):
+                pass
+        else:
+            for band in raster.bands:
+                work(band)
         return image

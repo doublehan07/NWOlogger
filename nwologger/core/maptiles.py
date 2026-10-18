@@ -154,6 +154,7 @@ class Fetcher:
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
         self._asked: set[tuple] = set()
+        self._pending = 0  # tiles asked for and not yet answered (loaded, from the cache, failed or skipped)
         self._local = threading.local()
         self.failures_in_row: dict[str, int] = {}
         self.stopped: dict[str, str] = {}  # provider → why it is no longer asked
@@ -168,6 +169,7 @@ class Fetcher:
             if k in self._asked or provider.key in self.stopped:
                 return
             self._asked.add(k)
+            self._pending += 1
             if len(self._threads) < WORKERS:
                 t = threading.Thread(target=self._work, name="tiles", daemon=True)
                 self._threads.append(t)
@@ -183,6 +185,14 @@ class Fetcher:
                 self._get(*job)
             except Exception:  # noqa: BLE001 - one tile must never stop the worker
                 log.debug("Map tile failed", exc_info=True)
+            finally:
+                with self._lock:
+                    self._pending -= 1
+
+    def pending(self) -> int:
+        """Tiles asked for that have no answer yet."""
+        with self._lock:
+            return self._pending
 
     def _client(self, provider: Provider):
         clients = getattr(self._local, "clients", None)

@@ -1,6 +1,6 @@
 # TODO
 
-Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found; v0.1.6 adds merging field by field, Look up and fill with progress, and safer bulk edit times; v0.1.7 adds the grid map; v0.1.8 turns it into a globe drawn at the display's resolution and fixes what testing 0.1.7 found. What is left is below.
+Milestones and design details are in [PLAN.md](PLAN.md). v0.1.0 covers M0–M8; v0.1.1 adds the credential fixes, the real-account tests and the new name, NWOlogger; v0.1.2 adds the Device section, the Sync results window and the diagnostic log; v0.1.3 adds the LoTW / eQSL call lists for Similar calls and clearing sync history per service; v0.1.4 fixes what testing 0.1.3 found; v0.1.5 what testing 0.1.4 found; v0.1.6 adds merging field by field, Look up and fill with progress, and safer bulk edit times; v0.1.7 adds the grid map; v0.1.8 turns it into a globe drawn at the display's resolution and fixes what testing 0.1.7 and the first 0.1.8 build found. What is left is below.
 
 ## Needs real accounts
 
@@ -25,6 +25,7 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Next
 
+- [ ] **Importing a LoTW report** (`lotwreport.adi`, PROGRAMID `LoTW`): its `QSL_RCVD` / `QSLRDATE` are LoTW's confirmation and date, but File → Import writes them into the paper QSL fields and leaves the LoTW ones empty. Proposed: apply such a file as a LoTW download does
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
 - [ ] Measure the per-pixel globe renderer on the Windows test machine at 100% and 250% scaling (it took 106–242 ms per dense scene before; PLAN §15)
@@ -43,6 +44,19 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 - [ ] Award progress (DXCC/WAZ/VUCC/WAS/IOTA, China provinces)
 
 ## Done in v0.1.8 (2026-10-18)
+
+From testing the first 0.1.8 build (the version stays 0.1.8):
+
+- [x] **macOS disk image:** the app next to an Applications link, with an arrow between, to drag it in (dmgbuild, `packaging/dmg_settings.py`); the installed app ejects the disk image when it starts from Applications
+- [x] **Grid map full screen:** *Full screen* (or the system's full-screen key) shows the map alone; Esc, its *Exit full screen* button or closing the window brings it back, and a click on a square comes back to show its QSOs
+- [x] **Calls the same size:** every call is sized as an eight-character one, so a five-letter call is no larger than a six-letter one and all calls appear at the same zoom; thin (normal weight), up to 12 pt (names 10 pt); a longer call is made smaller to fit
+- [x] **Save as PNG:** the whole globe, facing the way the map faces, on a 2000 × 2000 image named `<operator>-grid-map-NWOlogger.png`, with "NWOlogger" and the version at the top, after the tiles of the whole hemisphere have arrived
+- [x] **A clear grey line:** the night shade goes from none to full within ±1° of solar altitude, as on PSK Reporter's map, and covers the squares too
+- [x] **Space behind the globe:** stars, a faint Milky Way and an atmosphere glow at the limb
+- [x] **Asking again while a run goes on:** a second download or upload with the same service shows "another download (upload) is still in progress", starts nothing and brings back its hidden progress window; Sync everything warns once for all still running
+- [x] Preferences: the language hint names the *Save* button (it said OK)
+
+Before that:
 
 - [x] **GitHub Actions:** CI runs ruff and pytest on Linux, macOS and Windows for every push (passing); the release workflow's first run, for the v0.1.8 tag, built a Linux `.tar.gz`, a macOS `.dmg` (Apple silicon) and a Windows installer and ZIP, started each built app off-screen, and put them in a draft pre-release (publish it on GitHub). Actions → Release → *Run workflow* builds them without a release
 - [x] **Keychain in the packaged builds:** the built macOS app uses the macOS Keychain and the built Windows app the Windows Credential Manager (`packaging/smoke_test.py`, from the start-up log's new *Keychain:* line); a build without its backend fails the release
