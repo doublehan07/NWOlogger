@@ -44,6 +44,7 @@ _known: set[str] = set()
 _lock = threading.Lock()
 _handler: logging.Handler | None = None
 _crash_fh = None  # the open crash file faulthandler writes to
+_faulthandler_before = False  # whether faulthandler was already on (PYTHONFAULTHANDLER) when the crash file took over
 _watchdog = None
 _retired: list = []  # watchdogs whose thread did not end in time: never destroyed from that thread
 
@@ -72,10 +73,12 @@ def _watch_crashes(folder: Path) -> None:
     """Let faulthandler write the native stack of a crash (a segmentation fault, an abort in Qt's teardown) to a
     file beside the log, which the normal log cannot hold: Python is already dead when it happens. A file left with
     content by the previous run is the evidence of a crash: it is noted here and kept as the previous crash file."""
-    global _crash_fh
+    global _crash_fh, _faulthandler_before
     import faulthandler  # noqa: PLC0415
 
     path = folder / CRASH_FILE
+    if _crash_fh is None:
+        _faulthandler_before = faulthandler.is_enabled()
     try:
         if path.exists() and path.stat().st_size:
             previous = folder / PREVIOUS_CRASH_FILE
@@ -101,6 +104,8 @@ def _stop_watching_crashes() -> None:
     name = _crash_fh.name
     _crash_fh.close()
     _crash_fh = None
+    if _faulthandler_before:  # a test run with PYTHONFAULTHANDLER: a later crash still prints its stack
+        faulthandler.enable(all_threads=True)
     try:
         if os.path.getsize(name) == 0:
             os.unlink(name)  # a clean run leaves nothing behind

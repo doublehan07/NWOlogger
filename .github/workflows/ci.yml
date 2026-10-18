@@ -26,4 +26,4 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync
       - run: uv run ruff check .
-      - run: uv run pytest -q
+      - run: uv run pytest -v -ra  # one line per test: a run that dies without a word still names where
