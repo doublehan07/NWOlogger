@@ -25,7 +25,6 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Next
 
-- [ ] **Statistics: Overview, Awards and Matrix** (planned for v0.1.8, sub-tabs next to the grid map): totals per year, band, mode and satellite, unique calls, QSL counts; award cards (DXCC, WAS, WAC, WAZ, WPX, VUCC, QRZ.com awards, China provinces, IOTA) counting confirmations as each sponsor does; the band × mode matrix per entity, zone, province or prefix
 - [ ] **Label maker:** print QSL card labels from the paper QSL queue (label sheets and label printers, layout templates)
 - [ ] First GitHub Actions run (CI and the release workflow have not run yet)
 - [ ] Contest: per-transmitter (multi-op) support, a Cabrillo template per contest (column widths), ARRL section lists
@@ -39,6 +38,7 @@ Tried with real accounts on 2026-10-16: downloads and lookups (read-only), and u
 
 ## Later / maybe
 
+- [ ] **Statistics: Overview, Awards and Matrix** (sub-tabs next to the grid map): totals per year, band, mode and satellite, unique calls, QSL counts; award cards (DXCC, WAS, WAC, WAZ, WPX, VUCC, QRZ.com awards, China provinces, IOTA) counting confirmations as each sponsor does; the band × mode matrix per entity, zone, province or prefix
 - [ ] macOS code signing + notarization (the BY1QH icon is in place)
 - [ ] ADX (XML ADIF) import/export
 - [ ] Club Log
