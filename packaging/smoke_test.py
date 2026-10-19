@@ -31,7 +31,7 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="nwologger-smoke-"))
     env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "NWOLOGGER_OFFLINE": "1",
            "NWOLOGGER_LOG_DIR": str(tmp / "logs"), "NWOLOGGER_SETTINGS": str(tmp / "settings.ini"),
-           "NWOLOGGER_CACHE_DIR": str(tmp / "cache")}
+           "NWOLOGGER_CACHE_DIR": str(tmp / "cache"), "NWOLOGGER_MIRROR_DIR": str(tmp / "Documents")}
     version = subprocess.run([str(exe), "--version"], env=env, capture_output=True, text=True, timeout=60)
     print("--version:", version.returncode, version.stdout.strip())
     app = subprocess.Popen([str(exe), "--db", str(tmp / "smoke.sqlite")], env=env)

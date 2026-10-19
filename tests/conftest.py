@@ -36,6 +36,7 @@ def no_real_tqsl_or_log(monkeypatch, tmp_path):
     monkeypatch.setenv("TQSLDIR", str(tmp_path / "no-tqsl"))
     monkeypatch.setenv("NWOLOGGER_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("NWOLOGGER_CACHE_DIR", str(tmp_path / "cache"))  # map tiles
+    monkeypatch.setenv("NWOLOGGER_MIRROR_DIR", str(tmp_path / "Documents" / "NWOlogger"))  # the backup copy
 
 
 @pytest.fixture(autouse=True)

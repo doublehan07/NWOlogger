@@ -44,7 +44,10 @@ def test_the_station_folder_layout(tmp_path, monkeypatch):
     assert station.lock_path() == folder / "nwologger.lock"
     monkeypatch.delenv("NWOLOGGER_LOG_DIR", raising=False)
     assert applog.log_dir() == folder / "logs", "the diagnostic log lives in the station folder"
+    monkeypatch.delenv("NWOLOGGER_MIRROR_DIR", raising=False)
     assert station.mirror_dir() == Path.home() / "Documents" / "NWOlogger"
+    monkeypatch.setenv("NWOLOGGER_MIRROR_DIR", str(tmp_path / "docs"))
+    assert station.mirror_dir() == tmp_path / "docs"
     default = station.default_folder()
     assert "Documents" not in default.parts, "the live log is never under the OS's cloud-synced folders"
 

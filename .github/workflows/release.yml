@@ -43,7 +43,7 @@ jobs:
             test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$v"; exit 1; }
           fi
           echo "VERSION=$v" >> "$GITHUB_ENV"
-      - run: uv run pytest -q
+      - run: uv run pytest -v -ra  # one line per test: a run that dies without a word still names where
       - run: uv run --with pyinstaller --with pillow pyinstaller packaging/nwologger.spec --noconfirm
       - name: Start the built app
         run: uv run python packaging/smoke_test.py

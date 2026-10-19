@@ -62,4 +62,7 @@ def lock_path(where: str | os.PathLike | None = None) -> Path:
 
 
 def mirror_dir() -> Path:
-    return DOCUMENTS_FOLDER
+    """Where the backup copy goes: Documents/NWOlogger. NWOLOGGER_MIRROR_DIR overrides (tests must never write into
+    the real Documents folder)."""
+    env = os.environ.get("NWOLOGGER_MIRROR_DIR")
+    return Path(env) if env else DOCUMENTS_FOLDER
