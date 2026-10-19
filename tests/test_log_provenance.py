@@ -21,7 +21,6 @@ def test_a_new_log_says_who_made_it(tmp_path):
         assert made["last_written_by_version"] == __version__ and made["last_written_at"] and made["created_at"]
         assert db.conn.execute("PRAGMA application_id").fetchone()[0] == dbm.APPLICATION_ID
         assert db.conn.execute("PRAGMA user_version").fetchone()[0] == dbm.SCHEMA_VERSION
-        assert db.newer_version is None
     finally:
         db.close()
 
@@ -82,18 +81,29 @@ def test_a_backup_carries_the_keys(tmp_path):
     assert dbm.sqlite_kind(copy) == "nwologger"
 
 
-def test_a_log_written_by_a_newer_nwologger_is_noted(tmp_path):
+def test_a_log_written_by_a_newer_nwologger_is_refused_and_left_alone(tmp_path):
+    """The version gate (0.2.0): a lower version never edits a higher version's log; it is not even opened."""
     path = tmp_path / "new.sqlite"
     db = dbm.LogDB(path, backup_on_open=False)
     db.set_meta("schema_version", str(dbm.SCHEMA_VERSION + 1))
     db.set_meta("last_written_by_version", "0.9.0")
     db.close()
-    db = dbm.LogDB(path, backup_on_open=False)
-    try:
-        assert db.newer_version == "0.9.0"
-        assert db.meta("schema_version") == str(dbm.SCHEMA_VERSION + 1)  # left as the newer one wrote it
-    finally:
-        db.close()
+    before = path.read_bytes()
+    with pytest.raises(dbm.NewerLog) as info:
+        dbm.LogDB(path, backup_on_open=True)
+    assert info.value.version == "0.9.0" and info.value.schema == dbm.SCHEMA_VERSION + 1
+    assert "Update NWOlogger" in str(info.value)
+    assert path.read_bytes() == before, "nothing written, not even provenance"
+    assert not (tmp_path / "backups").exists(), "no launch backup of a log we refuse"
+    assert not (tmp_path / "nwologger.lock").exists() or dbm.lease.held(tmp_path) is None
+    # The same with only the header's user_version raised, as a future version would do.
+    other = tmp_path / "other.sqlite"
+    dbm.LogDB(other, backup_on_open=False).close()
+    con = sqlite3.connect(other)
+    con.execute(f"PRAGMA user_version = {dbm.SCHEMA_VERSION + 1}")
+    con.close()
+    with pytest.raises(dbm.NewerLog):
+        dbm.LogDB(other, backup_on_open=False)
 
 
 def _foreign(path):

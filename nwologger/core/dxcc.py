@@ -9,6 +9,7 @@ Longitudes are positive to the West in this file; they are converted to the usua
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -161,7 +162,7 @@ def download(dest: Path = USER_COPY) -> int:
     if text.count("\n") < 300:
         raise ValueError("country file looks incomplete")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".tmp")
+    tmp = dest.with_suffix(f".tmp-{os.getpid()}")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(dest)
     return text.count("\n")

@@ -226,3 +226,9 @@ Before that:
 - [x] Time On / Time Off on a touch screen: the arrow opens a picker with the calendar and hour, minute and second columns (large ▲▼, Now, Done); the spin boxes themselves stay
 - [x] The button row with Log QSO is pinned under the scrolling form and follows the splitter, so a short screen cannot hide it
 - [x] One running NWOlogger per user: a second launch brings the running window to the front and quits; with `--db` it is told which log the window has
+- [x] One station folder in the OS application-data location with logs, backups, downloads per log, settings.ini, diagnostic log and lock; nothing stored outside it; the first start of 0.2.0 migrates a 0.1.x installation after asking (progress bar, companions and preferences moved, original replaced by the first backup copy)
+- [x] One writing NWOlogger per folder: an OS advisory lock on `nwologger.lock`, released with the process; "in use by another NWOlogger (pid, since, version)" otherwise; a hint when a synced lock file names another computer
+- [x] The write guard: `nwo_guard_*` triggers so other programs and older versions read but cannot write the log; `DROP TRIGGER` or *Save a copy… for other programs* lifts it
+- [x] The version gate: a log with a newer schema is refused with a link to the download page
+- [x] File → Add log file… copies a log in with SQLite's backup API (progress, cancel, `quick_check`, the original untouched) and switches to it; Open log file chooses among the folder's logs; File → Save a copy…
+- [x] The backup copy in Documents/NWOlogger: hourly when the log changed, at exit, after a migration or an added log, with a README; idle checkpoint two seconds after the last change; a process id on every diagnostic log line

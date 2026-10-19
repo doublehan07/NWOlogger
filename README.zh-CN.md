@@ -110,7 +110,7 @@
   - 下拉选择 CQ WW、CQ WPX、IARU HF、ARRL DX、ARRL 10 m、All Asian、CQ WW VHF、通用模板或自定义竞赛。
   - 实时检查重复通联，提供 Check Partial / N+1，以及实时分数、系数和速率。
   - 支持 Cabrillo 导出。
-- **只运行一个 NWOlogger**：在 Windows 或 Linux 上再次启动，只会把正在运行的窗口带到前面然后退出（macOS 本来就这样）。同一份日志开两个窗口会彼此过时、可能把一条 QSO 上传两次，还会互相覆盖下载位置和设置。带 `--db` 的再次启动会提示运行中的窗口打开的是哪份日志；用“文件 → 打开日志文件”切换。
+- **一个电台文件夹，一个运行中的 NWOlogger**（0.2.0，详见 [docs/data-safety.md](docs/data-safety.md)，英文）。NWOlogger 的一切都在系统应用数据位置的一个文件夹里（macOS 为 `~/Library/Application Support/NWOlogger`，Windows 为 `%LOCALAPPDATA%\NWOlogger`，Linux 为 `~/.local/share/nwologger`）：日志、`backups/`、`downloads/`、`settings.ini`、诊断日志和 `nwologger.lock`；别处不再保存任何东西。云同步客户端看不到现用日志。“文稿/NWOlogger”保留当前日志的一份完整**备份副本**，大约每小时和退出时刷新，可安全同步，附带说明文件。再次启动 NWOlogger 只会把运行中的窗口带到前面然后退出；操作系统持有的锁保证每个文件夹同一时间只有一个写入的 NWOlogger，无论走哪条路（另一个用户、路径别名），进程结束（包括崩溃）即释放。日志文件带**写入护栏**：任何程序随时可读，只有 NWOlogger 能写；每个触发器一句 `DROP TRIGGER`（说明文件给出命令）或“保存副本… 供其他程序使用”即可解除。更新版本写过的日志会被拒绝打开并给出下载页链接。别处的日志用“文件 → 添加日志文件…”加入：用 SQLite 备份 API 复制进来（带进度条，原文件不动）并切换过去。
 - **现代界面**：浅色和深色主题，优先支持键盘操作（命令面板 ⌘K / Ctrl+K），提供**英文和简体中文**。窗口和偏好设置会适应可用桌面，必要时可滚动，包括 Windows 250% 显示缩放；偏好设置的各页列在左侧，任何宽度下都全部可见。
 
 本项目不提供电台控制功能，NWOlogger 不会与无线电设备通信。
@@ -187,7 +187,7 @@ NWOlogger/
   - 保存后不再显示密钥。偏好设置中的“忘记”可删除对应密钥；重命名账户会删除旧账户的条目。
   - 删除某呼号的最后一个台站配置时，也会删除该呼号的 QRZ Logbook 密钥。
 - 即使服务将敏感信息编码后返回，错误消息、同步历史和日志也不会包含密码、密钥、上传码或会话令牌。所有请求及重定向仅通过 HTTPS 访问相应服务自己的主机。QRZ.com XML 的密码和会话密钥放在请求正文中；LoTW 和 eQSL 仅接受通过加密 URL 传递。即使应用使用 DEBUG 日志级别，也不启用 HTTP 请求日志。
-- 诊断日志位于 macOS 的 `~/Library/Logs/NWOlogger/`、Windows 的 `%LOCALAPPDATA%\NWOlogger\Logs`，或 Linux 的 `~/.local/state/nwologger/`。日志会隐藏 NWOlogger 读取过的所有密钥和账户用户名，包括异常堆栈和返回的错误页面；请求仅记录主机和路径，从不记录 URL 查询参数；主目录以 `~` 显示。日志记录数量和设置名称，不保存通联内容。
+- 诊断日志位于电台文件夹的 `logs/`（见上；`NWOLOGGER_LOG_DIR` 可覆盖）。日志会隐藏 NWOlogger 读取过的所有密钥和账户用户名，包括异常堆栈和返回的错误页面；请求仅记录主机和路径，从不记录 URL 查询参数；主目录以 `~` 显示。日志记录数量和设置名称，不保存通联内容。
 - LoTW 用户列表和 eQSL AG 列表是公开文件，无需登录即可下载。搜索这些列表时，不会将你输入的内容发送出去。
 - 网格地图仅向影像服务请求当前视野内的瓦片，因此服务可知你查看的区域，但不会收到通联记录。瓦片保存在系统缓存目录（macOS 为 `~/Library/Caches/NWOlogger`），上限 300 MB；“偏好设置 → 地图 → 清除地图缓存”可清空。天地图密钥保存在系统密钥链中。
 - 上传至 LoTW、eQSL、QRZ.com 和 HRDLog 时，仅发送标准 ADIF 字段，不发送其他程序的 `APP_…` 字段。疑似凭据的导入字段（`EQSL_PSWD`、`…PASSWORD…`、`…TOKEN…`、`APP_…_KEY`）会被排除，也不会导出。

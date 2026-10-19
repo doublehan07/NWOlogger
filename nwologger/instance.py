@@ -21,8 +21,11 @@ import sys
 import tempfile
 import threading
 from multiprocessing import connection
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
+
+from .core import station
 
 log = logging.getLogger("nwologger.instance")
 KNOCK_MS = 1000  # how long a start waits for a running copy to answer
@@ -30,16 +33,17 @@ RAISE = "raise"  # the message: "raise" or "raise <log file the second launch wa
 ACK = b"ok"  # the running copy's answer once it has read the message
 
 
-def socket_name(user: str | None = None, settings: str | None = None) -> str:
-    """The socket's name for this user and settings file (NWOLOGGER_SETTINGS; the real preferences when unset)."""
+def socket_name(user: str | None = None, folder: str | os.PathLike | None = None) -> str:
+    """The socket's name for this user and station folder (its resolved path, so every spelling of the folder meets
+    the same socket; NWOLOGGER_SETTINGS, which tests set, keeps them apart from the real one)."""
     if user is None:
         try:
             user = getpass.getuser()
         except (OSError, KeyError, ImportError):
             user = os.environ.get("USER") or os.environ.get("USERNAME") or ""
-    if settings is None:
-        settings = os.environ.get("NWOLOGGER_SETTINGS") or ""
-    digest = hashlib.sha1(f"{user}\0{settings}".encode()).hexdigest()[:12]
+    where = str(Path(folder).resolve()) if folder is not None else str(station.folder().resolve())
+    settings = os.environ.get("NWOLOGGER_SETTINGS") or ""
+    digest = hashlib.sha1(f"{user}\0{where}\0{settings}".encode()).hexdigest()[:12]
     return f"nwologger-{digest}"
 
 
@@ -64,7 +68,8 @@ def knock(name: str, message: str = RAISE, timeout_ms: int = KNOCK_MS) -> bool:
         conn.send_bytes(message.encode("utf-8"))
         # Wait for the answer, so the message is read before this end closes; a running copy that accepted the
         # connection but did not answer in time still counts as running.
-        conn.poll(timeout_ms / 1000)
+        if not conn.poll(timeout_ms / 1000):
+            log.warning("The running NWOlogger accepted the request but did not answer within %d ms", timeout_ms)
     except (OSError, EOFError):
         pass
     finally:
@@ -93,42 +98,61 @@ class InstanceServer(QObject):
             except OSError:
                 pass
             self.listener = connection.Listener(self.address, family=_family())
-        self._closed = False
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._serve, name="instance", daemon=True)
         self._thread.start()
 
     @property
     def listening(self) -> bool:
-        return not self._closed
+        return not self._stop.is_set()
 
     def _serve(self) -> None:
-        while not self._closed:
+        try:
+            while not self._stop.is_set():
+                try:
+                    conn = self.listener.accept()
+                except Exception:  # noqa: BLE001 - closed from the GUI thread, or the pipe is gone
+                    if not self._stop.is_set():
+                        log.debug("The instance socket stopped", exc_info=True)
+                    return
+                if self._stop.is_set():  # the wake-up connection from close(), or a knock during shutdown
+                    conn.close()
+                    return
+                text = ""
+                try:
+                    if conn.poll(KNOCK_MS / 1000):
+                        text = conn.recv_bytes(4096).decode("utf-8", errors="replace").strip()
+                    conn.send_bytes(ACK)
+                except (OSError, EOFError):
+                    pass
+                finally:
+                    conn.close()
+                head, _, path = text.partition(" ")
+                if head == RAISE:
+                    log.info("Another NWOlogger was started; bringing this window to the front")
+                    self.raise_requested.emit(path or None)
+        finally:
             try:
-                conn = self.listener.accept()
-            except Exception:  # noqa: BLE001 - closed from the GUI thread, or the pipe is gone
-                if not self._closed:
-                    log.debug("The instance socket stopped", exc_info=True)
-                return
-            text = ""
-            try:
-                if conn.poll(KNOCK_MS / 1000):
-                    text = conn.recv_bytes(4096).decode("utf-8", errors="replace").strip()
-                conn.send_bytes(ACK)
-            except (OSError, EOFError):
+                self.listener.close()
+            except OSError:
                 pass
-            finally:
-                conn.close()
-            head, _, path = text.partition(" ")
-            if head == RAISE:
-                log.info("Another NWOlogger was started; bringing this window to the front")
-                self.raise_requested.emit(path or None)
 
     def close(self) -> None:
-        if self._closed:
+        """Stop listening and end the thread. On Windows the thread waits on a pipe instance that Listener.close()
+        does not reach, so one connection of our own wakes it; it sees the stop flag and ends. Repeated calls are
+        safe. A thread that does not end within 2 s is reported, not hidden."""
+        if self._stop.is_set():
             return
-        self._closed = True
+        self._stop.set()
         try:
-            self.listener.close()  # removes the socket file; the accepting thread ends with it
+            connection.Client(self.address, family=_family()).close()  # wake accept(); no message, so no raise
+        except (OSError, EOFError):
+            pass
+        self._thread.join(2)
+        if self._thread.is_alive():
+            log.warning("The instance socket's thread did not end within 2 s")
+        try:
+            self.listener.close()
         except OSError:
             pass
 

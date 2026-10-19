@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QSettings
 
-from ..core import db as dbm
-from ..core import secrets
+from ..core import secrets, station
 
 DEFAULTS: dict[str, Any] = {
     "language": "en",
     "theme": "system",
-    "db_path": str(dbm.DEFAULT_PATH),
+    "current_log": "nwolog.sqlite",  # the log file, by name, in the station folder (core/station.py)
     "backup_keep": 20,
     "backup_schedule_on": True,  # the regular backup plan (core/backup_plan.py)
     "backup_every_days": 7,
@@ -59,13 +59,41 @@ SECRET_KEYS = {
 
 
 class Prefs:
+    """Preferences: ``settings.ini`` in the station folder, nothing outside it (0.2.0). Up to 0.1.9 they were in the
+    system's store (a plist, the registry, a .conf); :func:`native_store` reaches that for the one-time move."""
+
     def __init__(self, settings: QSettings | None = None):
         # NWOLOGGER_SETTINGS=<file.ini> keeps test and screenshot runs away from your real preferences.
-        path = os.environ.get("NWOLOGGER_SETTINGS")
-        if settings is None and path:
+        path = os.environ.get("NWOLOGGER_SETTINGS") or str(station.settings_path())
+        if settings is None:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
             settings = QSettings(path, QSettings.Format.IniFormat)
-        self.s = settings or QSettings("NWOlogger", "NWOlogger")
+        self.s = settings
         self._migrate()
+
+    @staticmethod
+    def native_store() -> QSettings:
+        """The pre-0.2.0 store in the operating system (plist / registry / .conf)."""
+        return QSettings("NWOlogger", "NWOlogger")
+
+    @classmethod
+    def migrate_native(cls, into: QSettings | None = None) -> list[str]:
+        """Copy every key of the system store into ``settings.ini`` (keys already there win), then clear the system
+        store so nothing of NWOlogger's remains outside the folder. Returns the keys moved."""
+        old = cls.native_store()
+        keys = [k for k in old.allKeys()]
+        if not keys:
+            return []
+        new = into or QSettings(str(station.settings_path()), QSettings.Format.IniFormat)
+        moved = []
+        for k in keys:
+            if not new.contains(k):
+                new.setValue(k, old.value(k))
+                moved.append(k)
+        new.sync()
+        old.clear()
+        old.sync()
+        return moved
 
     def _migrate(self) -> None:
         """0.1.8 kept the dupe warning window in hours, default 24; 0.1.9 keeps it in minutes, default 1. The old

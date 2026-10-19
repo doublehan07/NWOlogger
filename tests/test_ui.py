@@ -839,8 +839,8 @@ def test_help_menu_opens_the_log_file_backups_and_diagnostic_folders(win, monkey
     assert opened == [win.db.path.parent, win.db.backup_dir, applog.log_dir()]
     assert win.db.backup_dir.is_dir()
     help_menu = win.menuBar().actions()[-1].menu().actions()
-    assert [a.text() for a in help_menu if a.text()][-3:] == [
-        "Show log file folder", "Show backups folder", "Show diagnostic log folder"]
+    assert [a.text() for a in help_menu if a.text()][-4:] == [
+        "Show log file folder", "Show backups folder", "Show the backup copy in Documents", "Show diagnostic log folder"]
 
 
 def test_about_names_the_logo_designer(win):

@@ -50,9 +50,17 @@ _retired: list = []  # watchdogs whose thread did not end in time: never destroy
 
 
 def log_dir() -> Path:
+    """``logs/`` in the station folder (core/station.py). NWOLOGGER_LOG_DIR overrides (tests, the smoke test); the
+    operating system's log folder is the fallback when the station folder cannot be written."""
     env = os.environ.get("NWOLOGGER_LOG_DIR")
     if env:
         return Path(env)
+    from .core import station  # noqa: PLC0415
+
+    return station.logs_dir()
+
+
+def system_log_dir() -> Path:
     home = Path.home()
     if sys.platform == "darwin":
         return home / "Library" / "Logs" / APP_NAME
@@ -177,18 +185,24 @@ class RedactingFormatter(logging.Formatter):
         return net.redact(super().format(record), _secrets())
 
 
-FORMAT = "%(asctime)s.%(msecs)03dZ %(levelname)-7s [%(threadName)s] %(name)s: %(message)s"
+FORMAT = "%(asctime)s.%(msecs)03dZ %(levelname)-7s [%(process)d %(threadName)s] %(name)s: %(message)s"
 
 
 def setup(*, debug: bool = False, directory: str | os.PathLike | None = None) -> Path | None:
     """Start writing the log file. Returns its path, or None when it can't be written (the app runs anyway)."""
     global _handler
     path = Path(directory) / FILE_NAME if directory else log_file()
+    fallback_from: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         h = logging.handlers.RotatingFileHandler(path, maxBytes=MAX_BYTES, backupCount=BACKUPS, encoding="utf-8")
     except OSError:
-        return None
+        fallback_from, path = path, system_log_dir() / FILE_NAME
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            h = logging.handlers.RotatingFileHandler(path, maxBytes=MAX_BYTES, backupCount=BACKUPS, encoding="utf-8")
+        except OSError:
+            return None
     h.setFormatter(RedactingFormatter(FORMAT, "%Y-%m-%d %H:%M:%S"))
     root = logging.getLogger()
     if _handler is not None:
@@ -200,6 +214,9 @@ def setup(*, debug: bool = False, directory: str | os.PathLike | None = None) ->
         root.setLevel(logging.WARNING)  # other libraries: warnings and errors only
     log.setLevel(logging.DEBUG if debug else logging.INFO)
     net.install_log_filter()  # HTTPX / httpcore stay at WARNING, also at DEBUG
+    if fallback_from is not None:
+        log.warning("The station folder's logs/ could not be written (%s); the diagnostic log goes to %s",
+                    tidy_path(fallback_from), tidy_path(path))
     _watch_crashes(path.parent)
     return path
 

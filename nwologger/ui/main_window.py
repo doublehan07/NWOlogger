@@ -32,7 +32,19 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__, applog, i18n
-from ..core import backup_plan, calllists, dupes, dxcc, exporter, net, regions, timeutil, uploads
+from ..core import (
+    backup_plan,
+    calllists,
+    dupes,
+    dxcc,
+    exporter,
+    mirror,
+    net,
+    regions,
+    station,
+    timeutil,
+    uploads,
+)
 from ..core import db as dbm
 from ..core.contest import scp as scpmod
 from ..core.fields import DEFAULT_LOG_COLUMNS
@@ -94,6 +106,10 @@ class MainWindow(QMainWindow):
             self.splitter.restoreState(state)
         self.db.add_listener(self._on_db_change)
         self._update_status()
+        self._checkpoint_timer = QTimer(self)  # fold the WAL into the file a moment after the last change
+        self._checkpoint_timer.setSingleShot(True)
+        self._checkpoint_timer.setInterval(2000)
+        self._checkpoint_timer.timeout.connect(self.db.idle_checkpoint)
         if first_run:
             QTimer.singleShot(0, self._first_run)
         self._reminder: BackupReminder | None = None
@@ -126,6 +142,8 @@ class MainWindow(QMainWindow):
         self.a_export_flt = A("Export filtered to ADIF…", lambda: self.export("filtered"))
         self.a_new_log = A("New log file…", self.new_log)
         self.a_open_log = A("Open log file…", self.open_log)
+        self.a_add_log = A("Add log file…", self.add_log)
+        self.a_save_copy = A("Save a copy…", self.save_copy)
         self.a_backup = A("Back up now", lambda: self.flash(tr("Backup saved") + f": {self.db.backup('manual')}"))
         self.a_compact = A("Compact log file…", self.compact_log)
         self.a_quit = A("Quit", self.close, QKeySequence.StandardKey.Quit)
@@ -168,6 +186,7 @@ class MainWindow(QMainWindow):
         self.a_logfile_folder = A("Show log file folder", self.show_logfile_folder)
         self.a_backups_folder = A("Show backups folder", self.show_backups_folder)
         self.a_log_folder = A("Show diagnostic log folder", self.show_log_folder)
+        self.a_mirror_folder = A("Show the backup copy in Documents", self.show_mirror_folder)
         self.a_results = A("Show sync results", self.show_sync_results)
         self.a_clear_hist = A("Clear sync history…", self.clear_sync_history)
         self.a_clear_filters = A("Clear filters", lambda: self.filter.clear(), "Ctrl+Shift+K")
@@ -210,9 +229,9 @@ class MainWindow(QMainWindow):
         # Menus
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
-        for a in (self.a_new_log, self.a_open_log, None, self.a_import, self.a_export_all, self.a_export_sel,
-                  self.a_export_flt, None, self.a_backup, self.a_compact, self.a_cty, self.a_scp, self.a_lists, None,
-                  self.a_quit):
+        for a in (self.a_new_log, self.a_open_log, self.a_add_log, self.a_save_copy, None, self.a_import,
+                  self.a_export_all, self.a_export_sel, self.a_export_flt, None, self.a_backup, self.a_compact,
+                  self.a_cty, self.a_scp, self.a_lists, None, self.a_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu(tr("&Edit"))
         for a in (self.a_edit, self.a_bulk, self.a_delete, self.a_select_all, None,
@@ -246,6 +265,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction(self.a_logfile_folder)
         m.addAction(self.a_backups_folder)
+        m.addAction(self.a_mirror_folder)
         m.addAction(self.a_log_folder)
 
         # Toolbar
@@ -477,6 +497,8 @@ class MainWindow(QMainWindow):
                           else None)
 
     def _on_db_change(self, kind: str, _ids: list[int]) -> None:
+        if not getattr(self, "_shut", False):
+            self._checkpoint_timer.start()
         if kind in ("insert", "delete", "reset", "update"):
             self._update_actions()
         if kind == "profiles":
@@ -904,6 +926,7 @@ class MainWindow(QMainWindow):
         self.sync.stop_timers()
         self._clock_timer.stop()
         self._plan_timer.stop()
+        self._checkpoint_timer.stop()
         self.dx._clock.stop()
         self.dx._check_timer.stop()
         self.dx._lookup_timer.stop()
@@ -912,29 +935,77 @@ class MainWindow(QMainWindow):
         if self.contest is not None and hasattr(self.contest, "shutdown"):
             self.contest.shutdown()
 
-    def _switch_db(self, path: str) -> None:
+    def _switch_db(self, name: str) -> None:
+        """Restart with another log of the station folder (by file name): the lease stays, the folder is the same."""
+        mirror.write_if_changed(self.db)
         self.shutdown()
         self.db.close()
-        self.prefs.set("db_path", path)
-        QMessageBox.information(self, APP_NAME, tr("NWOlogger will restart with") + f"\n{path}")
+        self.prefs.set("current_log", name)
+        QMessageBox.information(self, APP_NAME, tr("NWOlogger will restart with") + f"\n{self.db.path.parent / name}")
         self.app.exit(1000)  # restart code
 
     def new_log(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, tr("New log file"), str(dbm.DEFAULT_DIR / "new-log.sqlite"),
+        """A new, empty log in the station folder (only its name is chosen; every log lives there)."""
+        folder = self.db.path.parent
+        path, _ = QFileDialog.getSaveFileName(self, tr("New log file"), str(folder / "new-log.sqlite"),
                                               "SQLite (*.sqlite)")
-        if path:
-            self._switch_db(path)
-
-    def open_log(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, tr("Open log file"), str(dbm.DEFAULT_DIR), "SQLite (*.sqlite)")
         if not path:
             return
-        try:
-            dbm.check_log_file(path)  # another program's database is refused, and left as it is
-        except dbm.NotALogFile as e:
-            QMessageBox.critical(self, tr("Open log file"), str(e))
+        name = Path(path).name
+        if not name.lower().endswith(".sqlite"):
+            name += ".sqlite"
+        if (folder / name).exists():
+            QMessageBox.warning(self, tr("New log file"), tr("A log with that name is already in the folder."))
             return
-        self._switch_db(path)
+        self._switch_db(name)
+
+    def open_log(self) -> None:
+        """Switch to another log of the station folder. A file picked elsewhere is added by copy (Add log file)."""
+        folder = self.db.path.parent
+        path, _ = QFileDialog.getOpenFileName(self, tr("Open log file"), str(folder), "SQLite (*.sqlite)")
+        if not path:
+            return
+        chosen = Path(path)
+        if chosen.resolve().parent == folder.resolve():
+            try:
+                dbm.check_log_file(chosen)  # another program's database is refused, and left as it is
+            except dbm.NotALogFile as e:
+                QMessageBox.critical(self, tr("Open log file"), str(e))
+                return
+            self._switch_db(chosen.name)
+            return
+        self.add_log(chosen)
+
+    def add_log(self, source: Path | None = None) -> None:
+        """Copy a log from elsewhere into the station folder (never opened in place) and switch to it."""
+        if source is None:
+            path, _ = QFileDialog.getOpenFileName(self, tr("Add log file"), str(Path.home()), "SQLite (*.sqlite)")
+            if not path:
+                return
+            source = Path(path)
+        from .add_log import add_log as _add  # noqa: PLC0415
+
+        dest = _add(self, source, self.db.path.parent)
+        if dest is not None:
+            self.flash(tr("Log added") + f": {dest.name}")
+            self._switch_db(dest.name)
+
+    def save_copy(self) -> None:
+        """A complete copy of the open log wherever you choose; without the write guard for other programs."""
+        default = station.mirror_dir() / self.db.path.name
+        path, _ = QFileDialog.getSaveFileName(self, tr("Save a copy"), str(default), "SQLite (*.sqlite)")
+        if not path:
+            return
+        other = QMessageBox.question(self, tr("Save a copy"),
+                                     tr("Is this copy for another program? Then it is written without the write "
+                                        "guard, so that program can edit it. A copy for NWOlogger keeps the guard."),
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+        from .add_log import save_copy as _save  # noqa: PLC0415
+
+        dest = _save(self, self.db, Path(path), for_other_programs=other)
+        if dest is not None:
+            self.flash(tr("Copy of the log saved") + f": {dest}")
 
     # ------------------------------------------------------------------ misc
     def sync_all(self) -> None:
@@ -1087,8 +1158,12 @@ class MainWindow(QMainWindow):
         self._open_folder(applog.log_dir())
 
     def show_logfile_folder(self) -> None:
-        """The folder of the log file itself, nwolog.sqlite, with backups/ and downloads/ beside it."""
+        """The station folder: the log files, with backups/, downloads/, settings.ini and logs/ beside them."""
         self._open_folder(self.db.path.parent)
+
+    def show_mirror_folder(self) -> None:
+        """Documents/NWOlogger: the backup copy of the current log (core/mirror.py)."""
+        self._open_folder(station.mirror_dir())
 
     def show_backups_folder(self) -> None:
         self._open_folder(self.db.backup_dir)
@@ -1175,6 +1250,7 @@ class MainWindow(QMainWindow):
             return
         if dest is not None:
             self.flash(tr("Regular backup saved") + f": {dest.name}")
+        self._mirror()
         if not self.prefs.get("backup_remind") or self._reminder is not None:
             return
         if QApplication.activeModalWidget() is not None or self.sync.running() or self.sync.waiting():
@@ -1186,6 +1262,24 @@ class MainWindow(QMainWindow):
         dlg.prefs_requested.connect(lambda: self.open_prefs("Database"))
         dlg.finished.connect(lambda *_a: setattr(self, "_reminder", None))
         dlg.show()
+
+    def _mirror(self) -> None:
+        """The backup copy in Documents (core/mirror.py), on a worker thread, when the log changed since the last."""
+        if getattr(self, "_shut", False) or not mirror.due(self.db) or getattr(self, "_mirroring", False):
+            return
+        p = mirror.plan(self.db)
+        self._mirroring = True
+
+        def done(_res) -> None:
+            self._mirroring = False
+            if not getattr(self, "_shut", False):
+                mirror.mark(self.db, p.count)
+
+        def failed(msg: str) -> None:
+            self._mirroring = False
+            applog.log.warning("Backup copy failed: %s", msg)
+
+        run_async(mirror.write_file, p, on_done=done, on_error=failed)
 
     def _first_run(self) -> None:
         """Scheduled from __init__; the log may have been closed meanwhile (Open log file restarts the app within

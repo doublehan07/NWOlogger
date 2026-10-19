@@ -877,7 +877,7 @@ class PrefsDialog(QDialog):
         self.sched_keep.setRange(1, 500)
         self.sched_keep.setValue(int(prefs.get("scheduled_keep") or 8))
         f.addRow(tr("Regular copies to keep"), self.sched_keep)
-        self.remind = QCheckBox(tr("Also remind me to copy the log to another disk or a cloud folder"))
+        self.remind = QCheckBox(tr("Also remind me to copy the log to another disk"))
         self.remind.setChecked(bool(prefs.get("backup_remind")))
         f.addRow("", self.remind)
         self.ext_dir = QLineEdit(prefs.get("external_backup_dir") or "")

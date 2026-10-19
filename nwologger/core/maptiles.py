@@ -248,7 +248,7 @@ class Fetcher:
         path = tile_path(provider.key, z, x, y)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".part")
+            tmp = path.with_suffix(f".part-{os.getpid()}")  # a name of this process's own
             tmp.write_bytes(data)
             os.replace(tmp, path)
         except OSError:

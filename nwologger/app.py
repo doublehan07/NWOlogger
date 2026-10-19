@@ -11,19 +11,22 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QLibraryInfo, QLocale, QTranslator
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QEvent, QLibraryInfo, QLocale, QTimer, QTranslator, QUrl
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from . import APP_NAME, __version__, applog, i18n, instance
 from .core import db as dbm
+from .core import lease, logcopy, mirror, station
 
 RESTART = 1000
+RELEASES_URL = "https://github.com/doublehan07/NWOlogger/releases"
 log = logging.getLogger("nwologger.app")
 
 
 def run(argv: list[str], *, db_path: str | None = None, lang: str | None = None, theme_mode: str | None = None,
         debug: bool = False) -> int:
+    station.configure(db_path)  # the station folder decides where the diagnostic log goes
     applog.setup(debug=debug or bool(os.environ.get("NWOLOGGER_DEBUG")))
     applog.install_hooks()
     try:
@@ -99,7 +102,7 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))
 
-    from .ui import theme  # noqa: PLC0415
+    from .ui import migrate, theme  # noqa: PLC0415
     from .ui.main_window import MainWindow  # noqa: PLC0415
     from .ui.prefs import Prefs  # noqa: PLC0415
 
@@ -107,7 +110,23 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
     threading.Thread(target=eject_installer_image, name="eject", daemon=True).start()
     shown: dict = {}  # the window that answers a "come to the front" request; none between restarts
     server.raise_requested.connect(lambda path: shown["win"].bring_to_front(path) if shown.get("win") else None)
+    heartbeat = QTimer()
+    heartbeat.setInterval(60_000)
+    heartbeat.timeout.connect(lease.heartbeat_all)  # the lock file's time, for the other-computer hint
+    heartbeat.start()
+    migrated: Path | None = None
     try:
+        logcopy.sweep_partials(station.folder())
+        # The one-time move from Documents/NWOlogger (0.1.x) into the station folder; its language is the old one's.
+        if db_path is None:
+            old = migrate.needed()
+            if old is not None:
+                i18n.load(lang or str(Prefs.native_store().value("language") or "en"))
+                migrated = migrate.run(None, old)
+                if migrated is None:
+                    return 0
+            elif not station.settings_path().exists():
+                Prefs.migrate_native()
         first_window = True  # the first-run checks (country file, call lists) run once per process, not after a restart
         while True:
             prefs = Prefs()
@@ -115,10 +134,21 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
             i18n.load(language)
             qt_tr = _qt_translator(app, language)
             theme.apply(app, theme_mode or prefs.get("theme"))
-            path = db_path or prefs.get("db_path") or str(dbm.DEFAULT_PATH)
+            path = str(Path(db_path)) if db_path else str(station.folder() / (prefs.get("current_log") or station.LOG_NAME))
             applog.startup_banner(path)
+            other = lease.other_computer(Path(path).parent)
+            if other is not None and not _continue_despite(other):
+                return 0
             try:
                 logdb = dbm.LogDB(path, backup_keep=prefs.get("backup_keep"), scheduled_keep=prefs.get("scheduled_keep"))
+            except dbm.LeaseHeld as e:
+                QMessageBox.critical(None, APP_NAME, i18n.tr("This log is in use by another NWOlogger") +
+                                     lease.describe(e.holder) + f"\n{e.folder}\n\n" +
+                                     i18n.tr("Close it first, or bring its window to the front."))
+                return 1
+            except dbm.NewerLog as e:
+                _newer_log_dialog(e)
+                return 1
             except Exception as e:  # noqa: BLE001
                 log.exception("Could not open the log file %s", applog.tidy_path(path))
                 QMessageBox.critical(None, APP_NAME, f"Could not open the log file:\n{path}\n\n{e}")
@@ -128,11 +158,10 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
                 win.show()
             shown["win"] = win
             first_window = False
-            if logdb.newer_version:
-                QMessageBox.warning(win, APP_NAME, i18n.tr("This log was last written by a newer NWOlogger") +
-                                    f" ({logdb.newer_version}). " +
-                                    i18n.tr("Some of its data may not show in this version, and what it writes stays "
-                                            "readable to the newer one."))
+            if migrated is not None:
+                copy = mirror.write_if_changed(logdb)  # the first backup copy, into Documents, at once
+                migrate.tell(win, logdb.path, copy)
+                migrated = None
             current = {"win": win, "qt_tr": qt_tr}
 
             def rebuild(old: MainWindow, prefs=prefs, current=current) -> None:
@@ -153,6 +182,8 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
             shown["win"] = None
             _tear_down(app, current)
             try:
+                if db_path is None:
+                    mirror.write_if_changed(logdb)  # the backup copy in Documents, before the log closes
                 logdb.close()
             except Exception:  # noqa: BLE001 - already closed when switching files
                 pass
@@ -161,7 +192,33 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
             db_path = None  # take the newly chosen file from prefs
 
     finally:
+        heartbeat.stop()
         server.close()
+
+
+def _continue_despite(other: dict) -> bool:
+    """A cloud-synced folder whose lock file says another computer used it minutes ago: ask before going on."""
+    box = QMessageBox(QMessageBox.Icon.Warning, APP_NAME,
+                      i18n.tr("This log seems to be in use on another computer") + lease.describe(other) + ".\n\n" +
+                      i18n.tr("Using one log from two computers at once through a synced folder can lose QSOs. "
+                              "Continue anyway?"))
+    go = box.addButton(i18n.tr("Continue"), QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(i18n.tr("Quit"), QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    return box.clickedButton() is go
+
+
+def _newer_log_dialog(e: dbm.NewerLog) -> None:
+    """The version gate: a log written by a newer NWOlogger is not opened; update instead."""
+    box = QMessageBox(QMessageBox.Icon.Critical, APP_NAME,
+                      i18n.tr("This log was written by a newer NWOlogger") + f" ({e.version or '?'}).\n{e.path}\n\n" +
+                      i18n.tr("This version") + f" ({__version__}) " +
+                      i18n.tr("does not know its structure and has not touched it. Please update NWOlogger."))
+    download = box.addButton(i18n.tr("Open the download page"), QMessageBox.ButtonRole.ActionRole)
+    box.addButton(i18n.tr("Quit"), QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    if box.clickedButton() is download:
+        QDesktopServices.openUrl(QUrl(RELEASES_URL))
 
 
 def _tear_down(app: QApplication, current: dict) -> None:

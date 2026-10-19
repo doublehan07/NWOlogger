@@ -135,7 +135,7 @@ def test_download_files_live_beside_the_log_and_are_pruned_by_run(tmp_path):
         other = db.download_path("eqsl", "20260901-120000", "Home")
         for p in (old, done, current, other):
             p.write_text("x")
-        assert done == tmp_path / "downloads" / "lotw-20261018-112513-2023.adi"
+        assert done == tmp_path / "downloads" / "log" / "lotw-20261018-112513-2023.adi"  # a folder per log
         assert db.download_run(done.name) == "20261018-112513" and db.download_run("odd.adi") is None
         removed = db.prune_downloads("lotw", keep_runs=["20261018-112513", "20261018-150000", None])
         assert removed == [old] and done.exists() and current.exists() and other.exists()

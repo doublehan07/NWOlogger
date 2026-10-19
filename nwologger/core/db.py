@@ -15,17 +15,20 @@ from pathlib import Path
 from typing import Any
 
 from .. import APP_NAME, __version__
-from . import fields, timeutil
+from . import fields, lease, timeutil
 from . import qso as qsomod
 from .fields import BY_COL, FIELDS, SERVICE_KEY_FIELDS
 from .net import redact
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2 (0.2.0): the write guard triggers; downloads per log
 
-DEFAULT_DIR = Path.home() / "Documents" / "NWOlogger"
+DEFAULT_DIR = Path.home() / "Documents" / "NWOlogger"  # the log's folder up to 0.1.9; the backup copy's since 0.2.0
 DEFAULT_PATH = DEFAULT_DIR / "nwolog.sqlite"
+WRITER_FUNCTION = "nwologger_writer"  # the SQL function the guard triggers call; only NWOlogger registers it
+GUARD_PREFIX = "nwo_guard_"
+LeaseHeld = lease.LeaseHeld
 
 _OTHER_TABLES = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -96,6 +99,58 @@ class NotALogFile(Exception):
     """A file that is not an NWOlogger log and must not be turned into one."""
 
 
+class NewerLog(Exception):
+    """A log whose schema is newer than this NWOlogger knows: it is not opened, let alone written. The user updates
+    NWOlogger instead (a lower version never edits a higher version's log)."""
+
+    def __init__(self, path: Path, schema: int, version: str | None):
+        self.path, self.schema, self.version = path, schema, version
+        super().__init__(f"{path.name} was written by NWOlogger {version or '?'} (schema {schema}); this is "
+                         f"{__version__} (schema {SCHEMA_VERSION}). Update NWOlogger to open it.")
+
+
+def register_writer(conn: sqlite3.Connection) -> None:
+    """The guard's function, on every connection NWOlogger writes with. Another program's connection has no such
+    function, so its INSERT, UPDATE or DELETE fails while being compiled and changes nothing; SELECT is unaffected.
+    DROP TRIGGER lifts the guard from any SQLite tool (DDL fires no trigger), which is how the data outlives us."""
+    conn.create_function(WRITER_FUNCTION, 0, lambda: 1, deterministic=True)
+
+
+def guard_statements(conn: sqlite3.Connection) -> list[str]:
+    """CREATE TRIGGER statements for the guard triggers still missing on the log's own tables."""
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE "
+                                         "'sqlite_%'")]
+    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
+    out = []
+    for t in tables:
+        for event, short in (("INSERT", "ins"), ("UPDATE", "upd"), ("DELETE", "del")):
+            name = f"{GUARD_PREFIX}{short}_{t}"
+            if name not in have:
+                out.append(f'CREATE TRIGGER "{name}" BEFORE {event} ON "{t}" BEGIN SELECT {WRITER_FUNCTION}(); END')
+    return out
+
+
+def newer_schema(conn: sqlite3.Connection) -> tuple[int, str | None] | None:
+    """(schema, writing version) when the open log's schema is newer than ours, reading only."""
+    try:
+        user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        stored = 0
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        written_by = None
+        if "meta" in tables:
+            row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            try:
+                stored = int(row[0]) if row and row[0] is not None else 0
+            except ValueError:
+                stored = 0
+            row = conn.execute("SELECT value FROM meta WHERE key='last_written_by_version'").fetchone()
+            written_by = row[0] if row else None
+    except sqlite3.Error:
+        return None
+    newest = max(user_version, stored)
+    return (newest, written_by) if newest > SCHEMA_VERSION else None
+
+
 def sqlite_kind(path: str | os.PathLike) -> str | None:
     """What a file is: ``"nwologger"`` (a log of ours), ``"mldx"`` (a MacLoggerDX database), ``"foreign"``
     (another program's database), ``"empty"`` (a SQLite file without tables), ``"missing"`` (no file, or an empty
@@ -148,25 +203,46 @@ class LogDB:
     """One open log file. Not thread-safe: use it from one thread (the GUI thread)."""
 
     def __init__(self, path: str | os.PathLike, *, backup_on_open: bool = True, backup_keep: int = 20,
-                 scheduled_keep: int = 8):
+                 scheduled_keep: int = 8, hold_lease: bool = True):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         check_log_file(self.path)
         existed = self.path.exists() and self.path.stat().st_size > 0
         self.backup_keep = backup_keep  # launch, manual and the like
         self.scheduled_keep = scheduled_keep  # the regular plan's copies (core/backup_plan.py)
-        self.conn = sqlite3.connect(str(self.path), isolation_level=None)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA foreign_keys=ON")
-        self._listeners: list[ChangeListener] = []
-        self._in_batch = False
-        self._pending: list[tuple[str, list[int]]] = []
-        self._touched: float | None = None  # when last_written_* was last stamped in this run
-        self.newer_version: str | None = None  # set when a newer NWOlogger wrote the log
-        if existed and backup_on_open:
-            self.backup("open")
-        self._migrate()
+        self.change_count = 0  # how many changes this run made (core/mirror.py copies when it moved)
+        self.lease: lease.Lease | None = None
+        # The version gate, before anything is written (journal_mode=WAL below already writes).
+        probe = sqlite3.connect(str(self.path), isolation_level=None)
+        try:
+            newer = newer_schema(probe) if existed else None
+        finally:
+            probe.close()
+        if newer is not None:
+            log.warning("The log %s has schema %s, written by NWOlogger %s; this is %s with schema %s: not opened",
+                        self.path.name, newer[0], newer[1], __version__, SCHEMA_VERSION)
+            raise NewerLog(self.path, newer[0], newer[1])
+        # One writing NWOlogger per folder, before the launch backup or any migration.
+        if hold_lease:
+            self.lease = lease.acquire(self.path.parent)
+        try:
+            self.conn = sqlite3.connect(str(self.path), isolation_level=None)
+            self.conn.row_factory = sqlite3.Row
+            register_writer(self.conn)
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA foreign_keys=ON")
+            self._listeners: list[ChangeListener] = []
+            self._in_batch = False
+            self._pending: list[tuple[str, list[int]]] = []
+            self._touched: float | None = None  # when last_written_* was last stamped in this run
+            if existed and backup_on_open:
+                self.backup("open")
+            self._migrate()
+        except BaseException:
+            if self.lease is not None:
+                self.lease.release()
+                self.lease = None
+            raise
 
     # ------------------------------------------------------------------ setup
     def _migrate(self) -> None:
@@ -190,6 +266,17 @@ class LogDB:
             self.set_meta("created_at", timeutil.now_iso())
             self.set_meta("created_by_version", __version__)
         self._stamp_provenance()
+        self._guard()
+
+    def _guard(self) -> None:
+        """The write guard: BEFORE INSERT/UPDATE/DELETE triggers on every table, calling the function only
+        NWOlogger registers (:func:`register_writer`). About 2.5 KB of SQL, one page of the file. Tables added by a
+        later migration get theirs on the next open."""
+        statements = guard_statements(self.conn)
+        for sql in statements:
+            self.conn.execute(sql)
+        if statements:
+            log.info("Write guard: %d trigger(s) added to %s", len(statements), self.path.name)
 
     def _stamp_provenance(self) -> None:
         """Which NWOlogger made this log and which last wrote it, in the file itself: meta's ``app_name``,
@@ -210,15 +297,11 @@ class LogDB:
         if self.meta("last_written_by_version") is None:
             self._touch(force=True)
         try:
-            stored = int(self.meta("schema_version") or SCHEMA_VERSION)
+            stored = int(self.meta("schema_version") or 0)
         except ValueError:
-            stored = SCHEMA_VERSION
-        newest = max(stored, c.execute("PRAGMA user_version").fetchone()[0])
-        self.newer_version = None
-        if newest > SCHEMA_VERSION:
-            self.newer_version = self.meta("last_written_by_version") or "?"
-            log.warning("The log was last written by NWOlogger %s with schema %s; this is %s with schema %s, so "
-                        "some of its data may not show", self.newer_version, newest, __version__, SCHEMA_VERSION)
+            stored = 0
+        if stored < SCHEMA_VERSION:
+            self.set_meta("schema_version", str(SCHEMA_VERSION))
 
     def _touch(self, *, force: bool = False) -> None:
         """Record that this NWOlogger wrote the log now: once a minute at most, so a run of small changes costs one
@@ -242,6 +325,19 @@ class LogDB:
         except sqlite3.Error:
             pass
         self.conn.close()
+        if self.lease is not None:
+            self.lease.release()
+            self.lease = None
+
+    def idle_checkpoint(self) -> None:
+        """Fold the WAL back into the file while nothing is being written, so the file on disk is complete whenever
+        the app is idle (what a cloud sync client copying it would see). Called by the UI a moment after a change."""
+        if self._in_batch:
+            return
+        try:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            log.debug("Idle checkpoint skipped", exc_info=True)
 
     # ------------------------------------------------------------------ meta
     def meta(self, key: str) -> str | None:
@@ -277,16 +373,12 @@ class LogDB:
         before = self.backups()
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
         dest = self.backup_dir / f"{self.path.stem}-{stamp}-{label}.sqlite"
-        conn = getattr(self, "conn", None)
-        src = conn if conn is not None else sqlite3.connect(str(self.path))
         out = sqlite3.connect(str(dest))
         try:
             with out:
-                src.backup(out)
+                self.conn.backup(out)  # always this connection: a second one would drop its POSIX locks on close
         finally:
             out.close()
-            if conn is None:
-                src.close()
         if label == "open" and before and _same_content(before[-1], dest):
             dest.unlink(missing_ok=True)
             log.info("No launch backup: the log is unchanged since %s", before[-1].name)
@@ -322,9 +414,10 @@ class LogDB:
     # ------------------------------------------------------------------ downloads (service reports kept as files)
     @property
     def downloads_dir(self) -> Path:
-        """Where downloaded reports are kept, beside ``backups/``: a transfer that breaks leaves what arrived here,
-        and the last complete file of each service stays for inspection."""
-        return self.path.parent / "downloads"
+        """Where downloaded reports are kept, beside ``backups/``, in a folder of this log's own (several logs share
+        a station folder): a transfer that breaks leaves what arrived here, and the last complete file of each
+        service stays for inspection."""
+        return self.path.parent / "downloads" / self.path.stem
 
     def download_path(self, service: str, run: str, part: str | None = None, suffix: str = ".adi") -> Path:
         """``downloads/lotw-20261018-112513-2023.adi``: the service, the run and, when the run has several files, the
@@ -398,6 +491,7 @@ class LogDB:
         if self._in_batch:
             self._pending.append((kind, ids))
             return
+        self.change_count += 1
         self._touch()  # a single change outside a batch: the log was written now
         for fn in list(self._listeners):
             fn(kind, ids)
@@ -416,6 +510,7 @@ class LogDB:
             yield
             self._touch()  # part of the same transaction
             self.conn.execute("COMMIT")
+            self.change_count += 1
         except BaseException:
             self.conn.execute("ROLLBACK")
             self._pending.clear()
