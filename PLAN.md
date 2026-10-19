@@ -58,7 +58,7 @@ These may move to TODO later, but they are not part of the core.
 
 ### 2.1 Versioning
 
-- **One source of truth:** the `version` in `pyproject.toml`, read at runtime through `importlib.metadata` and exposed as `nwologger.__version__`. Versions follow SemVer and start at `0.1.0`. While in `0.x`, a new milestone bumps the minor number and a fix bumps the patch number.
+- **One number to bump:** the `version` in `pyproject.toml` and the constant in `nwologger/__init__.py`, kept equal by `tests/test_version.py`. A source tree reads the installed metadata (`importlib.metadata`); a packaged build reports the constant and bundles no metadata, because the Windows installer copied 0.1.9 over 0.1.8 without deleting anything, `_internal` held `nwologger-0.1.8.dist-info` beside `nwologger-0.1.9.dist-info`, and Python took the first folder NTFS listed (the app said 0.1.8). The installer now deletes `_internal` before copying (`[InstallDelete]`), has no fallback version (`#error` without `/DAppVersion`), and the EXE carries a version resource. Versions follow SemVer and start at `0.1.0`. While in `0.x`, a new milestone bumps the minor number and a fix bumps the patch number.
 - **Shown in the app** in four places:
   - the window title (`NWOlogger v0.1.8 — nwolog.sqlite`)
   - the right end of the toolbar, as in MacLoggerDX
@@ -822,3 +822,11 @@ Eighteen points of feedback on 0.1.8, reviewed on a bilingual proposal page with
 - **Smaller:** the LoTW call lists are downloaded once per start; a flash on a closed window no longer raises; Preferences' satellite editor takes an orbit.
 - **After the first 0.1.9 build** (the same day): the counts badge in colour and larger in the PNG, whose band carries the file's name; the Preferences pages down the left side (§11); the map's own window keeps the tab's margins; the Grid search on the whole grid list (§7); the regular backup plan with its reminder (§4.3). Reviewed on a second page with five decisions.
 
+## 17. 0.2.0 preview: the Windows and Surface reports on 0.1.9 (2026-10-19)
+
+Four reports on the 0.1.9 build, reviewed on `proposal-0.1.9c.html` in two rounds (ten decisions), became these changes:
+
+- **The Windows build said 0.1.8.** Not the build: the installation (§2.1). The installer deletes `_internal` before copying, the packaged app reports the version constant, the EXE has a version resource, and `tests/test_version.py` keeps the constant and `pyproject.toml` equal.
+- **No touch keyboard for Time On and Time Off on a Surface.** Windows opens its touch keyboard only for what UI Automation reports as an editable text box; a `QDateTimeEdit` keeps the focus on the spin box (role SpinBox). The spin boxes stay (the review kept them); their arrow opens `DateTimePicker` (`ui/widgets.py`) instead of Qt's bare calendar: the calendar, then hour, minute and second columns with finger-sized ▲▼ buttons, Now and Done. Every tap goes through `setDateTime`, so the form's time rules run as for typing; a column wraps on its own; the popup stays until Done, Esc or a tap outside. The date-only pickers and the number spin boxes stay as they were.
+- **Log QSO out of reach on a short screen.** The forms' button rows (`DXPanel.bar`, `ContestPanel.bar`) are widgets of their own that the main window shows in a stack under the scroll area, outside it, so the row stays in view and follows the splitter handle; the pane's minimum height is the row plus 100 px of form.
+- **Two NWOloggers at once (Windows, Linux).** SQLite kept the file intact, but the windows went stale against each other (change notices are in-process), a QSO could be uploaded twice, and download positions and settings were overwritten. `nwologger/instance.py`: a starting NWOlogger knocks on a local socket named after the user and `NWOLOGGER_SETTINGS` (`QLocalSocket`; a named pipe on Windows); a running copy is asked to come to the front (`MainWindow.bring_to_front`, with a message naming its log when the launch carried `--db`) and the new process quits with exit code 0. A stale socket file left by a crash is removed; the server lives through the restart loop. Tests and the smoke test have socket names of their own.

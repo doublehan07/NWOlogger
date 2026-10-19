@@ -414,8 +414,13 @@ class DXPanel(QWidget):
         for i, stretch in enumerate((5, 5, 5, 6)):
             grid.setColumnStretch(i, stretch)
 
-        # Buttons
-        bar = QHBoxLayout()
+        # Buttons: a row of its own that the main window shows under the scrolling form, outside it, so Log QSO
+        # stays in view on a short screen and follows the splitter handle. It is not in this widget's layout.
+        self.bar = QWidget()
+        self.bar.setObjectName("EntryBar")
+        self.bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar = QHBoxLayout(self.bar)
+        bar.setContentsMargins(10, 6, 10, 6)
         bar.setSpacing(6)
         self.lookup_btn = QPushButton(tr("Lookup"))
         self.lookup_btn.setIcon(theme.icon("search"))
@@ -460,7 +465,6 @@ class DXPanel(QWidget):
         bar.addWidget(self.delete_btn)
         bar.addWidget(self.cancel_btn)
         bar.addWidget(self.log_btn)
-        root.addLayout(bar)
 
         # Signals for live checks
         self.w["freq"].textChanged.connect(self._freq_changed)

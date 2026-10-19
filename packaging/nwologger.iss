@@ -1,6 +1,7 @@
-; Inno Setup script for the Windows installer. CI passes /DAppVersion=x.y.z.
+; Inno Setup script for the Windows installer. CI and build-windows.ps1 pass /DAppVersion=x.y.z; there is no
+; fallback on purpose, so a build can never carry an old number.
 #ifndef AppVersion
-  #define AppVersion "0.1.8"
+  #error Pass /DAppVersion=x.y.z (the version in pyproject.toml)
 #endif
 
 [Setup]
@@ -18,6 +19,12 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 LicenseFile=..\LICENSE
 WizardStyle=modern
+
+[InstallDelete]
+; An upgrade copies over the previous version's folder without removing anything, so its _internal would keep the
+; old nwologger-<version>.dist-info (which Python then found first, and the app said 0.1.8) and every file the new
+; version no longer ships. Nothing of the user's lives there: the log is in Documents, settings in the registry.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 Source: "..\dist\NWOlogger\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion

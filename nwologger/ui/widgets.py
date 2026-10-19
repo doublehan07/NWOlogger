@@ -8,8 +8,10 @@ import traceback
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from PySide6.QtCore import QDateTime, QObject, QSize, Qt, QTimer, QTimeZone, Signal
+import shiboken6
+from PySide6.QtCore import QDate, QDateTime, QObject, QRect, QSize, Qt, QTime, QTimer, QTimeZone, Signal
 from PySide6.QtWidgets import (
+    QCalendarWidget,
     QComboBox,
     QDateTimeEdit,
     QFrame,
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QStyle,
+    QStyleOptionComboBox,
     QStyleOptionToolButton,
     QStylePainter,
     QToolButton,
@@ -208,15 +211,159 @@ class AutoLineEdit(QLineEdit):
         self._edited("")
 
 
+class DateTimePicker(QFrame):
+    """The popup a UtcDateTimeEdit's arrow opens instead of Qt's bare calendar: the calendar for the date, then
+    hour, minute and second columns with finger-sized ▲▼ buttons, Now and Done. Every tap changes the box at once
+    through setDateTime, so the form's rules (Time Off following Time On) run as for typing; the popup stays until
+    Done, Esc or a tap outside it. Qt's calendar closed on the first tap and set the date alone, and with the
+    calendar on the box has no ▲▼ buttons, so on a touch screen the time could not be changed at all."""
+
+    def __init__(self, edit: QDateTimeEdit):
+        super().__init__(edit, Qt.WindowType.Popup)
+        self.edit = edit
+        self.setObjectName("TimePicker")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+        self.calendar = QCalendarWidget()
+        self.calendar.setGridVisible(False)
+        self.calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self.calendar.setSelectedDate(edit.date())
+        self.calendar.clicked.connect(self._date_picked)
+        self.calendar.activated.connect(self._date_picked)
+        lay.addWidget(self.calendar)
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        self.values: dict[str, QLabel] = {}
+        self.steps: dict[str, tuple[QPushButton, QPushButton]] = {}
+        for i, (key, unit, top) in enumerate((("h", tr("hour"), 24), ("m", tr("min"), 60), ("s", tr("sec"), 60))):
+            if i:
+                colon = QLabel(":")
+                colon.setObjectName("PickerValue")
+                row.addWidget(colon, 0, Qt.AlignmentFlag.AlignVCenter)
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            up = QPushButton("▲")
+            down = QPushButton("▼")
+            for b, delta in ((up, 1), (down, -1)):
+                b.setObjectName("PickerStep")
+                b.setAutoRepeat(True)
+                b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                b.clicked.connect(lambda *_, k=key, d=delta, n=top: self._step(k, d, n))
+            value = QLabel("00")
+            value.setObjectName("PickerValue")
+            value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            unit_lab = QLabel(unit)
+            unit_lab.setObjectName("PickerUnit")
+            unit_lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            for w in (up, value, down, unit_lab):
+                col.addWidget(w)
+            row.addLayout(col)
+            self.values[key] = value
+            self.steps[key] = (up, down)
+        row.addStretch(1)
+        btns = QVBoxLayout()
+        btns.setSpacing(6)
+        self.now_btn = QPushButton(tr("Now"))
+        self.now_btn.setToolTip(tr("Set to now (UTC)"))
+        self.now_btn.clicked.connect(self._now)
+        self.done_btn = primary(tr("Done"))
+        self.done_btn.clicked.connect(self.close)
+        btns.addStretch(1)
+        btns.addWidget(self.now_btn)
+        btns.addWidget(self.done_btn)
+        btns.addStretch(1)
+        row.addLayout(btns)
+        lay.addLayout(row)
+        edit.dateTimeChanged.connect(self._refresh)
+        self._refresh()
+
+    def _refresh(self, *_args) -> None:
+        t = self.edit.time()
+        for key, v in zip("hms", (t.hour(), t.minute(), t.second()), strict=True):
+            self.values[key].setText(f"{v:02d}")
+        if self.calendar.selectedDate() != self.edit.date():
+            self.calendar.blockSignals(True)
+            self.calendar.setSelectedDate(self.edit.date())
+            self.calendar.blockSignals(False)
+
+    def _set(self, dt: QDateTime) -> None:
+        self.edit.setDateTime(dt)  # emits dateTimeChanged, as typing does: the form's time rules run
+
+    def _date_picked(self, date: QDate) -> None:
+        self._set(QDateTime(date, self.edit.time(), QTimeZone.utc()))
+
+    def _step(self, key: str, delta: int, top: int) -> None:
+        """One unit up or down in one column; the column wraps on its own (minute 59 ▲ is 00, the hour unchanged)."""
+        t = self.edit.time()
+        parts = {"h": t.hour(), "m": t.minute(), "s": t.second()}
+        parts[key] = (parts[key] + delta) % top
+        self._set(QDateTime(self.edit.date(), QTime(parts["h"], parts["m"], parts["s"]), QTimeZone.utc()))
+
+    def _now(self) -> None:
+        self._set(QDateTime.fromSecsSinceEpoch(int(timeutil.now_utc().timestamp()), QTimeZone.utc()))
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if getattr(self.edit, "picker", None) is self:
+            self.edit.picker = None
+        super().closeEvent(event)
+
+
 class UtcDateTimeEdit(QDateTimeEdit):
+    """A UTC date-time spin box whose arrow opens the DateTimePicker (date and time) instead of Qt's calendar."""
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setTimeZone(QTimeZone.utc())
         self.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        self.setCalendarPopup(True)
+        self.setCalendarPopup(True)  # the arrow and the combo-box look; the popup itself is ours
         self.setProperty("mono", True)
         self.setFont(theme.mono_font())
         self.setMinimumWidth(170)
+        self.picker: DateTimePicker | None = None
+
+    def arrow_rect(self) -> QRect:
+        opt = QStyleOptionComboBox()
+        opt.initFrom(self)
+        opt.editable = True
+        opt.subControls = QStyle.SubControl.SC_All
+        return self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, opt,
+                                           QStyle.SubControl.SC_ComboBoxArrow, self)
+
+    def open_picker(self) -> DateTimePicker | None:
+        if self.isReadOnly() or not self.isEnabled():
+            return None
+        if self.picker is not None and shiboken6.isValid(self.picker) and self.picker.isVisible():
+            return self.picker
+        picker = DateTimePicker(self)
+        self.picker = picker
+        size = picker.sizeHint()
+        screen = self.screen().availableGeometry() if self.screen() is not None else QRect(0, 0, 10_000, 10_000)
+        below = self.mapToGlobal(self.rect().bottomLeft())
+        x = max(screen.left(), min(below.x(), screen.right() - size.width() + 1))
+        y = below.y() + 2
+        if y + size.height() > screen.bottom():
+            y = self.mapToGlobal(self.rect().topLeft()).y() - size.height() - 2
+        picker.move(x, max(screen.top(), y))
+        picker.show()
+        return picker
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if self.calendarPopup() and self.arrow_rect().contains(event.position().toPoint()):
+            event.accept()
+            self.open_picker()
+            return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        alt_down = event.key() == Qt.Key.Key_Down and bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+        if self.calendarPopup() and (event.key() == Qt.Key.Key_F4 or alt_down):
+            event.accept()
+            self.open_picker()
+            return
+        super().keyPressEvent(event)
 
     def set_iso(self, iso: str | None) -> None:
         dt = timeutil.parse_iso(iso) if iso else timeutil.now_utc()

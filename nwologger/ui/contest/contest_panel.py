@@ -189,7 +189,12 @@ class ContestPanel(QWidget):
         root.addWidget(sec)
         self.sent_lab = QLabel("")
         self.sent_lab.setObjectName("Hint")
-        bar = QHBoxLayout()
+        # The button row is a widget of its own, shown by the main window under the scrolling form (see DXPanel).
+        self.bar = QWidget()
+        self.bar.setObjectName("EntryBar")
+        self.bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar = QHBoxLayout(self.bar)
+        bar.setContentsMargins(10, 6, 10, 6)
         bar.addWidget(self.sent_lab)
         bar.addStretch(1)
         edit_last = QPushButton(tr("Edit last"))
@@ -206,7 +211,6 @@ class ContestPanel(QWidget):
         bar.addWidget(edit_last)
         bar.addWidget(wipe)
         bar.addWidget(self.log_btn)
-        root.addLayout(bar)
         hint = QLabel(tr("Space: next field · Enter: next empty field, then log · type a frequency (14025) or a mode "
                          "(CW, SSB, RTTY) in the call field and press Enter · Esc: wipe"))
         hint.setObjectName("Hint")

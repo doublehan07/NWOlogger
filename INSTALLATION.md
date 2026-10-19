@@ -74,3 +74,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\packaging\build-windows.ps
 ```
 
 This also produces `dist/NWOlogger-<version>-windows-setup.exe`. The helper finds `ISCC.exe` on PATH or in the standard Inno Setup 6 installation folders. Build on Windows: PyInstaller packages for the operating system and Python architecture used for the build.
+
+**Upgrading on Windows.** The installer removes the previous version's `_internal` folder before copying, so an upgrade leaves exactly the new version's files (0.1.9 installed over 0.1.8 kept the old package metadata beside the new and reported 0.1.8). With the ZIP, delete the old folder before extracting the new one. The packaged app reports the version constant in `nwologger/__init__.py`, bundles no package metadata, and `NWOlogger.exe` carries a version resource (Properties → Details). One NWOlogger runs per user: a second launch brings the running window to the front and quits.

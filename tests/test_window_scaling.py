@@ -72,8 +72,10 @@ def test_main_window_small_resize_keeps_entry_and_all_tabs_reachable(make_window
     small_size = window.size()
     assert isinstance(window.entry_scroll, ScrollArea)
     _assert_reachable(window.entry_scroll, window.dx.call, qapp)
-    _assert_reachable(window.entry_scroll, window.dx.log_btn, qapp)
     assert window.entry_scroll.verticalScrollBar().maximum() > 0
+    # The button row sits under the scroll area, so Log QSO is in view without scrolling (0.1.9c).
+    assert window.dx.log_btn.isVisible()
+    assert window.entry_pane.rect().contains(_rect_in(window.dx.log_btn, window.entry_pane))
 
     controls = (
         (window.filter.call, window.filter.clear_btn),

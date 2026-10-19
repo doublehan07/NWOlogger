@@ -341,7 +341,19 @@ class MainWindow(QMainWindow):
         # Keep the forms' minimum sizes inside a viewport: display scaling
         # reduces the logical desktop available to the window.
         self.entry_scroll = ScrollArea(self.entry_stack)
-        self.splitter.addWidget(self.entry_scroll)
+        # The forms' button rows sit under the scroll area, outside it, so Log QSO stays in view on a short screen
+        # and follows the splitter handle; the row shown is the visible form's.
+        self.bar_stack = QStackedWidget()
+        self.bar_stack.addWidget(self.dx.bar)
+        self.bar_stack.addWidget(self.contest.bar if self.contest is not None else QWidget())
+        self.bar_stack.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.entry_pane = QWidget()
+        pane = QVBoxLayout(self.entry_pane)
+        pane.setContentsMargins(0, 0, 0, 0)
+        pane.setSpacing(0)
+        pane.addWidget(self.entry_scroll, 1)
+        pane.addWidget(self.bar_stack)
+        self.splitter.addWidget(self.entry_pane)
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -500,6 +512,7 @@ class MainWindow(QMainWindow):
         if prev != i:
             self.prefs.set_value(f"window/split{prev}", self.splitter.sizes())
         self.entry_stack.setCurrentIndex(i)
+        self.bar_stack.setCurrentIndex(i)
         # Only the visible page decides how small the entry area may get.
         for k in range(self.entry_stack.count()):
             pol = QSizePolicy.Policy.Preferred if k == i else QSizePolicy.Policy.Ignored
@@ -859,6 +872,21 @@ class MainWindow(QMainWindow):
         self.prefs.set_value("last_export_dir", str(Path(path).parent))
         n = exporter.export_ids(self.db, ids, path)
         self.flash(f"{tr('Exported')} {n} {tr('QSOs to')} {path}")
+
+    def bring_to_front(self, path: str | None = None) -> None:
+        """Another NWOlogger was started (nwologger/instance.py): show this window instead. When that launch was
+        asked to open a log file, say which file this window has, since one NWOlogger runs at a time."""
+        if getattr(self, "_shut", False):
+            return
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self)  # Windows may refuse the focus to a background process: its taskbar button flashes
+        if path and Path(path).resolve() != self.db.path.resolve():
+            QMessageBox.information(self, APP_NAME, tr("NWOlogger is already running with") + f"\n{self.db.path}\n\n" +
+                                    tr("Use File → Open log file to switch to another log."))
 
     def shutdown(self) -> None:
         """Stop timers and listeners before the log file is closed."""

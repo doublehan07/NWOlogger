@@ -1178,5 +1178,11 @@
 "Your rigs and antennas are listed in the entry form's Device section. A setup puts a rig, an antenna and a power together: one pick in the form fills all three, and you can still change each one. They are logged as ADIF MY_RIG, MY_ANTENNA and TX_PWR; when the form leaves one empty, the station profile's is logged.": "你的电台和天线会列在录入表单的“设备”区。组合把一部电台、一副天线和一个功率搭配在一起：在表单中选一次即可填好三项，之后每一项仍可修改。它们记录为 ADIF MY_RIG、MY_ANTENNA 和 TX_PWR；表单中留空的项会使用电台配置中的值。",
 "Zones": "分区",
 "Zones & HQ": "分区与总部台",
-"{0} apart": "相隔 {0}"
+"{0} apart": "相隔 {0}",
+"hour": "时",
+"min": "分",
+"sec": "秒",
+"Set to now (UTC)": "设为现在（UTC）",
+"NWOlogger is already running with": "NWOlogger 已经在运行，打开的日志是",
+"Use File → Open log file to switch to another log.": "要换一份日志，请用“文件 → 打开日志文件”。"
 }

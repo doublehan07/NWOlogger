@@ -15,7 +15,7 @@ from PySide6.QtCore import QEvent, QLibraryInfo, QLocale, QTranslator
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from . import APP_NAME, __version__, applog, i18n
+from . import APP_NAME, __version__, applog, i18n, instance
 from .core import db as dbm
 
 RESTART = 1000
@@ -100,54 +100,67 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
 
     theme.watch_system(app)
     threading.Thread(target=eject_installer_image, name="eject", daemon=True).start()
-    first_window = True  # the first-run checks (country file, call lists) run once per process, not after a restart
-    while True:
-        prefs = Prefs()
-        language = lang or prefs.get("language")
-        i18n.load(language)
-        qt_tr = _qt_translator(app, language)
-        theme.apply(app, theme_mode or prefs.get("theme"))
-        path = db_path or prefs.get("db_path") or str(dbm.DEFAULT_PATH)
-        applog.startup_banner(path)
-        try:
-            logdb = dbm.LogDB(path, backup_keep=prefs.get("backup_keep"), scheduled_keep=prefs.get("scheduled_keep"))
-        except Exception as e:  # noqa: BLE001
-            log.exception("Could not open the log file %s", applog.tidy_path(path))
-            QMessageBox.critical(None, APP_NAME, f"Could not open the log file:\n{path}\n\n{e}")
-            return 1
-        with applog.timed("Window ready", at_least=0):
-            win = MainWindow(logdb, prefs, app, first_run=first_window and not os.environ.get("NWOLOGGER_SELF_TEST"))
-            win.show()
-        first_window = False
-        if logdb.newer_version:
-            QMessageBox.warning(win, APP_NAME, i18n.tr("This log was last written by a newer NWOlogger") +
-                                f" ({logdb.newer_version}). " +
-                                i18n.tr("Some of its data may not show in this version, and what it writes stays "
-                                        "readable to the newer one."))
-        current = {"win": win, "qt_tr": qt_tr}
+    # One running NWOlogger per user: a second launch asks the first to come to the front and quits (instance.py).
+    server = instance.claim(db_path)
+    if server is None:
+        return 0
+    shown: dict = {}  # the window that answers a "come to the front" request; none between restarts
+    server.raise_requested.connect(lambda path: shown["win"].bring_to_front(path) if shown.get("win") else None)
+    try:
+        first_window = True  # the first-run checks (country file, call lists) run once per process, not after a restart
+        while True:
+            prefs = Prefs()
+            language = lang or prefs.get("language")
+            i18n.load(language)
+            qt_tr = _qt_translator(app, language)
+            theme.apply(app, theme_mode or prefs.get("theme"))
+            path = db_path or prefs.get("db_path") or str(dbm.DEFAULT_PATH)
+            applog.startup_banner(path)
+            try:
+                logdb = dbm.LogDB(path, backup_keep=prefs.get("backup_keep"), scheduled_keep=prefs.get("scheduled_keep"))
+            except Exception as e:  # noqa: BLE001
+                log.exception("Could not open the log file %s", applog.tidy_path(path))
+                QMessageBox.critical(None, APP_NAME, f"Could not open the log file:\n{path}\n\n{e}")
+                return 1
+            with applog.timed("Window ready", at_least=0):
+                win = MainWindow(logdb, prefs, app, first_run=first_window and not os.environ.get("NWOLOGGER_SELF_TEST"))
+                win.show()
+            shown["win"] = win
+            first_window = False
+            if logdb.newer_version:
+                QMessageBox.warning(win, APP_NAME, i18n.tr("This log was last written by a newer NWOlogger") +
+                                    f" ({logdb.newer_version}). " +
+                                    i18n.tr("Some of its data may not show in this version, and what it writes stays "
+                                            "readable to the newer one."))
+            current = {"win": win, "qt_tr": qt_tr}
 
-        def rebuild(old: MainWindow, prefs=prefs, current=current) -> None:
-            """The language changed: the same log file and state, in a window built in the new language."""
-            app.removeTranslator(current["qt_tr"])
-            current["qt_tr"] = _qt_translator(app, prefs.get("language"))
-            new = old.rebuilt()
-            new.rebuild_requested.connect(lambda: rebuild(new))
-            current["win"] = new
+            def rebuild(old: MainWindow, prefs=prefs, current=current) -> None:
+                """The language changed: the same log file and state, in a window built in the new language."""
+                app.removeTranslator(current["qt_tr"])
+                current["qt_tr"] = _qt_translator(app, prefs.get("language"))
+                new = old.rebuilt()
+                new.rebuild_requested.connect(lambda: rebuild(new))
+                current["win"] = new
+                shown["win"] = new  # a second launch must raise the new window, not the closed one
 
-        win.rebuild_requested.connect(lambda w=win: rebuild(w))
-        if os.environ.get("NWOLOGGER_SELF_TEST"):
-            _self_test(win, os.environ["NWOLOGGER_SELF_TEST"])
-        applog.start_watchdog()
-        code = app.exec()
-        applog.stop_watchdog()
-        _tear_down(app, current)
-        try:
-            logdb.close()
-        except Exception:  # noqa: BLE001 - already closed when switching files
-            pass
-        if code != RESTART:
-            return code
-        db_path = None  # take the newly chosen file from prefs
+            win.rebuild_requested.connect(lambda w=win: rebuild(w))
+            if os.environ.get("NWOLOGGER_SELF_TEST"):
+                _self_test(win, os.environ["NWOLOGGER_SELF_TEST"])
+            applog.start_watchdog()
+            code = app.exec()
+            applog.stop_watchdog()
+            shown["win"] = None
+            _tear_down(app, current)
+            try:
+                logdb.close()
+            except Exception:  # noqa: BLE001 - already closed when switching files
+                pass
+            if code != RESTART:
+                return code
+            db_path = None  # take the newly chosen file from prefs
+
+    finally:
+        server.close()
 
 
 def _tear_down(app: QApplication, current: dict) -> None:

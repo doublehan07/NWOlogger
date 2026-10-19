@@ -107,6 +107,11 @@ QToolButton#Version:hover {{ color: {t.accent}; }}
 QLabel#Clock {{ font-family: "{mono}"; font-size: 13px; padding: 0 6px; }}
 QLabel#BandLabel {{ color: {t.accent}; font-weight: 600; font-family: "{mono}"; }}
 QLabel#Hint {{ color: {t.muted}; font-size: 11px; }}
+QWidget#EntryBar {{ background: {t.surface_alt}; border-top: 1px solid {t.border}; }}
+QFrame#TimePicker {{ background: {t.surface}; border: 1px solid {t.border_strong}; border-radius: 8px; }}
+QPushButton#PickerStep {{ min-width: 40px; min-height: 30px; padding: 0; font-size: 13px; }}
+QLabel#PickerValue {{ font-family: "{mono}"; font-size: 20px; font-weight: 600; min-width: 40px; }}
+QLabel#PickerUnit {{ color: {t.muted}; font-size: 11px; }}
 
 QLineEdit, QComboBox, QDateTimeEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QDateEdit {{
     background: {t.surface}; border: 1px solid {t.border_strong}; border-radius: 6px; padding: 3px 7px;

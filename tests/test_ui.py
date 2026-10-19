@@ -1227,3 +1227,142 @@ def test_changing_the_dupe_windows_in_preferences_rescans_the_marks(win, monkeyp
     assert db.get(b)["dupe_flag"] is None
     assert "1 cleared" in win.st_msg.text()
 
+
+
+# ------------------------------------------------------------------ 0.1.9c: the frozen button row
+def test_the_button_row_stays_in_view_when_the_entry_pane_is_short(win, qtbot):
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    dx = win.dx
+    # The row is not part of what scrolls.
+    assert dx.bar.parentWidget() is win.bar_stack
+    assert not win.entry_scroll.widget().isAncestorOf(dx.bar)
+    assert dx.log_btn.parentWidget() is dx.bar
+    win.resize(1200, 700)
+    app.processEvents()
+    total = sum(win.splitter.sizes())
+    win.splitter.setSizes([200, total - 200])
+    app.processEvents()
+    pane = win.entry_pane
+    assert pane.height() <= 210
+    assert win.entry_scroll.verticalScrollBar().maximum() > 0, "the form scrolls"
+    for control in (dx.log_btn, dx.lookup_btn):
+        assert control.isVisible()
+        rect = control.rect()
+        rect.moveTopLeft(control.mapTo(pane, rect.topLeft()))
+        assert pane.rect().contains(rect), "the row is inside the pane without scrolling"
+    # Dragging the splitter moves the row with the handle.
+    before = dx.bar.mapToGlobal(dx.bar.rect().topLeft()).y()
+    win.splitter.setSizes([280, total - 280])
+    app.processEvents()
+    after = dx.bar.mapToGlobal(dx.bar.rect().topLeft()).y()
+    assert after - before == 80
+    # Delete and Cancel live in the row and show only while editing.
+    assert not dx.delete_btn.isVisible() and not dx.cancel_btn.isVisible()
+    assert dx.delete_btn.parentWidget() is dx.bar and dx.cancel_btn.parentWidget() is dx.bar
+    # The contest form's row takes the place of the DX row.
+    if win.contest is not None:
+        win.contest.new_session = lambda: None  # no session yet: activate() would open the modal New contest dialog
+        win.set_view(1)
+        app.processEvents()
+        assert win.bar_stack.currentWidget() is win.contest.bar
+        assert win.contest.log_btn.isVisible() and not dx.log_btn.isVisible()
+        win.set_view(0)
+        app.processEvents()
+        assert win.bar_stack.currentWidget() is dx.bar
+
+
+def test_enter_in_the_call_field_still_logs_with_the_row_outside_the_form(win, qtbot):
+    from PySide6.QtTest import QTest
+
+    dx = win.dx
+    dx.call.setText("BA1QQ")
+    dx._call_edited("BA1QQ")
+    dx.w["freq"].setText("14.2")
+    dx.mode.setCurrentText("USB")
+    dx._refresh_checks()
+    QTest.keyClick(dx.call, Qt.Key.Key_Return)
+    assert win.db.count() == 1
+
+
+# ------------------------------------------------------------------ 0.1.9c: the date and time picker
+def _open_picker(dx, qtbot, which="time_on"):
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    edit = dx.w[which]
+    centre = edit.arrow_rect().center()
+    press = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(centre), edit.mapToGlobal(centre),
+                        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(edit, press)
+    picker = edit.picker
+    assert picker is not None and picker.isVisible()
+    return edit, picker  # deleted on close by Qt: not registered with qtbot
+
+
+def test_the_arrow_opens_the_picker_and_its_columns_set_the_time(win, qtbot):
+    from PySide6.QtCore import QDate
+    from PySide6.QtWidgets import QApplication, QCalendarWidget
+
+    from nwologger.ui.widgets import DateTimePicker
+
+    app = QApplication.instance()
+    dx = win.dx
+    dx.call.setText("BA1PK")
+    dx._call_edited("BA1PK")
+    dx.w["time_on"].set_iso("2026-10-18T23:59:27Z")
+    dx.time_on_locked = True
+    edit, picker = _open_picker(dx, qtbot)
+    assert isinstance(picker, DateTimePicker)
+    assert edit.findChildren(QCalendarWidget) == [picker.calendar], "our picker, not Qt's calendar popup"
+    assert [picker.values[k].text() for k in "hms"] == ["23", "59", "27"]
+    # Minute ▲: exactly 60 s, the picker stays open, Time Off follows (+1 min).
+    picker.steps["m"][0].click()
+    app.processEvents()
+    assert picker.isVisible()
+    assert edit.iso() == "2026-10-19T00:00:27Z" or edit.iso() == "2026-10-18T23:00:27Z"
+    # A column wraps on its own: minute 59 -> 00 with the hour unchanged.
+    assert edit.iso() == "2026-10-18T23:00:27Z"
+    assert dx.w["time_off"].iso() == "2026-10-18T23:01:27Z"
+    assert dx.time_off_mode == "follow"
+    picker.steps["m"][1].click()  # back to 59
+    picker.steps["h"][0].click()  # 23 -> 00
+    picker.steps["s"][1].click()  # 27 -> 26
+    assert edit.iso() == "2026-10-18T00:59:26Z"
+    assert [picker.values[k].text() for k in "hms"] == ["00", "59", "26"]
+    # A day in the calendar changes the date and keeps the time.
+    picker.calendar.clicked.emit(QDate(2026, 10, 3))
+    assert edit.iso() == "2026-10-03T00:59:26Z"
+    assert picker.isVisible()
+    # Done closes it; typing in the box still works afterwards.
+    picker.done_btn.click()
+    qtbot.waitUntil(lambda: edit.picker is None)
+    edit.set_iso("2026-10-18T10:00:00Z")
+    assert edit.iso() == "2026-10-18T10:00:00Z"
+
+
+def test_the_pickers_now_button_and_time_off(win, qtbot):
+    from nwologger.core import timeutil
+
+    dx = win.dx
+    dx.w["time_off"].set_iso("2026-10-18T10:00:00Z")
+    dx.time_off_mode = "manual"
+    edit, picker = _open_picker(dx, qtbot, "time_off")
+    picker.now_btn.click()
+    now = timeutil.now_iso()
+    assert edit.iso()[:16] == now[:16]
+    assert dx.time_off_mode == "manual"
+    picker.close()
+
+
+def test_f4_opens_the_picker_and_escape_closes_it(win, qtbot):
+    from PySide6.QtTest import QTest
+
+    edit = win.dx.w["time_on"]
+    QTest.keyClick(edit, Qt.Key.Key_F4)
+    assert edit.picker is not None and edit.picker.isVisible()
+    picker = edit.picker
+    QTest.keyClick(picker, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: edit.picker is None)

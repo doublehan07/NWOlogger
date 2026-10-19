@@ -219,3 +219,10 @@ Before that:
 - [x] eQSL downloads start a day before the last one, so cards that arrive later the same day aren't missed
 - [x] *Sync everything* only downloads; QSOs not yet uploaded to all four services are grey, with the missing services in the tooltip and a *Not uploaded to every service* preset
 - [x] Upload pending, the *Not uploaded to …* presets and the grey rows share one rule (`core/uploads.py`)
+
+## Done after the 0.1.9 Windows and Surface tests (2026-10-19, 0.2.0 preview)
+
+- [x] Windows said 0.1.8 after the 0.1.9 setup: the installer deletes `_internal` before copying, the packaged app reports the version constant and bundles no metadata, the EXE carries a version resource, a test keeps the constant equal to `pyproject.toml`
+- [x] Time On / Time Off on a touch screen: the arrow opens a picker with the calendar and hour, minute and second columns (large ▲▼, Now, Done); the spin boxes themselves stay
+- [x] The button row with Log QSO is pinned under the scrolling form and follows the splitter, so a short screen cannot hide it
+- [x] One running NWOlogger per user: a second launch brings the running window to the front and quits; with `--db` it is told which log the window has
