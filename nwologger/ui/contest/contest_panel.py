@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -195,6 +196,7 @@ class ContestPanel(QWidget):
         self.bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         bar = QHBoxLayout(self.bar)
         bar.setContentsMargins(10, 6, 10, 6)
+        self.sent_lab.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)  # never widens the window
         bar.addWidget(self.sent_lab)
         bar.addStretch(1)
         edit_last = QPushButton(tr("Edit last"))

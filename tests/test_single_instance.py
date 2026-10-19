@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -17,6 +18,15 @@ import pytest
 from PySide6.QtCore import QDir
 
 from nwologger import instance
+
+
+def knock_from_another_thread(name: str, message: str = instance.RAISE) -> tuple[threading.Thread, list]:
+    """A second launch is another process: knocking from this thread would wait for a server that needs this
+    thread's event loop to answer. A thread of its own stands in for the other process."""
+    result: list = []
+    thread = threading.Thread(target=lambda: result.append(instance.knock(name, message)), daemon=True)
+    thread.start()
+    return thread, result
 
 
 def test_the_name_depends_on_the_user_and_the_settings_file():
@@ -40,24 +50,31 @@ def test_a_second_launch_asks_the_running_copy_to_come_to_the_front(qapp, qtbot,
     got: list = []
     server.raise_requested.connect(got.append)
     with qtbot.waitSignal(server.raise_requested, timeout=5000):
-        assert instance.knock(name, f"{instance.RAISE} {tmp_path / 'other.sqlite'}")
+        thread, result = knock_from_another_thread(name, f"{instance.RAISE} {tmp_path / 'other.sqlite'}")
+    thread.join(5)
+    assert result == [True]
     assert got == [str(tmp_path / "other.sqlite")]
     with qtbot.waitSignal(server.raise_requested, timeout=5000):
-        assert instance.knock(name)
+        thread, result = knock_from_another_thread(name)
+    thread.join(5)
+    assert result == [True]
     assert got[-1] is None
     server.close()
     assert not instance.knock(name, timeout_ms=300)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="named pipes vanish with their process")
-def test_a_socket_file_left_by_a_crash_is_taken_over(qapp, tmp_path):
+def test_a_socket_file_left_by_a_crash_is_taken_over(qapp, qtbot, tmp_path):
     name = instance.socket_name("stale", str(tmp_path / "settings.ini"))
     stale = Path(QDir.tempPath()) / name
     stale.write_text("", encoding="utf-8")
     server = instance.InstanceServer(name)
     try:
         assert server.server.isListening()
-        assert instance.knock(name)
+        with qtbot.waitSignal(server.raise_requested, timeout=5000):
+            thread, result = knock_from_another_thread(name)
+        thread.join(5)
+        assert result == [True]
     finally:
         server.close()
     assert not stale.exists()

@@ -21,6 +21,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 log = logging.getLogger("nwologger.instance")
 KNOCK_MS = 1000  # how long a start waits for a running copy to answer
 RAISE = "raise"  # the message: "raise" or "raise <log file the second launch was asked to open>"
+ACK = b"ok\n"  # the running copy's answer once it has read the message
 
 
 def socket_name(user: str | None = None, settings: str | None = None) -> str:
@@ -44,6 +45,9 @@ def knock(name: str, message: str = RAISE, timeout_ms: int = KNOCK_MS) -> bool:
         return False
     sock.write((message + "\n").encode("utf-8"))
     sock.waitForBytesWritten(timeout_ms)
+    # Wait for the answer, so the bytes are read before this end closes (a Windows pipe may drop them otherwise);
+    # a running copy that connected but did not answer in time still counts as running.
+    sock.waitForReadyRead(timeout_ms)
     sock.disconnectFromServer()
     if sock.state() != QLocalSocket.LocalSocketState.UnconnectedState:
         sock.waitForDisconnected(timeout_ms)
@@ -77,6 +81,8 @@ class InstanceServer(QObject):
             if not conn.bytesAvailable():
                 conn.waitForReadyRead(KNOCK_MS)
             text = bytes(conn.readAll().data()).decode("utf-8", errors="replace").strip()
+            conn.write(ACK)
+            conn.waitForBytesWritten(KNOCK_MS)
             conn.close()
             head, _, path = text.partition(" ")
             if head == RAISE:

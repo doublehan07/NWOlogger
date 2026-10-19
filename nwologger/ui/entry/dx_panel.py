@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -419,9 +420,17 @@ class DXPanel(QWidget):
         self.bar = QWidget()
         self.bar.setObjectName("EntryBar")
         self.bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        bar = QHBoxLayout(self.bar)
-        bar.setContentsMargins(10, 6, 10, 6)
+        outer = QHBoxLayout(self.bar)
+        outer.setContentsMargins(10, 6, 10, 6)
+        outer.setSpacing(6)
+        # The helpers may be narrower than their contents (clipped from the right on a very narrow window), so the
+        # row never widens the window: only Log QSO, Delete and Cancel keep their full width.
+        helpers = QWidget()
+        helpers.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        bar = QHBoxLayout(helpers)
+        bar.setContentsMargins(0, 0, 0, 0)
         bar.setSpacing(6)
+        outer.addWidget(helpers, 1)
         self.lookup_btn = QPushButton(tr("Lookup"))
         self.lookup_btn.setIcon(theme.icon("search"))
         self.lookup_btn.setToolTip(tr("Look up the call on QRZ.com / HamQTH"))
@@ -462,9 +471,9 @@ class DXPanel(QWidget):
         self.log_btn.setMinimumWidth(140)
         self.log_btn.setToolTip(tr("Log the QSO (Enter)"))
         self.log_btn.clicked.connect(self.commit)
-        bar.addWidget(self.delete_btn)
-        bar.addWidget(self.cancel_btn)
-        bar.addWidget(self.log_btn)
+        outer.addWidget(self.delete_btn)
+        outer.addWidget(self.cancel_btn)
+        outer.addWidget(self.log_btn)
 
         # Signals for live checks
         self.w["freq"].textChanged.connect(self._freq_changed)

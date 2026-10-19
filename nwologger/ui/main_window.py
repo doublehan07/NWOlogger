@@ -517,7 +517,9 @@ class MainWindow(QMainWindow):
         for k in range(self.entry_stack.count()):
             pol = QSizePolicy.Policy.Preferred if k == i else QSizePolicy.Policy.Ignored
             self.entry_stack.widget(k).setSizePolicy(pol, pol)
+            self.bar_stack.widget(k).setSizePolicy(pol, pol)
         self.entry_stack.updateGeometry()
+        self.bar_stack.updateGeometry()
         sizes = self.prefs.value(f"window/split{i}")
         total = sum(self.splitter.sizes())
         if isinstance(sizes, list) and len(sizes) == 2:

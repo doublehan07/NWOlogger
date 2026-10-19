@@ -1252,6 +1252,18 @@ def test_the_button_row_stays_in_view_when_the_entry_pane_is_short(win, qtbot):
         rect = control.rect()
         rect.moveTopLeft(control.mapTo(pane, rect.topLeft()))
         assert pane.rect().contains(rect), "the row is inside the pane without scrolling"
+    # The row never widens the window: a narrow window keeps Log QSO inside the pane (Windows fonts are wider).
+    assert win.bar_stack.minimumSizeHint().width() < 400
+    win.resize(700, 600)
+    app.processEvents()
+    assert win.width() <= 700
+    rect = dx.log_btn.rect()
+    rect.moveTopLeft(dx.log_btn.mapTo(pane, rect.topLeft()))
+    assert pane.rect().contains(rect)
+    win.resize(1200, 700)
+    app.processEvents()
+    win.splitter.setSizes([200, total - 200])
+    app.processEvents()
     # Dragging the splitter moves the row with the handle.
     before = dx.bar.mapToGlobal(dx.bar.rect().topLeft()).y()
     win.splitter.setSizes([280, total - 280])
