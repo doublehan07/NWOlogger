@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -65,7 +66,7 @@ def test_preferences_live_in_settings_ini_and_move_in_from_the_old_store(tmp_pat
     moved = Prefs.migrate_native()
     assert set(moved) == {"language", "db_path", "rigs"}
     prefs = Prefs()
-    assert prefs.s.fileName() == str(tmp_path / "settings.ini")
+    assert Path(prefs.s.fileName()) == tmp_path / "settings.ini"  # QSettings reports forward slashes on Windows
     assert prefs.get("language") == "zh_CN" and prefs.get("rigs") == ["IC-705"]
     assert prefs.get("current_log") == "nwolog.sqlite"
     again = QSettings(str(tmp_path / "old-native.ini"), QSettings.Format.IniFormat)
@@ -88,10 +89,10 @@ def test_the_lease_is_shared_within_a_process_and_released_with_the_last_log(tmp
 
 
 HOLDER = textwrap.dedent("""
-    import sys, time
+    import os, sys, time
     from nwologger.core import lease
     lease.acquire(sys.argv[1])
-    print("held", flush=True)
+    print("held", os.getpid(), flush=True)
     time.sleep(float(sys.argv[2]))
 """)
 
@@ -100,11 +101,14 @@ def test_another_process_cannot_open_the_folder_while_it_is_held(tmp_path):
     _log(tmp_path / "nwolog.sqlite")
     proc = subprocess.Popen([sys.executable, "-c", HOLDER, str(tmp_path), "30"], cwd=ROOT, stdout=subprocess.PIPE,
                             text=True)
+    holder_pid = proc.pid
     try:
-        assert proc.stdout.readline().strip() == "held"
+        word, holder_pid = proc.stdout.readline().split()  # the venv's python.exe on Windows is a launcher: its
+        holder_pid = int(holder_pid)  # child is the interpreter that holds the lock, so take the pid it prints
+        assert word == "held"
         with pytest.raises(dbm.LeaseHeld) as info:
             dbm.LogDB(tmp_path / "nwolog.sqlite", backup_on_open=False)
-        assert info.value.holder.get("pid") == proc.pid
+        assert info.value.holder.get("pid") == holder_pid
         assert "pid" in str(info.value) and "in use by another NWOlogger" in str(info.value)
         # Reading is never blocked: the lease is about writers.
         con = sqlite3.connect(f"file:{tmp_path / 'nwolog.sqlite'}?mode=ro", uri=True)
@@ -113,8 +117,20 @@ def test_another_process_cannot_open_the_folder_while_it_is_held(tmp_path):
     finally:
         proc.kill()
         proc.wait(timeout=30)
+        try:
+            os.kill(holder_pid, signal.SIGTERM)  # the interpreter behind a launcher stub, if it outlived it
+        except (OSError, ProcessLookupError):
+            pass
     # The holder died (a crash, a kill): the OS released the lock, the next open simply takes it.
-    db = dbm.LogDB(tmp_path / "nwolog.sqlite", backup_on_open=False)
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            db = dbm.LogDB(tmp_path / "nwolog.sqlite", backup_on_open=False)
+            break
+        except dbm.LeaseHeld:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
     assert db.lease is not None
     db.close()
 
