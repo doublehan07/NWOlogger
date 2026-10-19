@@ -6,6 +6,9 @@ download positions and settings. So a starting NWOlogger first knocks on a local
 a socket file elsewhere) named after the user and the settings in use; a running copy answers, is asked to come to
 the front and the new process quits. Tests and screenshot runs set NWOLOGGER_SETTINGS, which gives them a socket of
 their own.
+
+The socket is Python's own (multiprocessing.connection), served from a thread of its own, so the handshake never
+depends on the GUI event loop: the knock is answered within a second whatever the window is doing.
 """
 
 from __future__ import annotations
@@ -14,14 +17,17 @@ import getpass
 import hashlib
 import logging
 import os
+import sys
+import tempfile
+import threading
+from multiprocessing import connection
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 log = logging.getLogger("nwologger.instance")
 KNOCK_MS = 1000  # how long a start waits for a running copy to answer
 RAISE = "raise"  # the message: "raise" or "raise <log file the second launch was asked to open>"
-ACK = b"ok\n"  # the running copy's answer once it has read the message
+ACK = b"ok"  # the running copy's answer once it has read the message
 
 
 def socket_name(user: str | None = None, settings: str | None = None) -> str:
@@ -37,61 +43,94 @@ def socket_name(user: str | None = None, settings: str | None = None) -> str:
     return f"nwologger-{digest}"
 
 
+def address(name: str) -> str:
+    """Where the socket lives: a named pipe on Windows, a file in the temporary folder elsewhere."""
+    if sys.platform == "win32":
+        return rf"\\.\pipe\{name}"
+    return os.path.join(tempfile.gettempdir(), name)
+
+
+def _family() -> str:
+    return "AF_PIPE" if sys.platform == "win32" else "AF_UNIX"
+
+
 def knock(name: str, message: str = RAISE, timeout_ms: int = KNOCK_MS) -> bool:
-    """Tell a running copy listening on ``name`` to come to the front. True when one answered."""
-    sock = QLocalSocket()
-    sock.connectToServer(name)
-    if not sock.waitForConnected(timeout_ms):
+    """Tell a running copy listening on ``name`` to come to the front. True when one answered the connection."""
+    try:
+        conn = connection.Client(address(name), family=_family())
+    except (OSError, EOFError):  # nothing listens, or a socket file left by a crash refuses the connection
         return False
-    sock.write((message + "\n").encode("utf-8"))
-    sock.waitForBytesWritten(timeout_ms)
-    # Wait for the answer, so the bytes are read before this end closes (a Windows pipe may drop them otherwise);
-    # a running copy that connected but did not answer in time still counts as running.
-    sock.waitForReadyRead(timeout_ms)
-    sock.disconnectFromServer()
-    if sock.state() != QLocalSocket.LocalSocketState.UnconnectedState:
-        sock.waitForDisconnected(timeout_ms)
+    try:
+        conn.send_bytes(message.encode("utf-8"))
+        # Wait for the answer, so the message is read before this end closes; a running copy that accepted the
+        # connection but did not answer in time still counts as running.
+        conn.poll(timeout_ms / 1000)
+    except (OSError, EOFError):
+        pass
+    finally:
+        conn.close()
     return True
 
 
 class InstanceServer(QObject):
-    """The running copy's end: listens on the socket and reports every request to come to the front, with the log
-    file the other launch was asked to open (or None)."""
+    """The running copy's end: a thread accepts each knock, answers it and reports the request to come to the front
+    through a Qt signal (delivered in the GUI thread), with the log file the other launch was asked to open or None."""
 
     raise_requested = Signal(object)
 
     def __init__(self, name: str, parent: QObject | None = None):
         super().__init__(parent)
         self.name = name
-        self.server = QLocalServer(self)
-        self.server.newConnection.connect(self._accept)
-        if not self.server.listen(name):
-            # A socket file left by a crash (Linux, macOS): remove it and listen again.
-            QLocalServer.removeServer(name)
-            if not self.server.listen(name):
-                raise OSError(f"cannot listen on {name}: {self.server.errorString()}")
+        self.address = address(name)
+        try:
+            self.listener = connection.Listener(self.address, family=_family())
+        except OSError:
+            if sys.platform == "win32":
+                raise
+            # A socket file left by a crash (Linux, macOS): nothing answered the knock, so remove it and listen.
+            try:
+                os.unlink(self.address)
+            except OSError:
+                pass
+            self.listener = connection.Listener(self.address, family=_family())
+        self._closed = False
+        self._thread = threading.Thread(target=self._serve, name="instance", daemon=True)
+        self._thread.start()
 
-    def _accept(self) -> None:
-        """Read each knock as it comes: the other process writes its line right after connecting, so this waits at
-        most KNOCK_MS, once per launch of a second NWOlogger. The connection stays a child of the server."""
-        while True:
-            conn = self.server.nextPendingConnection()
-            if conn is None:
+    @property
+    def listening(self) -> bool:
+        return not self._closed
+
+    def _serve(self) -> None:
+        while not self._closed:
+            try:
+                conn = self.listener.accept()
+            except Exception:  # noqa: BLE001 - closed from the GUI thread, or the pipe is gone
+                if not self._closed:
+                    log.debug("The instance socket stopped", exc_info=True)
                 return
-            if not conn.bytesAvailable():
-                conn.waitForReadyRead(KNOCK_MS)
-            text = bytes(conn.readAll().data()).decode("utf-8", errors="replace").strip()
-            conn.write(ACK)
-            conn.waitForBytesWritten(KNOCK_MS)
-            conn.close()
+            text = ""
+            try:
+                if conn.poll(KNOCK_MS / 1000):
+                    text = conn.recv_bytes(4096).decode("utf-8", errors="replace").strip()
+                conn.send_bytes(ACK)
+            except (OSError, EOFError):
+                pass
+            finally:
+                conn.close()
             head, _, path = text.partition(" ")
             if head == RAISE:
                 log.info("Another NWOlogger was started; bringing this window to the front")
                 self.raise_requested.emit(path or None)
 
     def close(self) -> None:
-        self.server.close()
-        QLocalServer.removeServer(self.name)
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.listener.close()  # removes the socket file; the accepting thread ends with it
+        except OSError:
+            pass
 
 
 def claim(db_path: str | None = None) -> InstanceServer | None:

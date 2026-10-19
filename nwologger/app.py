@@ -85,6 +85,11 @@ def _qt_translator(app: QApplication, language: str) -> QTranslator:
 
 
 def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: str | None) -> int:
+    # One running NWOlogger per user: a second launch asks the first to come to the front and quits (instance.py),
+    # before any of Qt is set up, so it is gone within a second.
+    server = instance.claim(db_path)
+    if server is None:
+        return 0
     app = QApplication.instance() or QApplication(argv)
     applog.install_qt_messages()
     app.setApplicationName(APP_NAME)
@@ -100,10 +105,6 @@ def _run(argv: list[str], *, db_path: str | None, lang: str | None, theme_mode: 
 
     theme.watch_system(app)
     threading.Thread(target=eject_installer_image, name="eject", daemon=True).start()
-    # One running NWOlogger per user: a second launch asks the first to come to the front and quits (instance.py).
-    server = instance.claim(db_path)
-    if server is None:
-        return 0
     shown: dict = {}  # the window that answers a "come to the front" request; none between restarts
     server.raise_requested.connect(lambda path: shown["win"].bring_to_front(path) if shown.get("win") else None)
     try:
@@ -190,11 +191,15 @@ def _tear_down(app: QApplication, current: dict) -> None:
 
 def _self_test(win, mode: str) -> None:
     """``NWOLOGGER_SELF_TEST=close`` (the packaged smoke test and a test): open Preferences, close it, then close the
-    window a few seconds after the start. The process must then exit with code 0 and leave no crash file."""
-    if mode != "close":
-        return
+    window a few seconds after the start. The process must then exit with code 0 and leave no crash file.
+    ``linger``: keep the window open for 20 s, then close it (the test that starts a second NWOlogger meanwhile)."""
     from PySide6.QtCore import QTimer  # noqa: PLC0415
 
+    if mode == "linger":
+        QTimer.singleShot(20000, win, lambda: (log.info("Self-test: closing the window"), win.close()))
+        return
+    if mode != "close":
+        return
     from .ui.prefs_dialog import PrefsDialog  # noqa: PLC0415
 
     state: dict = {}
